@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "./lib/supabaseClient";
 import {
   Home,
@@ -35,12 +35,6 @@ const mockPosts = [
   { id: 1, user: "nilufar.k", place: "Cox's Bazar", likes: 482, caption: "সূর্যাস্তটা আজ অন্যরকম সুন্দর ছিল 🌅" },
   { id: 2, user: "rafiq.tech", place: "Dhaka", likes: 219, caption: "নতুন ডেস্ক সেটআপ, অবশেষে শেষ হলো ✨" },
   { id: 3, user: "meherun.a", place: "Sylhet", likes: 967, caption: "চা বাগানের সকাল ☕🍃" },
-];
-
-const mockReels = [
-  { id: 1, user: "tanvir.v", views: "12.4K" },
-  { id: 2, user: "priya.dances", views: "8.1K" },
-  { id: 3, user: "shuvo.eats", views: "23K" },
 ];
 
 const mockGrid = Array.from({ length: 9 }, (_, i) => i);
@@ -121,16 +115,66 @@ function StoriesBar() {
 }
 
 function FeedScreen({ onOpenMessages, onOpenNotifications }) {
-  const [posts, setPosts] = useState(
-    mockPosts.map((p) => ({ ...p, liked: false, saved: false, reposted: false }))
-  );
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState(null);
 
-  const toggleLike = (id) => {
+  useEffect(() => {
+    loadFeed();
+  }, []);
+
+  const loadFeed = async () => {
+    setLoading(true);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setUserId(user?.id ?? null);
+
+    const { data: postsData, error: postsError } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, caption, created_at, user_id, profiles(username)")
+      .order("created_at", { ascending: false });
+
+    if (postsError || !postsData) {
+      setLoading(false);
+      return;
+    }
+
+    const { data: likesData } = await supabase.from("likes").select("post_id, user_id");
+
+    const merged = postsData.map((p) => {
+      const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
+      return {
+        ...p,
+        username: p.profiles?.username || "unknown",
+        likeCount: postLikes.length,
+        liked: postLikes.some((l) => l.user_id === user?.id),
+        saved: false,
+        reposted: false,
+      };
+    });
+
+    setPosts(merged);
+    setLoading(false);
+  };
+
+  const toggleLike = async (post) => {
+    if (!userId) return;
+
     setPosts((prev) =>
       prev.map((p) =>
-        p.id === id ? { ...p, liked: !p.liked, likes: p.liked ? p.likes - 1 : p.likes + 1 } : p
+        p.id === post.id
+          ? { ...p, liked: !p.liked, likeCount: p.liked ? p.likeCount - 1 : p.likeCount + 1 }
+          : p
       )
     );
+
+    if (post.liked) {
+      await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId);
+    } else {
+      await supabase.from("likes").insert({ post_id: post.id, user_id: userId });
+    }
   };
 
   const toggleSave = (id) => {
@@ -151,63 +195,79 @@ function FeedScreen({ onOpenMessages, onOpenNotifications }) {
         onNotificationsClick={onOpenNotifications}
       />
       <StoriesBar />
-      {posts.map((post) => (
-        <div key={post.id} className="mb-5">
-          <div className="flex items-center gap-2 px-4 py-2">
-            <div
-              className="w-9 h-9 rounded-full shrink-0"
-              style={{ background: ACCENT, padding: 2 }}
-            >
-              <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
-                {post.user[0].toUpperCase()}
+
+      {loading ? (
+        <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
+          লোড হচ্ছে...
+        </p>
+      ) : posts.length === 0 ? (
+        <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
+          এখনো কোনো পোস্ট নেই — প্রথম পোস্টটি আপনিই করুন!
+        </p>
+      ) : (
+        posts.map((post) => (
+          <div key={post.id} className="mb-5">
+            <div className="flex items-center gap-2 px-4 py-2">
+              <div
+                className="w-9 h-9 rounded-full shrink-0"
+                style={{ background: ACCENT, padding: 2 }}
+              >
+                <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
+                  {post.username[0].toUpperCase()}
+                </div>
+              </div>
+              <div className="flex flex-col leading-tight">
+                <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username}</span>
               </div>
             </div>
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.user}</span>
-              <span className="text-[11px]" style={{ color: "#8B8494" }}>{post.place}</span>
+
+            <div
+              className="mx-4 rounded-2xl aspect-[4/5] overflow-hidden flex items-center justify-center"
+              style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+              onDoubleClick={() => toggleLike(post)}
+            >
+              {post.media_type === "photo" ? (
+                <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <video src={post.media_url} className="w-full h-full object-cover" controls />
+              )}
             </div>
-          </div>
 
-          <div
-            className="mx-4 rounded-2xl aspect-[4/5] flex items-center justify-center"
-            style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
-            onDoubleClick={() => toggleLike(post.id)}
-          >
-            <ImageIcon size={32} color="#3E3849" />
-          </div>
+            <div className="flex items-center justify-between px-4 pt-3">
+              <div className="flex items-center gap-4">
+                <Send size={20} color="#F5F1EA" />
+                <button onClick={() => toggleSave(post.id)}>
+                  <Bookmark size={20} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+                </button>
+              </div>
 
-          <div className="flex items-center justify-between px-4 pt-3">
-            <div className="flex items-center gap-4">
-              <Send size={20} color="#F5F1EA" />
-              <button onClick={() => toggleSave(post.id)}>
-                <Bookmark size={20} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+              <button onClick={() => toggleLike(post)}>
+                <Heart
+                  size={30}
+                  color={post.liked ? "#FF5D73" : "#F5F1EA"}
+                  fill={post.liked ? "#FF5D73" : "none"}
+                />
               </button>
+
+              <div className="flex items-center gap-4">
+                <MessageCircle size={20} color="#F5F1EA" />
+                <button onClick={() => toggleRepost(post.id)}>
+                  <Repeat2 size={22} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
+                </button>
+              </div>
             </div>
-
-            <button onClick={() => toggleLike(post.id)}>
-              <Heart
-                size={30}
-                color={post.liked ? "#FF5D73" : "#F5F1EA"}
-                fill={post.liked ? "#FF5D73" : "none"}
-              />
-            </button>
-
-            <div className="flex items-center gap-4">
-              <MessageCircle size={20} color="#F5F1EA" />
-              <button onClick={() => toggleRepost(post.id)}>
-                <Repeat2 size={22} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
-              </button>
+            <div className="px-4 pt-1.5">
+              <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.likeCount} likes</span>
+              {post.caption && (
+                <p className="text-sm mt-0.5" style={{ color: "#C9C3D1" }}>
+                  <span style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username} </span>
+                  {post.caption}
+                </p>
+              )}
             </div>
           </div>
-          <div className="px-4 pt-1.5">
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.likes} likes</span>
-            <p className="text-sm mt-0.5" style={{ color: "#C9C3D1" }}>
-              <span style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.user} </span>
-              {post.caption}
-            </p>
-          </div>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   );
 }
@@ -218,7 +278,6 @@ const mockReelsFull = [
   { id: 3, user: "shuvo.eats", caption: "রাস্তার সেরা ফুচকা 😋", likes: "23K", comments: "512", shares: "201" },
   { id: 4, user: "meherun.a", caption: "চা বাগানের সকাল ☕🍃", likes: "6.7K", comments: "98", shares: "31" },
 ];
-
 function ReelsScreen() {
   const [index, setIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
@@ -364,6 +423,7 @@ const mockAccounts = [
   { id: 5, user: "priya.dances", name: "Priya Das", followers: "8.1K" },
   { id: 6, user: "shuvo.eats", name: "Shuvo Rahman", followers: "23K" },
 ];
+
 function SearchScreen({ onOpenInterests }) {
   const [query, setQuery] = useState("");
   const results = mockAccounts.filter(
@@ -437,8 +497,7 @@ function SearchScreen({ onOpenInterests }) {
       )}
     </div>
   );
-}
-
+            }
 function UploadScreen() {
   const [mode, setMode] = useState("photo");
   const [file, setFile] = useState(null);
@@ -629,6 +688,7 @@ function UploadScreen() {
     </div>
   );
 }
+
 function ProfileScreen({ onLogout }) {
   const [tab, setTab] = useState("posts");
   const mockReposts = Array.from({ length: 4 }, (_, i) => i);
@@ -744,12 +804,12 @@ function ProfileScreen({ onLogout }) {
     </div>
   );
 }
+
 const mockChats = [
   { id: 1, user: "nilufar.k", last: "ছবিটা অসাধারণ হয়েছে!", time: "2মি" },
   { id: 2, user: "rafiq.tech", last: "আচ্ছা, ঠিক আছে তাহলে 👍", time: "1ঘ" },
   { id: 3, user: "meherun.a", last: "কালকে দেখা হচ্ছে", time: "5ঘ" },
 ];
-
 function MessagesScreen({ onBack }) {
   const [query, setQuery] = useState("");
   const filteredChats = mockChats.filter((c) =>
@@ -1259,7 +1319,7 @@ function InterestsScreen({ onBack }) {
       </div>
     </div>
   );
-                                           }
+    }
 const TABS = [
   { key: "feed", label: "Feed", icon: Home, screen: FeedScreen },
   { key: "reels", label: "Reels", icon: Clapperboard, screen: ReelsScreen },
