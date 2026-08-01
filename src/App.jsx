@@ -443,152 +443,6 @@ const mockAccounts = [
   { id: 5, user: "priya.dances", name: "Priya Das", followers: "8.1K" },
   { id: 6, user: "shuvo.eats", name: "Shuvo Rahman", followers: "23K" },
 ];
-function ReelsScreen() {
-  const [index, setIndex] = useState(0);
-  const [expanded, setExpanded] = useState(false);
-  const [reelState, setReelState] = useState(
-    mockReelsFull.map((r) => ({ ...r, liked: false, reposted: false, saved: false }))
-  );
-  const touchStartY = React.useRef(0);
-
-  const reel = reelState[index];
-
-  const handleTouchStart = (e) => {
-    touchStartY.current = e.touches[0].clientY;
-  };
-  const handleTouchEnd = (e) => {
-    const deltaY = e.changedTouches[0].clientY - touchStartY.current;
-    if (deltaY < -50 && index < reelState.length - 1) {
-      setIndex((i) => i + 1);
-      setExpanded(false);
-    } else if (deltaY > 50 && index > 0) {
-      setIndex((i) => i - 1);
-      setExpanded(false);
-    }
-  };
-
-  const updateReel = (patch) => {
-    setReelState((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch(r) } : r)));
-  };
-
-  const toggleLike = () =>
-    updateReel((r) => ({ liked: !r.liked }));
-  const toggleRepost = () => updateReel((r) => ({ reposted: !r.reposted }));
-  const toggleSave = () => updateReel((r) => ({ saved: !r.saved }));
-
-  return (
-    <div
-      className="flex-1 relative overflow-hidden"
-      style={{ background: "#0E0C13" }}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-    >
-      <div className="absolute inset-0 flex items-center justify-center">
-        <Video size={40} color="#2A2632" />
-      </div>
-
-      <div className="absolute top-4 left-0 right-0 flex justify-center">
-        <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
-          Reels
-        </span>
-      </div>
-
-      <div className="absolute left-4 bottom-5 right-20">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-            <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
-              {reel.user[0].toUpperCase()}
-            </div>
-          </div>
-          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{reel.user}</span>
-        </div>
-        <p className="text-xs" style={{ color: "#E5E1EA" }}>{reel.caption}</p>
-      </div>
-
-      <div className="absolute right-3 bottom-6 flex flex-col items-center gap-5">
-        <button onClick={toggleLike} className="flex flex-col items-center gap-1">
-          <Heart size={26} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
-          <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.likes}</span>
-        </button>
-
-        <button className="flex flex-col items-center gap-1">
-          <MessageCircle size={25} color="#F5F1EA" />
-          <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.comments}</span>
-        </button>
-
-        <button onClick={toggleRepost} className="flex flex-col items-center gap-1">
-          <Repeat2 size={26} color={reel.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={reel.reposted ? 2.4 : 2} />
-        </button>
-
-        <button className="flex flex-col items-center gap-1">
-          <SendHorizontal size={24} color="#F5F1EA" />
-          <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.shares}</span>
-        </button>
-
-        <button onClick={toggleSave} className="flex flex-col items-center gap-1">
-          <Bookmark size={24} color="#F5F1EA" fill={reel.saved ? "#F5F1EA" : "none"} />
-        </button>
-
-        <div className="relative flex flex-col items-center">
-          {expanded && (
-            <div
-              className="absolute bottom-11 flex flex-col items-center gap-3 py-3 px-2 rounded-full"
-              style={{ background: "rgba(30,27,38,0.92)", border: "1px solid #2A2632" }}
-            >
-              <button onClick={toggleLike}>
-                <Heart size={16} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
-              </button>
-              <button>
-                <MessageCircle size={16} color="#F5F1EA" />
-              </button>
-              <button onClick={toggleRepost}>
-                <Repeat2 size={16} color={reel.reposted ? "#FFB84D" : "#F5F1EA"} />
-              </button>
-              <button>
-                <SendHorizontal size={15} color="#F5F1EA" />
-              </button>
-              <button onClick={toggleSave}>
-                <Bookmark size={15} color="#F5F1EA" fill={reel.saved ? "#F5F1EA" : "none"} />
-              </button>
-            </div>
-          )}
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="w-8 h-8 rounded-full flex items-center justify-center"
-            style={{ background: expanded ? ACCENT : "#1E1B26", border: expanded ? "none" : "1px solid #2A2632" }}
-          >
-            <Ellipsis size={18} color={expanded ? "#14121A" : "#F5F1EA"} />
-          </button>
-        </div>
-      </div>
-
-      <div className="absolute top-11 right-3 flex flex-col gap-1">
-        {reelState.map((_, i) => (
-          <div
-            key={i}
-            className="rounded-full"
-            style={{
-              width: 3,
-              height: i === index ? 14 : 6,
-              background: i === index ? "#F5F1EA" : "#3E3849",
-              transition: "height 0.2s",
-            }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const mockAccounts = [
-  { id: 1, user: "nilufar.k", name: "Nilufar Khan", followers: "1.2K" },
-  { id: 2, user: "rafiq.tech", name: "Rafiq Ahmed", followers: "845" },
-  { id: 3, user: "meherun.a", name: "Meherun Akter", followers: "3.4K" },
-  { id: 4, user: "tanvir.v", name: "Tanvir Islam", followers: "12.4K" },
-  { id: 5, user: "priya.dances", name: "Priya Das", followers: "8.1K" },
-  { id: 6, user: "shuvo.eats", name: "Shuvo Rahman", followers: "23K" },
-];
-
 function SearchScreen({ onOpenInterests }) {
   const [query, setQuery] = useState("");
   const results = mockAccounts.filter(
@@ -662,7 +516,8 @@ function SearchScreen({ onOpenInterests }) {
       )}
     </div>
   );
-    }
+}
+
 function UploadScreen() {
   const [mode, setMode] = useState("photo");
   const [file, setFile] = useState(null);
@@ -852,8 +707,7 @@ function UploadScreen() {
       </div>
     </div>
   );
-}
-
+          }
 function ProfileScreen({ onLogout }) {
   const [tab, setTab] = useState("posts");
   const mockReposts = Array.from({ length: 4 }, (_, i) => i);
@@ -1484,7 +1338,7 @@ function InterestsScreen({ onBack }) {
       </div>
     </div>
   );
-    }
+                    }
 const TABS = [
   { key: "feed", label: "Feed", icon: Home, screen: FeedScreen },
   { key: "reels", label: "Reels", icon: Clapperboard, screen: ReelsScreen },
@@ -1587,4 +1441,4 @@ export default function App() {
       </div>
     </div>
   );
-         }
+          }
