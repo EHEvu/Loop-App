@@ -37,6 +37,12 @@ const mockPosts = [
   { id: 3, user: "meherun.a", place: "Sylhet", likes: 967, caption: "চা বাগানের সকাল ☕🍃" },
 ];
 
+const mockReels = [
+  { id: 1, user: "tanvir.v", views: "12.4K" },
+  { id: 2, user: "priya.dances", views: "8.1K" },
+  { id: 3, user: "shuvo.eats", views: "23K" },
+];
+
 const mockGrid = Array.from({ length: 9 }, (_, i) => i);
 
 const mockStories = [
@@ -117,6 +123,7 @@ function StoriesBar() {
 function FeedScreen({ onOpenMessages, onOpenNotifications }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [userId, setUserId] = useState(null);
 
   useEffect(() => {
@@ -125,6 +132,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications }) {
 
   const loadFeed = async () => {
     setLoading(true);
+    setLoadError("");
 
     const {
       data: { user },
@@ -133,21 +141,41 @@ function FeedScreen({ onOpenMessages, onOpenNotifications }) {
 
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, created_at, user_id, profiles(username)")
+      .select("id, media_url, media_type, caption, created_at, user_id")
       .order("created_at", { ascending: false });
 
-    if (postsError || !postsData) {
+    if (postsError) {
+      setLoadError(postsError.message);
       setLoading(false);
       return;
     }
 
-    const { data: likesData } = await supabase.from("likes").select("post_id, user_id");
+    const { data: profilesData, error: profilesError } = await supabase
+      .from("profiles")
+      .select("id, username");
 
-    const merged = postsData.map((p) => {
+    if (profilesError) {
+      setLoadError(profilesError.message);
+      setLoading(false);
+      return;
+    }
+
+    const { data: likesData, error: likesError } = await supabase
+      .from("likes")
+      .select("post_id, user_id");
+
+    if (likesError) {
+      setLoadError(likesError.message);
+      setLoading(false);
+      return;
+    }
+
+    const merged = (postsData || []).map((p) => {
+      const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
       const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
       return {
         ...p,
-        username: p.profiles?.username || "unknown",
+        username: profile?.username || "unknown",
         likeCount: postLikes.length,
         liked: postLikes.some((l) => l.user_id === user?.id),
         saved: false,
@@ -199,6 +227,10 @@ function FeedScreen({ onOpenMessages, onOpenNotifications }) {
       {loading ? (
         <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
           লোড হচ্ছে...
+        </p>
+      ) : loadError ? (
+        <p className="text-center text-xs py-10 px-6" style={{ color: "#FF5D73" }}>
+          {loadError}
         </p>
       ) : posts.length === 0 ? (
         <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
@@ -278,7 +310,6 @@ const mockReelsFull = [
   { id: 3, user: "shuvo.eats", caption: "রাস্তার সেরা ফুচকা 😋", likes: "23K", comments: "512", shares: "201" },
   { id: 4, user: "meherun.a", caption: "চা বাগানের সকাল ☕🍃", likes: "6.7K", comments: "98", shares: "31" },
 ];
-function ReelsScreen() {
   const [index, setIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [reelState, setReelState] = useState(
