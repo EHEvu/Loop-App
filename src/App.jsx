@@ -125,7 +125,7 @@ function StoriesBar() {
   );
 }
 
-function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport }) {
+function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport, onOpenProfile }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -281,16 +281,17 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         posts.map((post) => (
           <div key={post.id} className="mb-5">
             <div className="flex items-center gap-2 px-4 py-2">
-              <div
+              <button
+                onClick={() => onOpenProfile(post.user_id)}
                 className="w-9 h-9 rounded-full shrink-0"
                 style={{ background: ACCENT, padding: 2 }}
               >
                 <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
                   {post.username[0].toUpperCase()}
                 </div>
-              </div>
+              </button>
               <div className="flex flex-col leading-tight flex-1">
-                <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username}</span>
+                <button onClick={() => onOpenProfile(post.user_id)} className="text-sm text-left" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username}</button>
               </div>
 
               <div className="relative">
@@ -790,39 +791,163 @@ function UploadScreen() {
   );
 }
 
-function ProfileScreen({ onLogout }) {
+function ProfileScreen({ userId, onLogout, onBack }) {
   const [tab, setTab] = useState("posts");
-  const mockReposts = Array.from({ length: 4 }, (_, i) => i);
-  const mockTagged = Array.from({ length: 6 }, (_, i) => i);
+  const [loading, setLoading] = useState(true);
+  const [myId, setMyId] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [posts, setPosts] = useState([]);
+  const [reposts, setReposts] = useState([]);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followBusy, setFollowBusy] = useState(false);
 
   const tabOrder = ["posts", "reposts", "tagged"];
-  const gridFor = { posts: mockGrid, reposts: mockReposts, tagged: mockTagged }[tab];
+  const mockTagged = Array.from({ length: 6 }, (_, i) => i);
+  const gridFor = tab === "posts" ? posts : tab === "reposts" ? reposts : mockTagged;
+  const isOwnProfile = myId && profile && myId === profile.id;
 
   const touchStartX = React.useRef(0);
-
-  const handleTouchStart = (e) => {
-    touchStartX.current = e.touches[0].clientX;
-  };
-
+  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
   const handleTouchEnd = (e) => {
     const deltaX = e.changedTouches[0].clientX - touchStartX.current;
     const currentIndex = tabOrder.indexOf(tab);
-    if (deltaX < -50 && currentIndex < tabOrder.length - 1) {
-      setTab(tabOrder[currentIndex + 1]); // swiped left -> next tab
-    } else if (deltaX > 50 && currentIndex > 0) {
-      setTab(tabOrder[currentIndex - 1]); // swiped right -> previous tab
-    }
+    if (deltaX < -50 && currentIndex < tabOrder.length - 1) setTab(tabOrder[currentIndex + 1]);
+    else if (deltaX > 50 && currentIndex > 0) setTab(tabOrder[currentIndex - 1]);
   };
+
+  useEffect(() => {
+    loadProfile();
+  }, [userId]);
+
+  const loadProfile = async () => {
+    setLoading(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    setMyId(user?.id ?? null);
+
+    const targetId = userId || user?.id;
+    if (!targetId) { setLoading(false); return; }
+
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("id, username, full_name")
+      .eq("id", targetId)
+      .single();
+    setProfile(profileData);
+
+    const { data: postsData } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type")
+      .eq("user_id", targetId)
+      .order("created_at", { ascending: false });
+    setPosts(postsData || []);
+
+    const { data: repostsData } = await supabase
+      .from("reposts")
+      .select("post_id")
+      .eq("user_id", targetId);
+
+    if (repostsData && repostsData.length > 0) {
+      const postIds = repostsData.map((r) => r.post_id);
+      const { data: repostedPosts } = await supabase
+        .from("posts")
+        .select("id, media_url, media_type")
+        .in("id", postIds);
+      setReposts(repostedPosts || []);
+    } else {
+      setReposts([]);
+    }
+
+    const { count: followers } = await supabase
+      .from("follows")
+      .select("*", { count: "exact", head: true })
+      .eq("following_id", targetId);
+    setFollowerCount(followers || 0);
+
+    const { count: following } = await supabase
+      .from("follows")
+      .select("*", { count: "exact", head: true })
+      .eq("follower_id", targetId);
+    setFollowingCount(following || 0);
+
+    if (user && targetId !== user.id) {
+      const { data: existingFollow } = await supabase
+        .from("follows")
+        .select("id")
+        .eq("follower_id", user.id)
+        .eq("following_id", targetId)
+        .maybeSingle();
+      setIsFollowing(!!existingFollow);
+    }
+
+    setLoading(false);
+  };
+
+  const toggleFollow = async () => {
+    if (!myId || !profile) return;
+    setFollowBusy(true);
+
+    if (isFollowing) {
+      await supabase.from("follows").delete().eq("follower_id", myId).eq("following_id", profile.id);
+      setIsFollowing(false);
+      setFollowerCount((c) => c - 1);
+    } else {
+      await supabase.from("follows").insert({ follower_id: myId, following_id: profile.id });
+      setIsFollowing(true);
+      setFollowerCount((c) => c + 1);
+    }
+    setFollowBusy(false);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
+        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
+        <span className="text-sm" style={{ color: "#8B8494" }}>Profile not found</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
-        <span className="text-base" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
-          your.handle
-        </span>
-        <button onClick={onLogout}>
-          <Settings size={20} color="#F5F1EA" />
-        </button>
+        <div className="flex items-center gap-2">
+          {onBack && (
+            <button onClick={onBack} className="text-sm mr-1" style={{ color: "#F5F1EA" }}>←</button>
+          )}
+          <span className="text-base" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
+            {profile.username}
+          </span>
+        </div>
+        {isOwnProfile ? (
+          <button onClick={onLogout}>
+            <Settings size={20} color="#F5F1EA" />
+          </button>
+        ) : (
+          <button
+            onClick={toggleFollow}
+            disabled={followBusy}
+            className="rounded-lg px-4 py-1.5 text-xs"
+            style={{
+              background: isFollowing ? "#1E1B26" : ACCENT,
+              border: isFollowing ? "1px solid #2A2632" : "none",
+              color: isFollowing ? "#F5F1EA" : "#14121A",
+              fontWeight: 700,
+              opacity: followBusy ? 0.6 : 1,
+            }}
+          >
+            {isFollowing ? "Following" : "Follow"}
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-5 px-4 mb-4">
@@ -830,27 +955,30 @@ function ProfileScreen({ onLogout }) {
           className="w-20 h-20 rounded-full shrink-0 flex items-center justify-center"
           style={{ background: ACCENT }}
         >
-          <span className="text-2xl" style={{ color: "#14121A", fontWeight: 700 }}>A</span>
+          <span className="text-2xl" style={{ color: "#14121A", fontWeight: 700 }}>
+            {profile.username[0].toUpperCase()}
+          </span>
         </div>
         <div className="flex gap-6">
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>24</span>
+            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{posts.length}</span>
             <span className="text-[11px]" style={{ color: "#8B8494" }}>Posts</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>1.2K</span>
+            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{followerCount}</span>
             <span className="text-[11px]" style={{ color: "#8B8494" }}>Followers</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>310</span>
+            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{followingCount}</span>
             <span className="text-[11px]" style={{ color: "#8B8494" }}>Following</span>
           </div>
         </div>
       </div>
 
       <div className="px-4 mb-4">
-        <p className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>Your Name</p>
-        <p className="text-xs mt-0.5" style={{ color: "#8B8494" }}>Your bio will show here ✨</p>
+        <p className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>
+          {profile.full_name || profile.username}
+        </p>
       </div>
 
       <div
@@ -886,21 +1014,41 @@ function ProfileScreen({ onLogout }) {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {gridFor.map((i) => (
-          <div
-            key={i}
-            className="aspect-square flex items-center justify-center relative"
-            style={{ background: i % 3 === 0 ? "#1E1B26" : "#221F2B" }}
-          >
-            <ImageIcon size={18} color="#3E3849" />
-            {tab === "reposts" && (
-              <Repeat2 size={12} color="#FFB84D" className="absolute top-1.5 right-1.5" />
-            )}
-            {tab === "tagged" && (
+        {tab === "tagged" ? (
+          mockTagged.map((i) => (
+            <div
+              key={i}
+              className="aspect-square flex items-center justify-center relative"
+              style={{ background: i % 3 === 0 ? "#1E1B26" : "#221F2B" }}
+            >
+              <ImageIcon size={18} color="#3E3849" />
               <UserSquare2 size={12} color="#FFB84D" className="absolute top-1.5 right-1.5" />
-            )}
+            </div>
+          ))
+        ) : gridFor.length === 0 ? (
+          <div className="col-span-3 py-10 text-center">
+            <span className="text-xs" style={{ color: "#8B8494" }}>
+              {tab === "posts" ? "No posts yet" : "No reposts yet"}
+            </span>
           </div>
-        ))}
+        ) : (
+          gridFor.map((p) => (
+            <div
+              key={p.id}
+              className="aspect-square flex items-center justify-center relative overflow-hidden"
+              style={{ background: "#1E1B26" }}
+            >
+              {p.media_type === "photo" ? (
+                <img src={p.media_url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <video src={p.media_url} className="w-full h-full object-cover" />
+              )}
+              {tab === "reposts" && (
+                <Repeat2 size={12} color="#FFB84D" className="absolute top-1.5 right-1.5" />
+              )}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -1653,8 +1801,9 @@ export default function App() {
   const [interestsOpen, setInterestsOpen] = useState(false);
   const [commentsPostId, setCommentsPostId] = useState(null);
   const [reportPostId, setReportPostId] = useState(null);
+  const [viewProfileId, setViewProfileId] = useState(null);
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null;
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -1710,12 +1859,15 @@ export default function App() {
           <CommentsScreen postId={commentsPostId} onBack={() => setCommentsPostId(null)} />
         ) : reportPostId !== null ? (
           <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
+        ) : viewProfileId !== null ? (
+          <ProfileScreen userId={viewProfileId} onBack={() => setViewProfileId(null)} />
         ) : active === "feed" ? (
           <FeedScreen
             onOpenMessages={() => setInboxOpen(true)}
             onOpenNotifications={() => setNotificationsOpen(true)}
             onOpenComments={(postId) => setCommentsPostId(postId)}
             onOpenReport={(postId) => setReportPostId(postId)}
+            onOpenProfile={(userId) => setViewProfileId(userId)}
           />
         ) : active === "search" ? (
           <SearchScreen onOpenInterests={() => setInterestsOpen(true)} />
