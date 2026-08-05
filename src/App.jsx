@@ -37,9 +37,9 @@ import {
 const ACCENT = "linear-gradient(135deg, #FF5D73 0%, #FFB84D 100%)";
 
 const mockPosts = [
-  { id: 1, user: "nilufar.k", place: "Cox's Bazar", likes: 482, caption: "à¦¸à§‚à¦°à§à¦¯à¦¾à¦¸à§à¦¤à¦Ÿà¦¾ à¦†à¦œ à¦…à¦¨à§à¦¯à¦°à¦•à¦® à¦¸à§à¦¨à§à¦¦à¦° à¦›à¦¿à¦² ðŸŒ…" },
-  { id: 2, user: "rafiq.tech", place: "Dhaka", likes: 219, caption: "à¦¨à¦¤à§à¦¨ à¦¡à§‡à¦¸à§à¦• à¦¸à§‡à¦Ÿà¦†à¦ª, à¦…à¦¬à¦¶à§‡à¦·à§‡ à¦¶à§‡à¦· à¦¹à¦²à§‹ âœ¨" },
-  { id: 3, user: "meherun.a", place: "Sylhet", likes: 967, caption: "à¦šà¦¾ à¦¬à¦¾à¦—à¦¾à¦¨à§‡à¦° à¦¸à¦•à¦¾à¦² â˜•ðŸƒ" },
+  { id: 1, user: "nilufar.k", place: "Cox's Bazar", likes: 482, caption: "The sunset was unreal today 🌅" },
+  { id: 2, user: "rafiq.tech", place: "Dhaka", likes: 219, caption: "New desk setup, finally done ✨" },
+  { id: 3, user: "meherun.a", place: "Sylhet", likes: 967, caption: "Morning at the tea garden ☕🍃" },
 ];
 
 const mockReels = [
@@ -51,7 +51,7 @@ const mockReels = [
 const mockGrid = Array.from({ length: 9 }, (_, i) => i);
 
 const mockStories = [
-  { id: 0, user: "à¦†à¦ªà¦¨à¦¿", isSelf: true },
+  { id: 0, user: "You", isSelf: true },
   { id: 1, user: "nilufar.k" },
   { id: 2, user: "rafiq.tech" },
   { id: 3, user: "meherun.a" },
@@ -267,7 +267,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
       {loading ? (
         <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
-          à¦²à§‹à¦¡ à¦¹à¦šà§à¦›à§‡...
+          Loading...
         </p>
       ) : loadError ? (
         <p className="text-center text-xs py-10 px-6" style={{ color: "#FF5D73" }}>
@@ -275,7 +275,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         </p>
       ) : posts.length === 0 ? (
         <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
-          à¦à¦–à¦¨à§‹ à¦•à§‹à¦¨à§‹ à¦ªà§‹à¦¸à§à¦Ÿ à¦¨à§‡à¦‡ â€” à¦ªà§à¦°à¦¥à¦® à¦ªà§‹à¦¸à§à¦Ÿà¦Ÿà¦¿ à¦†à¦ªà¦¨à¦¿à¦‡ à¦•à¦°à§à¦¨!
+          No posts yet — be the first to post!
         </p>
       ) : (
         posts.map((post) => (
@@ -363,7 +363,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             <div className="px-4 pt-1.5">
               <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.likeCount} likes</span>
               {post.repostCount > 0 && (
-                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>Â· {post.repostCount} reposts</span>
+                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.repostCount} reposts</span>
               )}
               {post.caption && (
                 <p className="text-sm mt-0.5" style={{ color: "#C9C3D1" }}>
@@ -380,10 +380,10 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 }
 
 const mockReelsFull = [
-  { id: 1, user: "tanvir.v", caption: "à¦¸à¦•à¦¾à¦²à§‡à¦° à¦°à§à¦Ÿà¦¿à¦¨ à§« à¦®à¦¿à¦¨à¦¿à¦Ÿà§‡ â˜€ï¸", likes: "12.4K", comments: "342", shares: "89" },
-  { id: 2, user: "priya.dances", caption: "à¦¨à¦¤à§à¦¨ à¦¸à§à¦Ÿà§‡à¦ª à¦Ÿà§à¦°à¦¾à¦‡ à¦•à¦°à¦²à¦¾à¦® ðŸ’ƒ", likes: "8.1K", comments: "156", shares: "44" },
-  { id: 3, user: "shuvo.eats", caption: "à¦°à¦¾à¦¸à§à¦¤à¦¾à¦° à¦¸à§‡à¦°à¦¾ à¦«à§à¦šà¦•à¦¾ ðŸ˜‹", likes: "23K", comments: "512", shares: "201" },
-  { id: 4, user: "meherun.a", caption: "à¦šà¦¾ à¦¬à¦¾à¦—à¦¾à¦¨à§‡à¦° à¦¸à¦•à¦¾à¦² â˜•ðŸƒ", likes: "6.7K", comments: "98", shares: "31" },
+  { id: 1, user: "tanvir.v", caption: "5-minute morning routine ☀️", likes: "12.4K", comments: "342", shares: "89" },
+  { id: 2, user: "priya.dances", caption: "Tried a new move 💃", likes: "8.1K", comments: "156", shares: "44" },
+  { id: 3, user: "shuvo.eats", caption: "Best street food 😋", likes: "23K", comments: "512", shares: "201" },
+  { id: 4, user: "meherun.a", caption: "Morning at the tea garden ☕🍃", likes: "6.7K", comments: "98", shares: "31" },
 ];
 
 function ReelsScreen() {
@@ -454,7 +454,7 @@ function ReelsScreen() {
         <p className="text-xs" style={{ color: "#E5E1EA" }}>{reel.caption}</p>
       </div>
 
-      {/* Quick Actions â€” the only action control; expands to full-size icons */}
+      {/* Quick Actions — the only action control; expands to full-size icons */}
       <div className="absolute right-3 bottom-6 flex flex-col items-center">
         <div className="relative flex flex-col items-center">
           {expanded && (
@@ -564,7 +564,7 @@ function SearchScreen({ onOpenInterests }) {
         <div className="px-4">
           {results.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: "#8B8494" }}>
-              à¦•à§‹à¦¨à§‹ à¦…à§à¦¯à¦¾à¦•à¦¾à¦‰à¦¨à§à¦Ÿ à¦ªà¦¾à¦“à¦¯à¦¼à¦¾ à¦¯à¦¾à¦¯à¦¼à¦¨à¦¿
+              No accounts found
             </p>
           ) : (
             results.map((a) => (
@@ -576,7 +576,7 @@ function SearchScreen({ onOpenInterests }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: 600 }}>{a.user}</p>
-                  <p className="text-xs truncate" style={{ color: "#8B8494" }}>{a.name} Â· {a.followers} followers</p>
+                  <p className="text-xs truncate" style={{ color: "#8B8494" }}>{a.name} · {a.followers} followers</p>
                 </div>
               </div>
             ))
@@ -626,7 +626,7 @@ function UploadScreen() {
   const handleShare = async () => {
     setError("");
     if (!file) {
-      setError("à¦†à¦—à§‡ à¦à¦•à¦Ÿà¦¾ à¦›à¦¬à¦¿ à¦¬à¦¾ à¦­à¦¿à¦¡à¦¿à¦“ à¦¬à§‡à¦›à§‡ à¦¨à¦¿à¦¨");
+      setError("Choose a photo or video first");
       return;
     }
     setUploading(true);
@@ -637,7 +637,7 @@ function UploadScreen() {
 
     if (!user) {
       setUploading(false);
-      setError("à¦²à¦—à¦‡à¦¨ à¦•à¦°à¦¾ à¦¨à§‡à¦‡");
+      setError("Not logged in");
       return;
     }
 
@@ -684,14 +684,14 @@ function UploadScreen() {
           <PlusSquare size={24} color="#14121A" />
         </div>
         <p className="text-sm mb-4" style={{ color: "#F5F1EA", fontWeight: 600 }}>
-          à¦ªà§‹à¦¸à§à¦Ÿ à¦¹à¦¯à¦¼à§‡ à¦—à§‡à¦›à§‡!
+          Posted!
         </p>
         <button
           onClick={resetForm}
           className="rounded-xl px-5 py-2.5 text-sm"
           style={{ background: ACCENT, color: "#14121A", fontWeight: 700 }}
         >
-          à¦†à¦°à§‡à¦•à¦Ÿà¦¾ à¦ªà§‹à¦¸à§à¦Ÿ à¦•à¦°à§à¦¨
+          Create another post
         </button>
       </div>
     );
@@ -699,7 +699,7 @@ function UploadScreen() {
 
   return (
     <div className="flex-1 overflow-y-auto pb-4">
-      <TopBar title="à¦¨à¦¤à§à¦¨ à¦ªà§‹à¦¸à§à¦Ÿ" />
+      <TopBar title="New Post" />
       <div className="px-4">
         <div className="flex gap-2 mb-4">
           <button
@@ -756,14 +756,14 @@ function UploadScreen() {
             <>
               {mode === "photo" ? <ImageIcon size={28} color="#8B8494" /> : <Video size={28} color="#8B8494" />}
               <span className="text-xs" style={{ color: "#8B8494" }}>
-                {mode === "photo" ? "à¦à¦•à¦Ÿà¦¾ à¦›à¦¬à¦¿ à¦¬à§‡à¦›à§‡ à¦¨à¦¿à¦¨" : "à¦à¦•à¦Ÿà¦¾ à¦­à¦¿à¦¡à¦¿à¦“ à¦¬à§‡à¦›à§‡ à¦¨à¦¿à¦¨"}
+                {mode === "photo" ? "Choose a photo" : "Choose a video"}
               </span>
             </>
           )}
         </label>
 
         <textarea
-          placeholder="à¦•à§à¦¯à¦¾à¦ªà¦¶à¦¨ à¦²à¦¿à¦–à§à¦¨..."
+          placeholder="Write a caption..."
           rows={3}
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
@@ -783,7 +783,7 @@ function UploadScreen() {
           className="w-full rounded-xl py-3 text-sm"
           style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: uploading ? 0.7 : 1 }}
         >
-          {uploading ? "à¦†à¦ªà¦²à§‹à¦¡ à¦¹à¦šà§à¦›à§‡..." : "à¦¶à§‡à¦¯à¦¼à¦¾à¦° à¦•à¦°à§à¦¨"}
+          {uploading ? "Uploading..." : "Share"}
         </button>
       </div>
     </div>
@@ -818,7 +818,7 @@ function ProfileScreen({ onLogout }) {
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <span className="text-base" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
-          apni.official
+          your.handle
         </span>
         <button onClick={onLogout}>
           <Settings size={20} color="#F5F1EA" />
@@ -849,8 +849,8 @@ function ProfileScreen({ onLogout }) {
       </div>
 
       <div className="px-4 mb-4">
-        <p className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>à¦†à¦ªà¦¨à¦¾à¦° à¦¨à¦¾à¦®</p>
-        <p className="text-xs mt-0.5" style={{ color: "#8B8494" }}>à¦à¦–à¦¾à¦¨à§‡ à¦¬à¦¾à¦¯à¦¼à§‹ à¦²à§‡à¦–à¦¾ à¦¥à¦¾à¦•à¦¬à§‡ âœ¨</p>
+        <p className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>Your Name</p>
+        <p className="text-xs mt-0.5" style={{ color: "#8B8494" }}>Your bio will show here ✨</p>
       </div>
 
       <div
@@ -907,9 +907,9 @@ function ProfileScreen({ onLogout }) {
 }
 
 const mockChats = [
-  { id: 1, user: "nilufar.k", last: "à¦›à¦¬à¦¿à¦Ÿà¦¾ à¦…à¦¸à¦¾à¦§à¦¾à¦°à¦£ à¦¹à¦¯à¦¼à§‡à¦›à§‡!", time: "2à¦®à¦¿" },
-  { id: 2, user: "rafiq.tech", last: "à¦†à¦šà§à¦›à¦¾, à¦ à¦¿à¦• à¦†à¦›à§‡ à¦¤à¦¾à¦¹à¦²à§‡ ðŸ‘", time: "1à¦˜" },
-  { id: 3, user: "meherun.a", last: "à¦•à¦¾à¦²à¦•à§‡ à¦¦à§‡à¦–à¦¾ à¦¹à¦šà§à¦›à§‡", time: "5à¦˜" },
+  { id: 1, user: "nilufar.k", last: "The photo turned out amazing!", time: "2m" },
+  { id: 2, user: "rafiq.tech", last: "Okay, sounds good 👍", time: "1h" },
+  { id: 3, user: "meherun.a", last: "See you tomorrow", time: "5h" },
 ];
 
 function MessagesScreen({ onBack }) {
@@ -925,7 +925,7 @@ function MessagesScreen({ onBack }) {
         style={{ background: "#14121A" }}
       >
         <div className="flex items-center gap-3 mb-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>â†</button>
+          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
           <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
             Messages
           </h1>
@@ -938,7 +938,7 @@ function MessagesScreen({ onBack }) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="ID à¦¦à¦¿à¦¯à¦¼à§‡ à¦–à§à¦à¦œà§à¦¨..."
+            placeholder="Search by ID..."
             className="flex-1 bg-transparent outline-none text-sm"
             style={{ color: "#F5F1EA" }}
           />
@@ -947,7 +947,7 @@ function MessagesScreen({ onBack }) {
       <div className="flex-1 overflow-y-auto">
         {filteredChats.length === 0 ? (
           <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>
-            à¦•à§‹à¦¨à§‹ ID à¦ªà¦¾à¦“à¦¯à¦¼à¦¾ à¦¯à¦¾à¦¯à¦¼à¦¨à¦¿
+            No ID found
           </p>
         ) : (
           filteredChats.map((c) => (
@@ -971,10 +971,10 @@ function MessagesScreen({ onBack }) {
 }
 
 const mockNotifications = [
-  { id: 1, user: "nilufar.k", action: "à¦†à¦ªà¦¨à¦¾à¦° à¦ªà§‹à¦¸à§à¦Ÿà§‡ à¦²à¦¾à¦‡à¦• à¦¦à¦¿à¦¯à¦¼à§‡à¦›à§‡", time: "5à¦®à¦¿", icon: Heart, color: "#FF5D73" },
-  { id: 2, user: "rafiq.tech", action: "à¦†à¦ªà¦¨à¦¾à¦•à§‡ à¦«à¦²à§‹ à¦•à¦°à¦¾ à¦¶à§à¦°à§ à¦•à¦°à§‡à¦›à§‡", time: "22à¦®à¦¿", icon: CircleUserRound, color: "#8B8494" },
-  { id: 3, user: "meherun.a", action: "à¦†à¦ªà¦¨à¦¾à¦° Reel-à¦ à¦•à¦®à§‡à¦¨à§à¦Ÿ à¦•à¦°à§‡à¦›à§‡", time: "1à¦˜", icon: MessageCircle, color: "#8B8494" },
-  { id: 4, user: "tanvir.v", action: "à¦†à¦ªà¦¨à¦¾à¦° à¦ªà§‹à¦¸à§à¦Ÿ Repost à¦•à¦°à§‡à¦›à§‡", time: "3à¦˜", icon: Repeat2, color: "#FFB84D" },
+  { id: 1, user: "nilufar.k", action: "liked your post", time: "5m", icon: Heart, color: "#FF5D73" },
+  { id: 2, user: "rafiq.tech", action: "started following you", time: "22m", icon: CircleUserRound, color: "#8B8494" },
+  { id: 3, user: "meherun.a", action: "commented on your Reel", time: "1h", icon: MessageCircle, color: "#8B8494" },
+  { id: 4, user: "tanvir.v", action: "reposted your post", time: "3h", icon: Repeat2, color: "#FFB84D" },
 ];
 
 function NotificationsScreen({ onBack }) {
@@ -984,7 +984,7 @@ function NotificationsScreen({ onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>â†</button>
+        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
           Notifications
         </h1>
@@ -1017,12 +1017,12 @@ function NotificationsScreen({ onBack }) {
 
 const reportReasons = [
   "Spam",
-  "Nudity à¦¬à¦¾ sexual content",
-  "Hate speech à¦¬à¦¾ symbols",
-  "à¦®à¦¿à¦¥à§à¦¯à¦¾ à¦¤à¦¥à§à¦¯",
-  "Bullying à¦¬à¦¾ harassment",
-  "à¦¸à¦¹à¦¿à¦‚à¦¸à¦¤à¦¾",
-  "à¦…à¦¨à§à¦¯ à¦•à¦¿à¦›à§",
+  "Nudity or sexual content",
+  "Hate speech or symbols",
+  "False information",
+  "Bullying or harassment",
+  "Violence",
+  "Something else",
 ];
 
 function ReportScreen({ postId, onBack }) {
@@ -1058,13 +1058,13 @@ function ReportScreen({ postId, onBack }) {
           <Ellipsis size={22} color="#14121A" />
         </div>
         <p className="text-sm mb-1" style={{ color: "#F5F1EA", fontWeight: 600 }}>
-          à¦°à¦¿à¦ªà§‹à¦°à§à¦Ÿ à¦•à¦°à¦¾ à¦¹à¦¯à¦¼à§‡à¦›à§‡
+          Reported
         </p>
         <p className="text-xs mb-6" style={{ color: "#8B8494" }}>
-          à¦œà¦¾à¦¨à¦¾à¦¨à§‹à¦° à¦œà¦¨à§à¦¯ à¦§à¦¨à§à¦¯à¦¬à¦¾à¦¦à¥¤ à¦†à¦®à¦°à¦¾ à¦à¦Ÿà¦¾ à¦°à¦¿à¦­à¦¿à¦‰ à¦•à¦°à¦¬à¥¤
+          Thanks for letting us know. We'll review it.
         </p>
         <button onClick={onBack} style={{ color: "#FF5D73", fontWeight: 600 }} className="text-sm">
-          à¦«à¦¿à¦°à§‡ à¦¯à¦¾à¦¨
+          Go back
         </button>
       </div>
     );
@@ -1076,13 +1076,13 @@ function ReportScreen({ postId, onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>â†</button>
+        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
           Report
         </h1>
       </div>
       <p className="text-xs px-4 pt-4 pb-2" style={{ color: "#8B8494" }}>
-        à¦•à§‡à¦¨ à¦à¦‡ à¦ªà§‹à¦¸à§à¦Ÿà¦Ÿà¦¾ à¦°à¦¿à¦ªà§‹à¦°à§à¦Ÿ à¦•à¦°à¦›à§‡à¦¨?
+        Why are you reporting this post?
       </p>
       <div className="flex-1 overflow-y-auto">
         {reportReasons.map((reason) => (
@@ -1171,7 +1171,7 @@ function CommentsScreen({ postId, onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>â†</button>
+        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
           Comments
         </h1>
@@ -1180,11 +1180,11 @@ function CommentsScreen({ postId, onBack }) {
       <div className="flex-1 overflow-y-auto px-4 pt-3">
         {loading ? (
           <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
-            à¦²à§‹à¦¡ à¦¹à¦šà§à¦›à§‡...
+            Loading...
           </p>
         ) : comments.length === 0 ? (
           <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
-            à¦à¦–à¦¨à§‹ à¦•à§‹à¦¨à§‹ à¦•à¦®à§‡à¦¨à§à¦Ÿ à¦¨à§‡à¦‡ â€” à¦ªà§à¦°à¦¥à¦® à¦•à¦®à§‡à¦¨à§à¦Ÿà¦Ÿà¦¿ à¦†à¦ªà¦¨à¦¿à¦‡ à¦•à¦°à§à¦¨
+            No comments yet — be the first to comment
           </p>
         ) : (
           comments.map((c) => (
@@ -1209,7 +1209,7 @@ function CommentsScreen({ postId, onBack }) {
           value={newComment}
           onChange={(e) => setNewComment(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handlePost()}
-          placeholder="à¦à¦•à¦Ÿà¦¾ à¦•à¦®à§‡à¦¨à§à¦Ÿ à¦²à¦¿à¦–à§à¦¨..."
+          placeholder="Write a comment..."
           className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none"
           style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
         />
@@ -1219,7 +1219,7 @@ function CommentsScreen({ postId, onBack }) {
           className="rounded-xl px-4 py-2.5 text-sm"
           style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: posting || !newComment.trim() ? 0.6 : 1 }}
         >
-          à¦ªà¦¾à¦ à¦¾à¦¨
+          Send
         </button>
       </div>
     </div>
@@ -1260,7 +1260,7 @@ function LoginScreen({ onLogin, onGoSignup }) {
   const handleLogin = async () => {
     setError("");
     if (!email || !password) {
-      setError("à¦‡à¦®à§‡à¦‡à¦² à¦“ à¦ªà¦¾à¦¸à¦“à¦¯à¦¼à¦¾à¦°à§à¦¡ à¦¦à¦¿à¦¨");
+      setError("Enter email and password");
       return;
     }
     setLoading(true);
@@ -1282,14 +1282,14 @@ function LoginScreen({ onLogin, onGoSignup }) {
         Loop
       </h1>
       <p className="text-center text-xs mb-8" style={{ color: "#8B8494" }}>
-        à¦†à¦ªà¦¨à¦¾à¦° à¦®à§à¦¹à§‚à¦°à§à¦¤à¦—à§à¦²à§‹ à¦¶à§‡à¦¯à¦¼à¦¾à¦° à¦•à¦°à§à¦¨
+        Share your moments
       </p>
 
-      <AuthInput icon={Mail} type="email" placeholder="à¦‡à¦®à§‡à¦‡à¦²" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <AuthInput icon={Mail} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <AuthInput
         icon={Lock}
         type={showPass ? "text" : "password"}
-        placeholder="à¦ªà¦¾à¦¸à¦“à¦¯à¦¼à¦¾à¦°à§à¦¡"
+        placeholder="Password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         showToggle
@@ -1309,13 +1309,13 @@ function LoginScreen({ onLogin, onGoSignup }) {
         className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
         style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
-        {loading ? "à¦…à¦ªà§‡à¦•à§à¦·à¦¾ à¦•à¦°à§à¦¨..." : "à¦²à¦—à¦‡à¦¨ à¦•à¦°à§à¦¨"}
+        {loading ? "Please wait..." : "Log In"}
       </button>
 
       <p className="text-center text-xs" style={{ color: "#8B8494" }}>
-        à¦…à§à¦¯à¦¾à¦•à¦¾à¦‰à¦¨à§à¦Ÿ à¦¨à§‡à¦‡?{" "}
+        Don't have an account?{" "}
         <button onClick={onGoSignup} style={{ color: "#FF5D73", fontWeight: 600 }}>
-          à¦¸à¦¾à¦‡à¦¨ à¦†à¦ª à¦•à¦°à§à¦¨
+          Sign Up
         </button>
       </p>
     </div>
@@ -1334,11 +1334,11 @@ function SignupScreen({ onSignup, onGoLogin }) {
   const handleSignup = async () => {
     setError("");
     if (!name || !email || !password) {
-      setError("à¦¸à¦¬ à¦˜à¦° à¦ªà§‚à¦°à¦£ à¦•à¦°à§à¦¨");
+      setError("Please fill in all fields");
       return;
     }
     if (password.length < 6) {
-      setError("à¦ªà¦¾à¦¸à¦“à¦¯à¦¼à¦¾à¦°à§à¦¡ à¦…à¦¨à§à¦¤à¦¤ à§¬ à¦•à§à¦¯à¦¾à¦°à§‡à¦•à§à¦Ÿà¦¾à¦° à¦¹à¦¤à§‡ à¦¹à¦¬à§‡");
+      setError("Password must be at least 6 characters");
       return;
     }
     setLoading(true);
@@ -1360,13 +1360,13 @@ function SignupScreen({ onSignup, onGoLogin }) {
       <div className="flex-1 flex flex-col justify-center items-center px-6 text-center" style={{ background: "#14121A" }}>
         <Mail size={32} color="#FF5D73" className="mb-3" />
         <p className="text-sm mb-2" style={{ color: "#F5F1EA", fontWeight: 600 }}>
-          à¦‡à¦®à§‡à¦‡à¦² à¦šà§‡à¦• à¦•à¦°à§à¦¨
+          Check your email
         </p>
         <p className="text-xs mb-6" style={{ color: "#8B8494" }}>
-          {email} à¦ à¦à¦•à¦Ÿà¦¾ confirmation à¦²à¦¿à¦‚à¦• à¦ªà¦¾à¦ à¦¾à¦¨à§‹ à¦¹à¦¯à¦¼à§‡à¦›à§‡à¥¤ à¦²à¦¿à¦‚à¦•à§‡ à¦•à§à¦²à¦¿à¦• à¦•à¦°à§‡ à¦…à§à¦¯à¦¾à¦•à¦¾à¦‰à¦¨à§à¦Ÿ verify à¦•à¦°à§à¦¨, à¦¤à¦¾à¦°à¦ªà¦° à¦²à¦—à¦‡à¦¨ à¦•à¦°à§à¦¨à¥¤
+          A confirmation link was sent to {email}. Click the link to verify your account, then log in.
         </p>
         <button onClick={onGoLogin} style={{ color: "#FF5D73", fontWeight: 600 }} className="text-sm">
-          à¦²à¦—à¦‡à¦¨ à¦ªà§‡à¦œà§‡ à¦«à¦¿à¦°à§‡ à¦¯à¦¾à¦¨
+          Back to Login
         </button>
       </div>
     );
@@ -1378,18 +1378,18 @@ function SignupScreen({ onSignup, onGoLogin }) {
         className="text-3xl text-center mb-1"
         style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "#F5F1EA" }}
       >
-        à¦¨à¦¤à§à¦¨ à¦…à§à¦¯à¦¾à¦•à¦¾à¦‰à¦¨à§à¦Ÿ
+        New Account
       </h1>
       <p className="text-center text-xs mb-8" style={{ color: "#8B8494" }}>
-        à¦•à¦¯à¦¼à§‡à¦• à¦¸à§‡à¦•à§‡à¦¨à§à¦¡à§‡à¦‡ à¦¶à§à¦°à§ à¦•à¦°à§à¦¨
+        Get started in seconds
       </p>
 
-      <AuthInput icon={CircleUserRound} type="text" placeholder="à¦ªà§à¦°à§‹ à¦¨à¦¾à¦®" value={name} onChange={(e) => setName(e.target.value)} />
-      <AuthInput icon={Mail} type="email" placeholder="à¦‡à¦®à§‡à¦‡à¦²" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <AuthInput icon={CircleUserRound} type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} />
+      <AuthInput icon={Mail} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <AuthInput
         icon={Lock}
         type={showPass ? "text" : "password"}
-        placeholder="à¦ªà¦¾à¦¸à¦“à¦¯à¦¼à¦¾à¦°à§à¦¡"
+        placeholder="Password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         showToggle
@@ -1409,13 +1409,13 @@ function SignupScreen({ onSignup, onGoLogin }) {
         className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
         style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
-        {loading ? "à¦…à¦ªà§‡à¦•à§à¦·à¦¾ à¦•à¦°à§à¦¨..." : "à¦¸à¦¾à¦‡à¦¨ à¦†à¦ª à¦•à¦°à§à¦¨"}
+        {loading ? "Please wait..." : "Sign Up"}
       </button>
 
       <p className="text-center text-xs" style={{ color: "#8B8494" }}>
-        à¦…à§à¦¯à¦¾à¦•à¦¾à¦‰à¦¨à§à¦Ÿ à¦†à¦›à§‡?{" "}
+        Already have an account?{" "}
         <button onClick={onGoLogin} style={{ color: "#FF5D73", fontWeight: 600 }}>
-          à¦²à¦—à¦‡à¦¨ à¦•à¦°à§à¦¨
+          Log In
         </button>
       </p>
     </div>
@@ -1489,13 +1489,13 @@ function InterestsScreen({ onBack }) {
         style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
       >
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>â†</button>
+          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
           <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
             Interests
           </h1>
         </div>
         <p className="text-xs mt-1" style={{ color: "#8B8494" }}>
-          à¦¯à§‡ à¦¬à¦¿à¦·à¦¯à¦¼à¦—à§à¦²à§‹ à¦¬à§‡à¦›à§‡ à¦¨à§‡à¦¬à§‡à¦¨, à¦¸à§‡à¦‡ à¦¸à¦®à§à¦ªà¦°à§à¦•à¦¿à¦¤ Post à¦“ Reel à¦¬à§‡à¦¶à¦¿ à¦¦à§‡à¦–à¦¾à¦¨à§‹ à¦¹à¦¬à§‡
+          You'll see more posts and reels related to the topics you pick
         </p>
       </div>
 
@@ -1531,12 +1531,12 @@ function InterestsScreen({ onBack }) {
                 value={newTopic}
                 onChange={(e) => setNewTopic(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAddTopic()}
-                placeholder="à¦¨à¦¤à§à¦¨ à¦¬à¦¿à¦·à¦¯à¦¼..."
+                placeholder="New topic..."
                 className="bg-transparent outline-none text-xs w-24"
                 style={{ color: "#F5F1EA" }}
               />
               <button onClick={handleAddTopic} className="text-xs" style={{ color: "#FF5D73", fontWeight: 700 }}>
-                à¦¯à§‹à¦—
+                Add
               </button>
             </div>
           ) : (
@@ -1552,11 +1552,11 @@ function InterestsScreen({ onBack }) {
 
         <div style={{ borderTop: "1px solid #221F2B" }} className="pt-4">
           <p className="text-xs mb-3" style={{ color: "#8B8494" }}>
-            à¦ªà§à¦°à¦¾à¦¸à¦™à§à¦—à¦¿à¦• Post à¦“ Reel
+            Related Posts & Reels
           </p>
           {matches.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: "#8B8494" }}>
-              à¦‰à¦ªà¦° à¦¥à§‡à¦•à§‡ à¦…à¦¨à§à¦¤à¦¤ à¦à¦•à¦Ÿà¦¾ à¦¬à¦¿à¦·à¦¯à¦¼ à¦¬à§‡à¦›à§‡ à¦¨à¦¿à¦¨
+              Pick at least one topic above
             </p>
           ) : (
             <div className="grid grid-cols-3 gap-1">
@@ -1585,7 +1585,7 @@ function InterestsScreen({ onBack }) {
             What you want to see less
           </p>
           <p className="text-[11px] mb-3" style={{ color: "#8B8494" }}>
-            à¦à¦‡ à¦¬à¦¿à¦·à¦¯à¦¼à¦—à§à¦²à§‹à¦° Post/Reel algorithm à¦†à¦° à¦¦à§‡à¦–à¦¾à¦¬à§‡ à¦¨à¦¾
+            The algorithm will stop showing posts/reels about these topics
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -1598,7 +1598,7 @@ function InterestsScreen({ onBack }) {
               >
                 <Hash size={12} color="#F5B8C4" />
                 {t}
-                <span style={{ fontWeight: 700 }}>Ã—</span>
+                <span style={{ fontWeight: 700 }}>×</span>
               </button>
             ))}
 
@@ -1612,12 +1612,12 @@ function InterestsScreen({ onBack }) {
                   value={newLessTopic}
                   onChange={(e) => setNewLessTopic(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleAddLessTopic()}
-                  placeholder="à¦¨à¦¤à§à¦¨ à¦¬à¦¿à¦·à¦¯à¦¼..."
+                  placeholder="New topic..."
                   className="bg-transparent outline-none text-xs w-24"
                   style={{ color: "#F5F1EA" }}
                 />
                 <button onClick={handleAddLessTopic} className="text-xs" style={{ color: "#FF5D73", fontWeight: 700 }}>
-                  à¦¯à§‹à¦—
+                  Add
                 </button>
               </div>
             ) : (
@@ -1672,7 +1672,7 @@ export default function App() {
   if (checkingSession) {
     return (
       <div className="w-full min-h-screen flex items-center justify-center" style={{ background: "#0A090D" }}>
-        <span className="text-sm" style={{ color: "#8B8494" }}>à¦²à§‹à¦¡ à¦¹à¦šà§à¦›à§‡...</span>
+        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
       </div>
     );
   }
