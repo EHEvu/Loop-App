@@ -219,6 +219,14 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId);
     } else {
       await supabase.from("likes").insert({ post_id: post.id, user_id: userId });
+      if (post.user_id !== userId) {
+        await supabase.from("notifications").insert({
+          user_id: post.user_id,
+          actor_id: userId,
+          type: "like",
+          post_id: post.id,
+        });
+      }
     }
   };
 
@@ -525,13 +533,32 @@ const mockAccounts = [
   { id: 6, user: "shuvo.eats", name: "Shuvo Rahman", followers: "23K" },
 ];
 
-function SearchScreen({ onOpenInterests }) {
+function SearchScreen({ onOpenInterests, onOpenProfile }) {
   const [query, setQuery] = useState("");
-  const results = mockAccounts.filter(
-    (a) =>
-      a.user.toLowerCase().includes(query.toLowerCase()) ||
-      a.name.toLowerCase().includes(query.toLowerCase())
-  );
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([]);
+      return;
+    }
+    const timeout = setTimeout(() => {
+      runSearch(query.trim());
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [query]);
+
+  const runSearch = async (q) => {
+    setSearching(true);
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, username, full_name")
+      .or(`username.ilike.%${q}%,full_name.ilike.%${q}%`)
+      .limit(20);
+    setResults(data || []);
+    setSearching(false);
+  };
 
   return (
     <div className="flex-1 overflow-y-auto pb-4">
@@ -563,23 +590,33 @@ function SearchScreen({ onOpenInterests }) {
 
       {query ? (
         <div className="px-4">
-          {results.length === 0 ? (
+          {searching ? (
+            <p className="text-xs text-center py-8" style={{ color: "#8B8494" }}>
+              Searching...
+            </p>
+          ) : results.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: "#8B8494" }}>
               No accounts found
             </p>
           ) : (
             results.map((a) => (
-              <div key={a.id} className="flex items-center gap-3 py-2.5">
+              <button
+                key={a.id}
+                onClick={() => onOpenProfile(a.id)}
+                className="flex items-center gap-3 py-2.5 w-full text-left"
+              >
                 <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
                   <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-xs" style={{ color: "#F5F1EA" }}>
-                    {a.user[0].toUpperCase()}
+                    {a.username[0].toUpperCase()}
                   </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: 600 }}>{a.user}</p>
-                  <p className="text-xs truncate" style={{ color: "#8B8494" }}>{a.name} · {a.followers} followers</p>
+                  <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: 600 }}>{a.username}</p>
+                  {a.full_name && (
+                    <p className="text-xs truncate" style={{ color: "#8B8494" }}>{a.full_name}</p>
+                  )}
                 </div>
-              </div>
+              </button>
             ))
           )}
         </div>
@@ -895,6 +932,11 @@ function ProfileScreen({ userId, onLogout, onBack }) {
       setFollowerCount((c) => c - 1);
     } else {
       await supabase.from("follows").insert({ follower_id: myId, following_id: profile.id });
+      await supabase.from("notifications").insert({
+        user_id: profile.id,
+        actor_id: myId,
+        type: "follow",
+      });
       setIsFollowing(true);
       setFollowerCount((c) => c + 1);
     }
@@ -1126,6 +1168,53 @@ const mockNotifications = [
 ];
 
 function NotificationsScreen({ onBack }) {
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadNotifications();
+  }, []);
+
+  const loadNotifications = async () => {
+    setLoading(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setLoading(false); return; }
+
+    const { data: notifData } = await supabase
+      .from("notifications")
+      .select("id, type, actor_id, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (!notifData || notifData.length === 0) {
+      setNotifications([]);
+      setLoading(false);
+      return;
+    }
+
+    const actorIds = [...new Set(notifData.map((n) => n.actor_id))];
+    const { data: profilesData } = await supabase
+      .from("profiles")
+      .select("id, username")
+      .in("id", actorIds);
+
+    const merged = notifData.map((n) => ({
+      ...n,
+      username: (profilesData || []).find((p) => p.id === n.actor_id)?.username || "unknown",
+    }));
+
+    setNotifications(merged);
+    setLoading(false);
+  };
+
+  const actionText = (type) =>
+    type === "like" ? "liked your post" : type === "follow" ? "started following you" : "";
+
+  const iconFor = (type) => (type === "like" ? Heart : CircleUserRound);
+  const colorFor = (type) => (type === "like" ? "#FF5D73" : "#8B8494");
+
   return (
     <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
       <div
@@ -1138,25 +1227,34 @@ function NotificationsScreen({ onBack }) {
         </h1>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {mockNotifications.map((n) => {
-          const Icon = n.icon;
-          return (
-            <div key={n.id} className="flex items-center gap-3 px-4 py-2.5">
-              <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
-                <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-xs" style={{ color: "#F5F1EA" }}>
-                  {n.user[0].toUpperCase()}
+        {loading ? (
+          <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
+            Loading...
+          </p>
+        ) : notifications.length === 0 ? (
+          <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
+            No notifications yet
+          </p>
+        ) : (
+          notifications.map((n) => {
+            const Icon = iconFor(n.type);
+            return (
+              <div key={n.id} className="flex items-center gap-3 px-4 py-2.5">
+                <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
+                  <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-xs" style={{ color: "#F5F1EA" }}>
+                    {n.username[0].toUpperCase()}
+                  </div>
                 </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm" style={{ color: "#F5F1EA" }}>
+                    <span style={{ fontWeight: 600 }}>{n.username}</span> {actionText(n.type)}
+                  </p>
+                </div>
+                <Icon size={17} color={colorFor(n.type)} className="shrink-0" />
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm" style={{ color: "#F5F1EA" }}>
-                  <span style={{ fontWeight: 600 }}>{n.user}</span> {n.action}
-                </p>
-                <span className="text-[10px]" style={{ color: "#8B8494" }}>{n.time}</span>
-              </div>
-              <Icon size={17} color={n.color} className="shrink-0" />
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -1870,7 +1968,7 @@ export default function App() {
             onOpenProfile={(userId) => setViewProfileId(userId)}
           />
         ) : active === "search" ? (
-          <SearchScreen onOpenInterests={() => setInterestsOpen(true)} />
+          <SearchScreen onOpenInterests={() => setInterestsOpen(true)} onOpenProfile={(userId) => setViewProfileId(userId)} />
         ) : active === "profile" ? (
           <ProfileScreen onLogout={() => supabase.auth.signOut()} />
         ) : (
