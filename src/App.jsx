@@ -361,7 +361,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               </button>
 
               <div className="flex items-center gap-4">
-                <button onClick={() => onOpenComments(post.id)}>
+                <button onClick={() => onOpenComments(post.id, post.user_id)}>
                   <MessageCircle size={20} color="#F5F1EA" />
                 </button>
                 <button onClick={() => toggleRepost(post)}>
@@ -1210,10 +1210,10 @@ function NotificationsScreen({ onBack }) {
   };
 
   const actionText = (type) =>
-    type === "like" ? "liked your post" : type === "follow" ? "started following you" : "";
+    type === "like" ? "liked your post" : type === "follow" ? "started following you" : type === "comment" ? "commented on your post" : "";
 
-  const iconFor = (type) => (type === "like" ? Heart : CircleUserRound);
-  const colorFor = (type) => (type === "like" ? "#FF5D73" : "#8B8494");
+  const iconFor = (type) => (type === "like" ? Heart : type === "comment" ? MessageCircle : CircleUserRound);
+  const colorFor = (type) => (type === "like" ? "#FF5D73" : type === "comment" ? "#8B8494" : "#8B8494");
 
   return (
     <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
@@ -1347,7 +1347,7 @@ function ReportScreen({ postId, onBack }) {
   );
 }
 
-function CommentsScreen({ postId, onBack }) {
+function CommentsScreen({ postId, postOwnerId, onBack }) {
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newComment, setNewComment] = useState("");
@@ -1408,6 +1408,14 @@ function CommentsScreen({ postId, onBack }) {
     if (!error && data) {
       setComments((prev) => [...prev, { ...data, username: myUsername || "unknown" }]);
       setNewComment("");
+      if (postOwnerId && postOwnerId !== userId) {
+        await supabase.from("notifications").insert({
+          user_id: postOwnerId,
+          actor_id: userId,
+          type: "comment",
+          post_id: postId,
+        });
+      }
     }
   };
 
@@ -1898,6 +1906,7 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [interestsOpen, setInterestsOpen] = useState(false);
   const [commentsPostId, setCommentsPostId] = useState(null);
+  const [commentsPostOwnerId, setCommentsPostOwnerId] = useState(null);
   const [reportPostId, setReportPostId] = useState(null);
   const [viewProfileId, setViewProfileId] = useState(null);
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
@@ -1954,7 +1963,7 @@ export default function App() {
         ) : interestsOpen ? (
           <InterestsScreen onBack={() => setInterestsOpen(false)} />
         ) : commentsPostId !== null ? (
-          <CommentsScreen postId={commentsPostId} onBack={() => setCommentsPostId(null)} />
+          <CommentsScreen postId={commentsPostId} postOwnerId={commentsPostOwnerId} onBack={() => setCommentsPostId(null)} />
         ) : reportPostId !== null ? (
           <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
         ) : viewProfileId !== null ? (
@@ -1963,7 +1972,10 @@ export default function App() {
           <FeedScreen
             onOpenMessages={() => setInboxOpen(true)}
             onOpenNotifications={() => setNotificationsOpen(true)}
-            onOpenComments={(postId) => setCommentsPostId(postId)}
+            onOpenComments={(postId, ownerId) => {
+              setCommentsPostId(postId);
+              setCommentsPostOwnerId(ownerId);
+            }}
             onOpenReport={(postId) => setReportPostId(postId)}
             onOpenProfile={(userId) => setViewProfileId(userId)}
           />
