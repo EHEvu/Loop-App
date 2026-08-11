@@ -27,6 +27,19 @@ import {
   SlidersHorizontal,
   Hash,
   Plus,
+  Volume2,
+  VolumeX,
+  Maximize,
+  Minimize,
+  Download,
+  Music2,
+  Sparkles,
+  Gauge,
+  RefreshCw,
+  X,
+  UserPlus,
+  UserCheck,
+  ImagePlus,
 } from "lucide-react";
 
 // ---- Design tokens ----
@@ -35,6 +48,52 @@ import {
 // text: #F5F1EA (warm off-white)  muted: #8B8494
 
 const ACCENT = "linear-gradient(135deg, #FF5D73 0%, #FFB84D 100%)";
+
+// ---- Local device preferences (per-browser, not synced to Supabase) ----
+function getCountPrefs() {
+  try {
+    const raw = localStorage.getItem("loop_count_prefs");
+    return raw ? JSON.parse(raw) : { likes: true, comments: true, reposts: true, saves: true };
+  } catch {
+    return { likes: true, comments: true, reposts: true, saves: true };
+  }
+}
+function saveCountPrefs(prefs) {
+  try {
+    localStorage.setItem("loop_count_prefs", JSON.stringify(prefs));
+    window.dispatchEvent(new Event("loop-count-prefs-changed"));
+  } catch {}
+}
+function useCountPrefs() {
+  const [prefs, setPrefs] = useState(getCountPrefs());
+  useEffect(() => {
+    const handler = () => setPrefs(getCountPrefs());
+    window.addEventListener("loop-count-prefs-changed", handler);
+    window.addEventListener("storage", handler);
+    return () => {
+      window.removeEventListener("loop-count-prefs-changed", handler);
+      window.removeEventListener("storage", handler);
+    };
+  }, []);
+  const toggle = (key) => {
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefs(next);
+    saveCountPrefs(next);
+  };
+  return [prefs, toggle];
+}
+function getAutoScrollPref() {
+  try {
+    return localStorage.getItem("loop_autoscroll") === "1";
+  } catch {
+    return false;
+  }
+}
+function setAutoScrollPref(val) {
+  try {
+    localStorage.setItem("loop_autoscroll", val ? "1" : "0");
+  } catch {}
+}
 
 const mockPosts = [
   { id: 1, user: "nilufar.k", place: "Cox's Bazar", likes: 482, caption: "The sunset was unreal today 🌅" },
@@ -125,6 +184,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [loadError, setLoadError] = useState("");
   const [userId, setUserId] = useState(null);
   const [menuOpenFor, setMenuOpenFor] = useState(null);
+  const [countPrefs] = useCountPrefs();
 
   useEffect(() => {
     loadFeed();
@@ -174,15 +234,23 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       .from("reposts")
       .select("post_id, user_id");
 
+    const { data: allSavesData } = await supabase
+      .from("saves")
+      .select("post_id");
+
     const { data: savesData } = await supabase
       .from("saves")
       .select("post_id, user_id")
       .eq("user_id", user?.id ?? "");
 
+    const { data: commentsData } = await supabase.from("comments").select("post_id");
+
     const merged = (postsData || []).map((p) => {
       const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
       const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
       const postReposts = (repostsData || []).filter((r) => r.post_id === p.id);
+      const postSaves = (allSavesData || []).filter((s) => s.post_id === p.id);
+      const postComments = (commentsData || []).filter((c) => c.post_id === p.id);
       return {
         ...p,
         username: profile?.username || "unknown",
@@ -191,6 +259,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         repostCount: postReposts.length,
         reposted: postReposts.some((r) => r.user_id === user?.id),
         saved: (savesData || []).some((s) => s.post_id === p.id),
+        saveCount: postSaves.length,
+        commentCount: postComments.length,
       };
     });
 
@@ -364,9 +434,17 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               </div>
             </div>
             <div className="px-4 pt-1.5">
-              <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.likeCount} likes</span>
-              {post.repostCount > 0 && (
+              {countPrefs.likes && (
+                <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.likeCount} likes</span>
+              )}
+              {countPrefs.comments && post.commentCount > 0 && (
+                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.commentCount} comments</span>
+              )}
+              {countPrefs.reposts && post.repostCount > 0 && (
                 <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.repostCount} reposts</span>
+              )}
+              {countPrefs.saves && post.saveCount > 0 && (
+                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.saveCount} saves</span>
               )}
               {post.caption && (
                 <p className="text-sm mt-0.5" style={{ color: "#C9C3D1" }}>
@@ -382,16 +460,25 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   );
 }
 
-function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
+function ReelsScreen({ onOpenReport, onOpenProfile }) {
   const [reels, setReels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [userId, setUserId] = useState(null);
+  const [followingSet, setFollowingSet] = useState(new Set());
   const [index, setIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [playing, setPlaying] = useState(true);
+  const [muted, setMuted] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(getAutoScrollPref());
+  const [fullscreen, setFullscreen] = useState(false);
+  const [toast, setToast] = useState("");
+  const [commentSheetOpen, setCommentSheetOpen] = useState(false);
+  const [countPrefs, toggleCountPref] = useCountPrefs();
   const touchStartY = React.useRef(0);
   const videoRef = React.useRef(null);
+  const containerRef = React.useRef(null);
 
   useEffect(() => {
     loadReels();
@@ -400,9 +487,15 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
+      setPlaying(true);
       videoRef.current.play().catch(() => {});
     }
   }, [index, reels]);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 1800);
+  };
 
   const loadReels = async () => {
     setLoading(true);
@@ -433,6 +526,12 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
       .select("post_id, user_id")
       .eq("user_id", user?.id ?? "");
     const { data: commentsData } = await supabase.from("comments").select("post_id");
+    const { data: followsData } = await supabase
+      .from("follows")
+      .select("following_id")
+      .eq("follower_id", user?.id ?? "");
+
+    setFollowingSet(new Set((followsData || []).map((f) => f.following_id)));
 
     const merged = (postsData || []).map((p) => {
       const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
@@ -463,14 +562,38 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
   };
   const handleTouchEnd = (e) => {
     const deltaY = e.changedTouches[0].clientY - touchStartY.current;
-    if (deltaY < -50 && index < reels.length - 1) {
-      setIndex((i) => i + 1); // swiped up -> next reel
+    if (Math.abs(deltaY) > 50) {
+      if (deltaY < 0 && index < reels.length - 1) {
+        setIndex((i) => i + 1); // swiped up -> next reel
+      } else if (deltaY > 0 && index > 0) {
+        setIndex((i) => i - 1); // swiped down -> previous reel
+      }
       setExpanded(false);
       setMenuOpen(false);
-    } else if (deltaY > 50 && index > 0) {
-      setIndex((i) => i - 1); // swiped down -> previous reel
-      setExpanded(false);
-      setMenuOpen(false);
+      setCommentSheetOpen(false);
+    } else {
+      // treat as a tap, not a swipe -> Instagram-style play/pause toggle
+      togglePlay();
+    }
+  };
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (playing) {
+      videoRef.current.pause();
+      setPlaying(false);
+    } else {
+      videoRef.current.play().catch(() => {});
+      setPlaying(true);
+    }
+  };
+
+  const handleEnded = () => {
+    if (autoScroll && index < reels.length - 1) {
+      setIndex((i) => i + 1);
+    } else if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
     }
   };
 
@@ -533,6 +656,54 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
     }
   };
 
+  const toggleFollow = async () => {
+    if (!userId || !reel || reel.user_id === userId) return;
+    const isFollowing = followingSet.has(reel.user_id);
+
+    setFollowingSet((prev) => {
+      const next = new Set(prev);
+      if (isFollowing) next.delete(reel.user_id);
+      else next.add(reel.user_id);
+      return next;
+    });
+
+    if (isFollowing) {
+      await supabase.from("follows").delete().eq("follower_id", userId).eq("following_id", reel.user_id);
+    } else {
+      await supabase.from("follows").insert({ follower_id: userId, following_id: reel.user_id });
+      await supabase.from("notifications").insert({
+        user_id: reel.user_id,
+        actor_id: userId,
+        type: "follow",
+      });
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (!fullscreen) {
+      containerRef.current.requestFullscreen?.().catch(() => {});
+      setFullscreen(true);
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+      setFullscreen(false);
+    }
+    setMenuOpen(false);
+  };
+
+  const handleDownload = () => {
+    if (!reel) return;
+    const a = document.createElement("a");
+    a.href = reel.media_url;
+    a.download = `loop-reel-${reel.id}.mp4`;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setMenuOpen(false);
+  };
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: "#0E0C13" }}>
@@ -558,8 +729,11 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
     );
   }
 
+  const isFollowing = followingSet.has(reel.user_id);
+
   return (
     <div
+      ref={containerRef}
       className="flex-1 relative overflow-hidden"
       style={{ background: "#0E0C13" }}
       onTouchStart={handleTouchStart}
@@ -572,14 +746,39 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
           ref={videoRef}
           src={reel.media_url}
           className="w-full h-full object-cover"
-          loop
           playsInline
           autoPlay
-          muted
+          muted={muted}
+          onEnded={handleEnded}
         />
+        {!playing && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
+              <Play size={28} color="#fff" fill="#fff" />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* top label + report menu */}
+      {/* mute toggle — top right of video, always reachable */}
+      <button
+        onClick={() => setMuted((m) => !m)}
+        className="absolute top-14 right-3 w-8 h-8 rounded-full flex items-center justify-center"
+        style={{ background: "rgba(0,0,0,0.4)" }}
+      >
+        {muted ? <VolumeX size={16} color="#fff" /> : <Volume2 size={16} color="#fff" />}
+      </button>
+
+      {toast && (
+        <div
+          className="absolute top-24 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-xs z-30"
+          style={{ background: "rgba(0,0,0,0.75)", color: "#F5F1EA" }}
+        >
+          {toast}
+        </div>
+      )}
+
+      {/* top label + options menu */}
       <div className="absolute top-4 left-0 right-0 flex items-center justify-center">
         <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
           Reels
@@ -592,9 +791,94 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
               <div
-                className="absolute right-0 top-7 z-20 rounded-xl overflow-hidden"
-                style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 120 }}
+                className="absolute right-0 top-7 z-20 rounded-xl overflow-hidden py-1"
+                style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 190 }}
               >
+                <button
+                  onClick={() => {
+                    const next = !autoScroll;
+                    setAutoScroll(next);
+                    setAutoScrollPref(next);
+                  }}
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
+                  style={{ color: "#F5F1EA" }}
+                >
+                  <span className="flex items-center gap-2"><RefreshCw size={15} /> Auto Scroll</span>
+                  <span
+                    className="rounded-full"
+                    style={{ width: 30, height: 17, background: autoScroll ? ACCENT : "#3E3849", position: "relative" }}
+                  >
+                    <span
+                      className="rounded-full bg-white absolute"
+                      style={{ width: 13, height: 13, top: 2, left: autoScroll ? 15 : 2, transition: "left 0.15s" }}
+                    />
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    showToast("Remix ফিচার শীঘ্রই আসছে");
+                  }}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
+                  style={{ color: "#F5F1EA" }}
+                >
+                  <Sparkles size={15} /> Remix
+                </button>
+
+                <button
+                  onClick={toggleFullscreen}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
+                  style={{ color: "#F5F1EA" }}
+                >
+                  {fullscreen ? <Minimize size={15} /> : <Maximize size={15} />} View Full Screen
+                </button>
+
+                <button
+                  onClick={handleDownload}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
+                  style={{ color: "#F5F1EA" }}
+                >
+                  <Download size={15} /> Download
+                </button>
+
+                <button
+                  onClick={() => showToast("Quality: Auto (একটাই ভার্সন আপলোড করা আছে)")}
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
+                  style={{ color: "#F5F1EA" }}
+                >
+                  <span className="flex items-center gap-2"><Gauge size={15} /> Quality</span>
+                  <span className="text-xs" style={{ color: "#8B8494" }}>Auto</span>
+                </button>
+
+                <div className="h-px my-1" style={{ background: "#2A2632" }} />
+                <div className="px-4 py-1.5 text-[10px] uppercase tracking-wide" style={{ color: "#8B8494" }}>Show counts</div>
+                {[
+                  ["likes", "Likes"],
+                  ["comments", "Comments"],
+                  ["reposts", "Reposts"],
+                  ["saves", "Saves"],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => toggleCountPref(key)}
+                    className="w-full flex items-center justify-between px-4 py-2 text-sm"
+                    style={{ color: "#F5F1EA" }}
+                  >
+                    <span>{label}</span>
+                    <span
+                      className="rounded-full"
+                      style={{ width: 30, height: 17, background: countPrefs[key] ? ACCENT : "#3E3849", position: "relative" }}
+                    >
+                      <span
+                        className="rounded-full bg-white absolute"
+                        style={{ width: 13, height: 13, top: 2, left: countPrefs[key] ? 15 : 2, transition: "left 0.15s" }}
+                      />
+                    </span>
+                  </button>
+                ))}
+
+                <div className="h-px my-1" style={{ background: "#2A2632" }} />
                 <button
                   onClick={() => {
                     setMenuOpen(false);
@@ -611,17 +895,38 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
         </div>
       </div>
 
-      {/* bottom-left caption */}
+      {/* bottom-left caption + follow */}
       <div className="absolute left-4 bottom-5 right-20">
-        <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2 mb-2">
-          <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-            <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
-              {reel.username[0].toUpperCase()}
+        <div className="flex items-center gap-2 mb-2">
+          <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
+              <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
+                {reel.username[0].toUpperCase()}
+              </div>
             </div>
-          </div>
-          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{reel.username}</span>
-        </button>
-        {reel.caption && <p className="text-xs" style={{ color: "#E5E1EA" }}>{reel.caption}</p>}
+            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{reel.username}</span>
+          </button>
+          {reel.user_id !== userId && (
+            <button
+              onClick={toggleFollow}
+              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs"
+              style={{
+                background: isFollowing ? "transparent" : ACCENT,
+                border: isFollowing ? "1px solid #8B8494" : "none",
+                color: isFollowing ? "#F5F1EA" : "#14121A",
+                fontWeight: 700,
+              }}
+            >
+              {isFollowing ? <UserCheck size={12} /> : <UserPlus size={12} />}
+              {isFollowing ? "Following" : "Follow"}
+            </button>
+          )}
+        </div>
+        {reel.caption && (
+          <button onClick={() => setCommentSheetOpen(true)} className="text-left">
+            <p className="text-xs" style={{ color: "#E5E1EA" }}>{reel.caption}</p>
+          </button>
+        )}
       </div>
 
       {/* Quick Actions — the only action control; expands to full-size icons */}
@@ -629,19 +934,20 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
         <div className="relative flex flex-col items-center">
           {expanded && (
             <div
-              className="absolute bottom-12 flex flex-col items-center gap-5 py-3 px-2 rounded-full"
+              className="absolute bottom-24 flex flex-col items-center gap-5 py-3 px-2 rounded-full"
               style={{ background: "rgba(30,27,38,0.92)", border: "1px solid #2A2632" }}
             >
               <button onClick={toggleLike} className="flex flex-col items-center gap-1">
                 <Heart size={26} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
-                <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.likeCount}</span>
+                {countPrefs.likes && <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.likeCount}</span>}
               </button>
-              <button onClick={() => onOpenComments(reel.id, reel.user_id)} className="flex flex-col items-center gap-1">
+              <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1">
                 <MessageCircle size={25} color="#F5F1EA" />
-                <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.commentCount}</span>
+                {countPrefs.comments && <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.commentCount}</span>}
               </button>
               <button onClick={toggleRepost} className="flex flex-col items-center gap-1">
                 <Repeat2 size={26} color={reel.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={reel.reposted ? 2.4 : 2} />
+                {countPrefs.reposts && <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.repostCount}</span>}
               </button>
               <button className="flex flex-col items-center gap-1">
                 <SendHorizontal size={24} color="#F5F1EA" />
@@ -651,6 +957,16 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
               </button>
             </div>
           )}
+
+          {/* audio / sound-source shortcut, sits just above the main heart button */}
+          <button
+            onClick={() => showToast("এই অডিওতে বানানো রিলগুলো — ফিচারটি শীঘ্রই আসছে")}
+            className="w-8 h-8 rounded-lg mb-3 flex items-center justify-center"
+            style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+          >
+            <Music2 size={15} color="#F5F1EA" />
+          </button>
+
           <button
             onClick={() => setExpanded((v) => !v)}
             className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -680,6 +996,212 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
           />
         ))}
       </div>
+
+      {commentSheetOpen && (
+        <ReelCommentsSheet
+          postId={reel.id}
+          postOwnerId={reel.user_id}
+          currentUserId={userId}
+          onClose={() => setCommentSheetOpen(false)}
+          onCommentPosted={() =>
+            setReels((prev) => prev.map((r, i) => (i === index ? { ...r, commentCount: r.commentCount + 1 } : r)))
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+// Inline bottom-sheet comment panel for Reels (Instagram-style), with per-comment
+// like and single-level reply. Requires two small additions in Supabase:
+//   alter table comments add column parent_id uuid references comments(id);
+//   create table comment_likes (id uuid primary key default gen_random_uuid(), comment_id uuid references comments(id), user_id uuid references auth.users(id), created_at timestamptz default now());
+function ReelCommentsSheet({ postId, postOwnerId, currentUserId, onClose, onCommentPosted }) {
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState("");
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [posting, setPosting] = useState(false);
+
+  useEffect(() => {
+    loadComments();
+  }, []);
+
+  const loadComments = async () => {
+    setLoading(true);
+    const { data: commentsData } = await supabase
+      .from("comments")
+      .select("id, user_id, content, created_at, parent_id")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true });
+
+    const { data: profilesData } = await supabase.from("profiles").select("id, username");
+    const { data: likesData } = await supabase.from("comment_likes").select("comment_id, user_id");
+
+    const merged = (commentsData || []).map((c) => {
+      const profile = (profilesData || []).find((p) => p.id === c.user_id);
+      const cLikes = (likesData || []).filter((l) => l.comment_id === c.id);
+      return {
+        ...c,
+        username: profile?.username || "unknown",
+        likeCount: cLikes.length,
+        likedByMe: cLikes.some((l) => l.user_id === currentUserId),
+      };
+    });
+
+    setComments(merged);
+    setLoading(false);
+  };
+
+  const submitComment = async () => {
+    const trimmed = text.trim();
+    if (!trimmed || !currentUserId || posting) return;
+    setPosting(true);
+
+    const { error } = await supabase.from("comments").insert({
+      post_id: postId,
+      user_id: currentUserId,
+      content: trimmed,
+      parent_id: replyingTo?.id ?? null,
+    });
+
+    setPosting(false);
+    if (!error) {
+      setText("");
+      setReplyingTo(null);
+      onCommentPosted?.();
+      loadComments();
+      if (postOwnerId !== currentUserId) {
+        await supabase.from("notifications").insert({
+          user_id: postOwnerId,
+          actor_id: currentUserId,
+          type: "comment",
+          post_id: postId,
+        });
+      }
+    }
+  };
+
+  const toggleCommentLike = async (comment) => {
+    if (!currentUserId) return;
+    const wasLiked = comment.likedByMe;
+
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === comment.id
+          ? { ...c, likedByMe: !wasLiked, likeCount: wasLiked ? c.likeCount - 1 : c.likeCount + 1 }
+          : c
+      )
+    );
+
+    if (wasLiked) {
+      await supabase.from("comment_likes").delete().eq("comment_id", comment.id).eq("user_id", currentUserId);
+    } else {
+      await supabase.from("comment_likes").insert({ comment_id: comment.id, user_id: currentUserId });
+    }
+  };
+
+  const topLevel = comments.filter((c) => !c.parent_id);
+  const repliesOf = (id) => comments.filter((c) => c.parent_id === id);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
+      <div
+        className="fixed left-0 right-0 bottom-0 z-40 rounded-t-3xl flex flex-col"
+        style={{ background: "#14121A", maxHeight: "70vh", border: "1px solid #2A2632" }}
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1">
+          <div className="rounded-full" style={{ width: 36, height: 4, background: "#3E3849" }} />
+        </div>
+        <div className="flex items-center justify-between px-4 pb-2">
+          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>Comments</span>
+          <button onClick={onClose}><X size={18} color="#8B8494" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4">
+          {loading ? (
+            <p className="text-xs text-center py-6" style={{ color: "#8B8494" }}>Loading...</p>
+          ) : topLevel.length === 0 ? (
+            <p className="text-xs text-center py-6" style={{ color: "#8B8494" }}>No comments yet</p>
+          ) : (
+            topLevel.map((c) => (
+              <div key={c.id} className="mb-3">
+                <CommentRow comment={c} onLike={() => toggleCommentLike(c)} onReply={() => setReplyingTo(c)} />
+                {repliesOf(c.id).map((r) => (
+                  <div key={r.id} className="ml-9 mt-2">
+                    <CommentRow comment={r} onLike={() => toggleCommentLike(r)} onReply={() => setReplyingTo(c)} />
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="px-4 pt-2 pb-4" style={{ borderTop: "1px solid #2A2632" }}>
+          {replyingTo && (
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px]" style={{ color: "#8B8494" }}>Replying to {replyingTo.username}</span>
+              <button onClick={() => setReplyingTo(null)}><X size={12} color="#8B8494" /></button>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Add a comment..."
+              className="flex-1 rounded-full px-3.5 py-2.5 text-sm outline-none"
+              style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+            />
+            <button
+              disabled={posting}
+              onClick={() => showCommentUploadHint()}
+              title="Photo/GIF আপলোড শীঘ্রই আসছে"
+            >
+              <ImagePlus size={19} color="#8B8494" />
+            </button>
+            <button
+              onClick={submitComment}
+              disabled={posting || !text.trim()}
+              className="text-sm"
+              style={{ color: text.trim() ? "#FF5D73" : "#8B8494", fontWeight: 700 }}
+            >
+              Post
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function showCommentUploadHint() {
+  alert("কমেন্টে Photo/GIF আপলোড ফিচার শীঘ্রই আসছে");
+}
+
+function CommentRow({ comment, onLike, onReply }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
+        <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[9px]" style={{ color: "#F5F1EA" }}>
+          {comment.username[0].toUpperCase()}
+        </div>
+      </div>
+      <div className="flex-1">
+        <p className="text-xs" style={{ color: "#F5F1EA" }}>
+          <span style={{ fontWeight: 700 }}>{comment.username} </span>
+          {comment.content}
+        </p>
+        <div className="flex items-center gap-3 mt-1">
+          <button onClick={onReply} className="text-[10px]" style={{ color: "#8B8494" }}>Reply</button>
+          {comment.likeCount > 0 && (
+            <span className="text-[10px]" style={{ color: "#8B8494" }}>{comment.likeCount} likes</span>
+          )}
+        </div>
+      </div>
+      <button onClick={onLike} className="pt-0.5">
+        <Heart size={13} color={comment.likedByMe ? "#FF5D73" : "#8B8494"} fill={comment.likedByMe ? "#FF5D73" : "none"} />
+      </button>
     </div>
   );
 }
@@ -2141,10 +2663,6 @@ export default function App() {
           />
         ) : active === "reels" ? (
           <ReelsScreen
-            onOpenComments={(postId, ownerId) => {
-              setCommentsPostId(postId);
-              setCommentsPostOwnerId(ownerId);
-            }}
             onOpenReport={(postId) => setReportPostId(postId)}
             onOpenProfile={(userId) => setViewProfileId(userId)}
           />
