@@ -416,7 +416,7 @@ function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
       .select("id, media_url, media_type, caption, created_at, user_id")
-      .eq("media_type", "video")
+      .eq("media_type", "reel")
       .order("created_at", { ascending: false });
 
     if (postsError) {
