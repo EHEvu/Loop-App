@@ -42,12 +42,6 @@ const mockPosts = [
   { id: 3, user: "meherun.a", place: "Sylhet", likes: 967, caption: "Morning at the tea garden ☕🍃" },
 ];
 
-const mockReels = [
-  { id: 1, user: "tanvir.v", views: "12.4K" },
-  { id: 2, user: "priya.dances", views: "8.1K" },
-  { id: 3, user: "shuvo.eats", views: "23K" },
-];
-
 const mockGrid = Array.from({ length: 9 }, (_, i) => i);
 
 const mockStories = [
@@ -388,45 +382,181 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   );
 }
 
-const mockReelsFull = [
-  { id: 1, user: "tanvir.v", caption: "5-minute morning routine ☀️", likes: "12.4K", comments: "342", shares: "89" },
-  { id: 2, user: "priya.dances", caption: "Tried a new move 💃", likes: "8.1K", comments: "156", shares: "44" },
-  { id: 3, user: "shuvo.eats", caption: "Best street food 😋", likes: "23K", comments: "512", shares: "201" },
-  { id: 4, user: "meherun.a", caption: "Morning at the tea garden ☕🍃", likes: "6.7K", comments: "98", shares: "31" },
-];
-
-function ReelsScreen() {
+function ReelsScreen({ onOpenComments, onOpenReport, onOpenProfile }) {
+  const [reels, setReels] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [userId, setUserId] = useState(null);
   const [index, setIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
-  const [reelState, setReelState] = useState(
-    mockReelsFull.map((r) => ({ ...r, liked: false, reposted: false, saved: false }))
-  );
+  const [menuOpen, setMenuOpen] = useState(false);
   const touchStartY = React.useRef(0);
+  const videoRef = React.useRef(null);
 
-  const reel = reelState[index];
+  useEffect(() => {
+    loadReels();
+  }, []);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [index, reels]);
+
+  const loadReels = async () => {
+    setLoading(true);
+    setLoadError("");
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setUserId(user?.id ?? null);
+
+    const { data: postsData, error: postsError } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, caption, created_at, user_id")
+      .eq("media_type", "video")
+      .order("created_at", { ascending: false });
+
+    if (postsError) {
+      setLoadError(postsError.message);
+      setLoading(false);
+      return;
+    }
+
+    const { data: profilesData } = await supabase.from("profiles").select("id, username");
+    const { data: likesData } = await supabase.from("likes").select("post_id, user_id");
+    const { data: repostsData } = await supabase.from("reposts").select("post_id, user_id");
+    const { data: savesData } = await supabase
+      .from("saves")
+      .select("post_id, user_id")
+      .eq("user_id", user?.id ?? "");
+    const { data: commentsData } = await supabase.from("comments").select("post_id");
+
+    const merged = (postsData || []).map((p) => {
+      const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
+      const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
+      const postReposts = (repostsData || []).filter((r) => r.post_id === p.id);
+      const postComments = (commentsData || []).filter((c) => c.post_id === p.id);
+      return {
+        ...p,
+        username: profile?.username || "unknown",
+        likeCount: postLikes.length,
+        liked: postLikes.some((l) => l.user_id === user?.id),
+        repostCount: postReposts.length,
+        reposted: postReposts.some((r) => r.user_id === user?.id),
+        saved: (savesData || []).some((s) => s.post_id === p.id),
+        commentCount: postComments.length,
+      };
+    });
+
+    setReels(merged);
+    setIndex(0);
+    setLoading(false);
+  };
+
+  const reel = reels[index];
 
   const handleTouchStart = (e) => {
     touchStartY.current = e.touches[0].clientY;
   };
   const handleTouchEnd = (e) => {
     const deltaY = e.changedTouches[0].clientY - touchStartY.current;
-    if (deltaY < -50 && index < reelState.length - 1) {
+    if (deltaY < -50 && index < reels.length - 1) {
       setIndex((i) => i + 1); // swiped up -> next reel
       setExpanded(false);
+      setMenuOpen(false);
     } else if (deltaY > 50 && index > 0) {
       setIndex((i) => i - 1); // swiped down -> previous reel
       setExpanded(false);
+      setMenuOpen(false);
     }
   };
 
-  const updateReel = (patch) => {
-    setReelState((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch(r) } : r)));
+  const toggleLike = async () => {
+    if (!userId || !reel) return;
+    const wasLiked = reel.liked;
+
+    setReels((prev) =>
+      prev.map((r, i) =>
+        i === index
+          ? { ...r, liked: !wasLiked, likeCount: wasLiked ? r.likeCount - 1 : r.likeCount + 1 }
+          : r
+      )
+    );
+
+    if (wasLiked) {
+      await supabase.from("likes").delete().eq("post_id", reel.id).eq("user_id", userId);
+    } else {
+      await supabase.from("likes").insert({ post_id: reel.id, user_id: userId });
+      if (reel.user_id !== userId) {
+        await supabase.from("notifications").insert({
+          user_id: reel.user_id,
+          actor_id: userId,
+          type: "like",
+          post_id: reel.id,
+        });
+      }
+    }
   };
 
-  const toggleLike = () =>
-    updateReel((r) => ({ liked: !r.liked }));
-  const toggleRepost = () => updateReel((r) => ({ reposted: !r.reposted }));
-  const toggleSave = () => updateReel((r) => ({ saved: !r.saved }));
+  const toggleRepost = async () => {
+    if (!userId || !reel) return;
+    const wasReposted = reel.reposted;
+
+    setReels((prev) =>
+      prev.map((r, i) =>
+        i === index
+          ? { ...r, reposted: !wasReposted, repostCount: wasReposted ? r.repostCount - 1 : r.repostCount + 1 }
+          : r
+      )
+    );
+
+    if (wasReposted) {
+      await supabase.from("reposts").delete().eq("post_id", reel.id).eq("user_id", userId);
+    } else {
+      await supabase.from("reposts").insert({ post_id: reel.id, user_id: userId });
+    }
+  };
+
+  const toggleSave = async () => {
+    if (!userId || !reel) return;
+    const wasSaved = reel.saved;
+
+    setReels((prev) => prev.map((r, i) => (i === index ? { ...r, saved: !wasSaved } : r)));
+
+    if (wasSaved) {
+      await supabase.from("saves").delete().eq("post_id", reel.id).eq("user_id", userId);
+    } else {
+      await supabase.from("saves").insert({ post_id: reel.id, user_id: userId });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "#0E0C13" }}>
+        <p className="text-xs" style={{ color: "#8B8494" }}>Loading...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex-1 flex items-center justify-center px-6" style={{ background: "#0E0C13" }}>
+        <p className="text-xs text-center" style={{ color: "#FF5D73" }}>{loadError}</p>
+      </div>
+    );
+  }
+
+  if (reels.length === 0) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-2" style={{ background: "#0E0C13" }}>
+        <Video size={32} color="#3E3849" />
+        <p className="text-xs" style={{ color: "#8B8494" }}>No reels yet — be the first to post one!</p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -435,32 +565,63 @@ function ReelsScreen() {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Reel content placeholder */}
-      <div
-        className="absolute inset-0 flex items-center justify-center"
-        onDoubleClick={toggleLike}
-      >
-        <Video size={40} color="#2A2632" />
+      {/* Reel video */}
+      <div className="absolute inset-0" onDoubleClick={toggleLike}>
+        <video
+          key={reel.id}
+          ref={videoRef}
+          src={reel.media_url}
+          className="w-full h-full object-cover"
+          loop
+          playsInline
+          autoPlay
+          muted
+        />
       </div>
 
-      {/* top label */}
-      <div className="absolute top-4 left-0 right-0 flex justify-center">
+      {/* top label + report menu */}
+      <div className="absolute top-4 left-0 right-0 flex items-center justify-center">
         <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
           Reels
         </span>
+        <div className="absolute right-3">
+          <button onClick={() => setMenuOpen((v) => !v)}>
+            <Ellipsis size={20} color="#F5F1EA" />
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+              <div
+                className="absolute right-0 top-7 z-20 rounded-xl overflow-hidden"
+                style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 120 }}
+              >
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onOpenReport(reel.id);
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm"
+                  style={{ color: "#FF5D73" }}
+                >
+                  Report
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* bottom-left caption */}
       <div className="absolute left-4 bottom-5 right-20">
-        <div className="flex items-center gap-2 mb-2">
+        <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2 mb-2">
           <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
             <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
-              {reel.user[0].toUpperCase()}
+              {reel.username[0].toUpperCase()}
             </div>
           </div>
-          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{reel.user}</span>
-        </div>
-        <p className="text-xs" style={{ color: "#E5E1EA" }}>{reel.caption}</p>
+          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{reel.username}</span>
+        </button>
+        {reel.caption && <p className="text-xs" style={{ color: "#E5E1EA" }}>{reel.caption}</p>}
       </div>
 
       {/* Quick Actions — the only action control; expands to full-size icons */}
@@ -473,18 +634,17 @@ function ReelsScreen() {
             >
               <button onClick={toggleLike} className="flex flex-col items-center gap-1">
                 <Heart size={26} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
-                <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.likes}</span>
+                <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.likeCount}</span>
               </button>
-              <button className="flex flex-col items-center gap-1">
+              <button onClick={() => onOpenComments(reel.id, reel.user_id)} className="flex flex-col items-center gap-1">
                 <MessageCircle size={25} color="#F5F1EA" />
-                <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.comments}</span>
+                <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.commentCount}</span>
               </button>
               <button onClick={toggleRepost} className="flex flex-col items-center gap-1">
                 <Repeat2 size={26} color={reel.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={reel.reposted ? 2.4 : 2} />
               </button>
               <button className="flex flex-col items-center gap-1">
                 <SendHorizontal size={24} color="#F5F1EA" />
-                <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.shares}</span>
               </button>
               <button onClick={toggleSave} className="flex flex-col items-center gap-1">
                 <Bookmark size={24} color="#F5F1EA" fill={reel.saved ? "#F5F1EA" : "none"} />
@@ -507,7 +667,7 @@ function ReelsScreen() {
 
       {/* swipe progress dots */}
       <div className="absolute top-11 right-3 flex flex-col gap-1">
-        {reelState.map((_, i) => (
+        {reels.map((_, i) => (
           <div
             key={i}
             className="rounded-full"
@@ -1972,6 +2132,15 @@ export default function App() {
           <FeedScreen
             onOpenMessages={() => setInboxOpen(true)}
             onOpenNotifications={() => setNotificationsOpen(true)}
+            onOpenComments={(postId, ownerId) => {
+              setCommentsPostId(postId);
+              setCommentsPostOwnerId(ownerId);
+            }}
+            onOpenReport={(postId) => setReportPostId(postId)}
+            onOpenProfile={(userId) => setViewProfileId(userId)}
+          />
+        ) : active === "reels" ? (
+          <ReelsScreen
             onOpenComments={(postId, ownerId) => {
               setCommentsPostId(postId);
               setCommentsPostOwnerId(ownerId);
