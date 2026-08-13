@@ -133,6 +133,218 @@ function setAutoScrollPref(val) {
   } catch {}
 }
 
+function formatCount(n) {
+  const num = n || 0;
+  if (num >= 1000000) return (num / 1000000).toFixed(num % 1000000 === 0 ? 0 : 1) + "M";
+  if (num >= 1000) return (num / 1000).toFixed(num % 1000 === 0 ? 0 : 1) + "K";
+  return String(num);
+}
+
+// Long-press-triggered popup showing total Likes (and Views, for reels) —
+// replaces a permanently-visible number next to the Like icon.
+function LikesViewsPopup({ post, isOwner, onClose }) {
+  return (
+    <>
+      <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
+      <div
+        className="fixed left-1/2 top-1/2 z-50 rounded-2xl px-6 py-5 text-center"
+        style={{ background: "#1E1B26", border: "1px solid #2A2632", transform: "translate(-50%, -50%)", minWidth: 220 }}
+      >
+        <p className="text-sm mb-3" style={{ color: "#F5F1EA", fontWeight: 700 }}>Likes and Views</p>
+        <div className="flex items-center justify-center gap-6">
+          <div>
+            <p className="text-lg" style={{ color: "#F5F1EA", fontWeight: 700 }}>
+              {isOwner || !post.hide_likes ? formatCount(post.likeCount) : "—"}
+            </p>
+            <p className="text-[11px]" style={{ color: "#8B8494" }}>Likes</p>
+          </div>
+          {post.media_type === "reel" && (
+            <div>
+              <p className="text-lg" style={{ color: "#F5F1EA", fontWeight: 700 }}>{formatCount(post.views_count)}</p>
+              <p className="text-[11px]" style={{ color: "#8B8494" }}>Views</p>
+            </div>
+          )}
+        </div>
+        {!isOwner && post.hide_likes && (
+          <p className="text-[10px] mt-3" style={{ color: "#8B8494" }}>The creator hid the like count on this post.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+// Shows "with @user1, @user2" under a caption when people are tagged
+function TaggedPeopleLine({ tags, onOpenProfile }) {
+  if (!tags || tags.length === 0) return null;
+  return (
+    <p className="text-[11px] mb-1" style={{ color: "#8B8494" }}>
+      with{" "}
+      {tags.map((t, i) => (
+        <React.Fragment key={t.tagged_user_id}>
+          <button onClick={() => onOpenProfile?.(t.tagged_user_id)} style={{ color: "#F5F1EA", fontWeight: 600 }}>
+            @{t.username}
+          </button>
+          {i < tags.length - 1 ? ", " : ""}
+        </React.Fragment>
+      ))}
+    </p>
+  );
+}
+
+// Simple poll: shows options as bars; tapping one casts/changes your vote
+function PollBlock({ postId, currentUserId }) {
+  const [poll, setPoll] = useState(null);
+  const [options, setOptions] = useState([]);
+  const [votes, setVotes] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    loadPoll();
+  }, []);
+
+  const loadPoll = async () => {
+    const { data: pollData } = await supabase.from("polls").select("id, question").eq("post_id", postId).maybeSingle();
+    if (!pollData) {
+      setLoaded(true);
+      return;
+    }
+    setPoll(pollData);
+    const { data: optionsData } = await supabase
+      .from("poll_options")
+      .select("id, option_text, position")
+      .eq("poll_id", pollData.id)
+      .order("position", { ascending: true });
+    setOptions(optionsData || []);
+    const { data: votesData } = await supabase.from("poll_votes").select("option_id, user_id").eq("poll_id", pollData.id);
+    setVotes(votesData || []);
+    setLoaded(true);
+  };
+
+  const vote = async (optionId) => {
+    if (!currentUserId || !poll) return;
+    setVotes((prev) => [...prev.filter((v) => v.user_id !== currentUserId), { option_id: optionId, user_id: currentUserId }]);
+    await supabase
+      .from("poll_votes")
+      .upsert({ poll_id: poll.id, option_id: optionId, user_id: currentUserId }, { onConflict: "poll_id,user_id" });
+  };
+
+  if (!loaded || !poll) return null;
+
+  const totalVotes = votes.length;
+  const myVote = votes.find((v) => v.user_id === currentUserId)?.option_id;
+
+  return (
+    <div className="mx-4 mt-2 mb-1 rounded-xl p-3" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+      <p className="text-sm mb-2" style={{ color: "#F5F1EA", fontWeight: 600 }}>{poll.question}</p>
+      <div className="flex flex-col gap-1.5">
+        {options.map((opt) => {
+          const count = votes.filter((v) => v.option_id === opt.id).length;
+          const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+          const isMine = myVote === opt.id;
+          return (
+            <button
+              key={opt.id}
+              onClick={() => vote(opt.id)}
+              className="relative rounded-lg overflow-hidden text-left px-3 py-2"
+              style={{ background: "#14121A", border: isMine ? "1px solid #FF5D73" : "1px solid #2A2632" }}
+            >
+              {myVote && (
+                <div
+                  className="absolute inset-y-0 left-0"
+                  style={{ width: `${pct}%`, background: "rgba(255,93,115,0.18)" }}
+                />
+              )}
+              <div className="relative flex items-center justify-between">
+                <span className="text-xs" style={{ color: "#F5F1EA" }}>{opt.option_text}</span>
+                {myVote && <span className="text-[10px]" style={{ color: "#8B8494" }}>{pct}%</span>}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {totalVotes > 0 && (
+        <p className="text-[10px] mt-1.5" style={{ color: "#8B8494" }}>{totalVotes} vote{totalVotes === 1 ? "" : "s"}</p>
+      )}
+    </div>
+  );
+}
+
+// Bottom sheet for the post owner to change per-post visibility settings
+// after publishing (opened from the Edit option in their own Profile grid)
+function EditPostSettingsSheet({ post, onClose, onSaved }) {
+  const [hideLikes, setHideLikes] = useState(!!post.hide_likes);
+  const [hideComments, setHideComments] = useState(!!post.hide_comments);
+  const [hideRepostsSaves, setHideRepostsSaves] = useState(!!post.hide_reposts || !!post.hide_saves);
+  const [turnOffComments, setTurnOffComments] = useState(!!post.comments_disabled);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    await supabase
+      .from("posts")
+      .update({
+        hide_likes: hideLikes,
+        hide_comments: hideComments,
+        hide_reposts: hideRepostsSaves,
+        hide_saves: hideRepostsSaves,
+        comments_disabled: turnOffComments,
+      })
+      .eq("id", post.id);
+    setSaving(false);
+    onSaved?.({
+      hide_likes: hideLikes,
+      hide_comments: hideComments,
+      hide_reposts: hideRepostsSaves,
+      hide_saves: hideRepostsSaves,
+      comments_disabled: turnOffComments,
+    });
+    onClose();
+  };
+
+  const Toggle = ({ label, value, onChange }) => (
+    <button onClick={() => onChange(!value)} className="w-full flex items-center justify-between px-4 py-3 text-sm" style={{ color: "#F5F1EA" }}>
+      <span>{label}</span>
+      <span className="rounded-full" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
+        <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: value ? 17 : 2, transition: "left 0.15s" }} />
+      </span>
+    </button>
+  );
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
+      <div
+        className="fixed left-0 right-0 bottom-0 z-50 rounded-t-3xl"
+        style={{ background: "#14121A", border: "1px solid #2A2632" }}
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1">
+          <div className="rounded-full" style={{ width: 36, height: 4, background: "#3E3849" }} />
+        </div>
+        <div className="flex items-center justify-between px-4 pb-2">
+          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>Edit post settings</span>
+          <button onClick={onClose}><X size={18} color="#8B8494" /></button>
+        </div>
+        <div className="pb-2">
+          <Toggle label="Hide Like Count For This Post" value={hideLikes} onChange={setHideLikes} />
+          <Toggle label="Hide Comment Count For This Post" value={hideComments} onChange={setHideComments} />
+          <Toggle label="Hide Repost/Share/Save Count For This Post" value={hideRepostsSaves} onChange={setHideRepostsSaves} />
+          <Toggle label="Turn Off Comments" value={turnOffComments} onChange={setTurnOffComments} />
+        </div>
+        <div className="px-4 pb-6 pt-1">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="w-full rounded-xl py-3 text-sm"
+            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: saving ? 0.6 : 1 }}
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 const mockPosts = [
   { id: 1, user: "nilufar.k", place: "Cox's Bazar", likes: 482, caption: "The sunset was unreal today 🌅" },
   { id: 2, user: "rafiq.tech", place: "Dhaka", likes: 219, caption: "New desk setup, finally done ✨" },
@@ -222,6 +434,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [loadError, setLoadError] = useState("");
   const [userId, setUserId] = useState(null);
   const [menuOpenFor, setMenuOpenFor] = useState(null);
+  const [likesPopupFor, setLikesPopupFor] = useState(null);
+  const pressTimers = React.useRef({});
   const [countPrefs] = useCountPrefs();
 
   useEffect(() => {
@@ -239,7 +453,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, views_count, location")
+      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
       .order("created_at", { ascending: false });
 
     if (postsError) {
@@ -283,12 +497,20 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
     const { data: commentsData } = await supabase.from("comments").select("post_id");
 
+    const { data: tagsData } = await supabase.from("post_tags").select("post_id, tagged_user_id");
+
     const merged = (postsData || []).map((p) => {
       const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
       const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
       const postReposts = (repostsData || []).filter((r) => r.post_id === p.id);
       const postSaves = (allSavesData || []).filter((s) => s.post_id === p.id);
       const postComments = (commentsData || []).filter((c) => c.post_id === p.id);
+      const postTags = (tagsData || [])
+        .filter((t) => t.post_id === p.id)
+        .map((t) => ({
+          tagged_user_id: t.tagged_user_id,
+          username: (profilesData || []).find((pr) => pr.id === t.tagged_user_id)?.username || "unknown",
+        }));
       return {
         ...p,
         username: profile?.username || "unknown",
@@ -299,6 +521,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         saved: (savesData || []).some((s) => s.post_id === p.id),
         saveCount: postSaves.length,
         commentCount: postComments.length,
+        tags: postTags,
       };
     });
 
@@ -362,13 +585,6 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     } else {
       await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
     }
-  };
-
-  const toggleOwnerHideCount = async (post, field) => {
-    if (post.user_id !== userId) return;
-    const nextVal = !post[field];
-    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, [field]: nextVal } : p)));
-    await supabase.from("posts").update({ [field]: nextVal }).eq("id", post.id);
   };
 
   const deletePost = async (post) => {
@@ -439,41 +655,13 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                       style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 190 }}
                     >
                       {post.user_id === userId ? (
-                        <>
-                          <div className="px-4 py-1.5 text-[10px] uppercase tracking-wide" style={{ color: "#8B8494" }}>Hide counts from everyone</div>
-                          {[
-                            ["hide_likes", "Likes"],
-                            ["hide_comments", "Comments"],
-                            ["hide_reposts", "Reposts"],
-                            ["hide_saves", "Saves"],
-                          ].map(([field, label]) => (
-                            <button
-                              key={field}
-                              onClick={() => toggleOwnerHideCount(post, field)}
-                              className="w-full flex items-center justify-between px-4 py-2 text-sm"
-                              style={{ color: "#F5F1EA" }}
-                            >
-                              <span>{label}</span>
-                              <span
-                                className="rounded-full"
-                                style={{ width: 30, height: 17, background: post[field] ? ACCENT : "#3E3849", position: "relative" }}
-                              >
-                                <span
-                                  className="rounded-full bg-white absolute"
-                                  style={{ width: 13, height: 13, top: 2, left: post[field] ? 15 : 2, transition: "left 0.15s" }}
-                                />
-                              </span>
-                            </button>
-                          ))}
-                          <div className="h-px my-1" style={{ background: "#2A2632" }} />
-                          <button
-                            onClick={() => deletePost(post)}
-                            className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                            style={{ color: "#FF5D73" }}
-                          >
-                            <Trash2 size={15} /> Delete
-                          </button>
-                        </>
+                        <button
+                          onClick={() => deletePost(post)}
+                          className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
+                          style={{ color: "#FF5D73" }}
+                        >
+                          <Trash2 size={15} /> Delete
+                        </button>
                       ) : (
                         <button
                           onClick={() => {
@@ -504,47 +692,64 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               )}
             </div>
 
+            <PollBlock postId={post.id} currentUserId={userId} />
+
             <div className="flex items-center justify-between px-4 pt-3">
-              <div className="flex items-center gap-4">
-                <Send size={20} color="#F5F1EA" />
-                <button onClick={() => toggleSave(post)}>
-                  <Bookmark size={20} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+              <div className="flex items-center gap-5">
+                <button
+                  onClick={() => toggleLike(post)}
+                  onTouchStart={() => {
+                    pressTimers.current[post.id] = setTimeout(() => setLikesPopupFor(post.id), 500);
+                  }}
+                  onTouchEnd={() => clearTimeout(pressTimers.current[post.id])}
+                  onTouchMove={() => clearTimeout(pressTimers.current[post.id])}
+                  className="flex flex-col items-center"
+                >
+                  <Heart size={26} color={post.liked ? "#FF5D73" : "#F5F1EA"} fill={post.liked ? "#FF5D73" : "none"} />
                 </button>
+
+                {!post.comments_disabled ? (
+                  <div className="flex flex-col items-center">
+                    <button onClick={() => onOpenComments(post.id, post.user_id)}>
+                      <MessageCircle size={22} color="#F5F1EA" />
+                    </button>
+                    {countPrefs.comments && !post.hide_comments && post.commentCount > 0 && (
+                      <span className="text-[10px]" style={{ color: "#8B8494" }}>{formatCount(post.commentCount)}</span>
+                    )}
+                  </div>
+                ) : (
+                  <MessageCircle size={22} color="#3E3849" />
+                )}
+
+                <div className="flex flex-col items-center">
+                  <button onClick={() => toggleRepost(post)}>
+                    <Repeat2 size={24} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
+                  </button>
+                  {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 && (
+                    <span className="text-[10px]" style={{ color: "#8B8494" }}>{formatCount(post.repostCount)}</span>
+                  )}
+                </div>
               </div>
 
-              <button onClick={() => toggleLike(post)}>
-                <Heart
-                  size={30}
-                  color={post.liked ? "#FF5D73" : "#F5F1EA"}
-                  fill={post.liked ? "#FF5D73" : "none"}
-                />
-              </button>
-
-              <div className="flex items-center gap-4">
-                <button onClick={() => onOpenComments(post.id, post.user_id)}>
-                  <MessageCircle size={20} color="#F5F1EA" />
-                </button>
-                <button onClick={() => toggleRepost(post)}>
-                  <Repeat2 size={22} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
-                </button>
+              <div className="flex items-center gap-5">
+                <Send size={22} color="#F5F1EA" />
+                <div className="flex flex-col items-center">
+                  <button onClick={() => toggleSave(post)}>
+                    <Bookmark size={22} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+                  </button>
+                  {countPrefs.saves && !post.hide_saves && post.saveCount > 0 && (
+                    <span className="text-[10px]" style={{ color: "#8B8494" }}>{formatCount(post.saveCount)}</span>
+                  )}
+                </div>
               </div>
             </div>
+
+            {likesPopupFor === post.id && (
+              <LikesViewsPopup post={post} isOwner={post.user_id === userId} onClose={() => setLikesPopupFor(null)} />
+            )}
+
             <div className="px-4 pt-1.5">
-              {countPrefs.likes && !post.hide_likes && (
-                <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.likeCount} likes</span>
-              )}
-              {post.media_type === "reel" && post.views_count > 0 && (
-                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.views_count} plays</span>
-              )}
-              {countPrefs.comments && !post.hide_comments && post.commentCount > 0 && (
-                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.commentCount} comments</span>
-              )}
-              {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 && (
-                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.repostCount} reposts</span>
-              )}
-              {countPrefs.saves && !post.hide_saves && post.saveCount > 0 && (
-                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.saveCount} saves</span>
-              )}
+              <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
               {post.caption && (
                 <p className="text-sm mt-0.5" style={{ color: "#C9C3D1", whiteSpace: "pre-wrap" }}>
                   <span style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username} </span>
@@ -575,6 +780,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
   const [toast, setToast] = useState("");
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [commentSheetOpen, setCommentSheetOpen] = useState(false);
+  const [likesPopupOpen, setLikesPopupOpen] = useState(false);
   const [countPrefs, toggleCountPref] = useCountPrefs();
   const touchStartY = React.useRef(0);
   const videoRef = React.useRef(null);
@@ -622,7 +828,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
 
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, views_count, location")
+      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
       .eq("media_type", "reel")
       .order("created_at", { ascending: false });
 
@@ -639,11 +845,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       .from("saves")
       .select("post_id, user_id")
       .eq("user_id", user?.id ?? "");
+    const { data: allSavesData } = await supabase.from("saves").select("post_id");
     const { data: commentsData } = await supabase.from("comments").select("post_id");
     const { data: followsData } = await supabase
       .from("follows")
       .select("following_id")
       .eq("follower_id", user?.id ?? "");
+    const { data: tagsData } = await supabase.from("post_tags").select("post_id, tagged_user_id");
 
     setFollowingSet(new Set((followsData || []).map((f) => f.following_id)));
 
@@ -651,7 +859,14 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
       const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
       const postReposts = (repostsData || []).filter((r) => r.post_id === p.id);
+      const postSaves = (allSavesData || []).filter((s) => s.post_id === p.id);
       const postComments = (commentsData || []).filter((c) => c.post_id === p.id);
+      const postTags = (tagsData || [])
+        .filter((t) => t.post_id === p.id)
+        .map((t) => ({
+          tagged_user_id: t.tagged_user_id,
+          username: (profilesData || []).find((pr) => pr.id === t.tagged_user_id)?.username || "unknown",
+        }));
       return {
         ...p,
         username: profile?.username || "unknown",
@@ -660,7 +875,9 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         repostCount: postReposts.length,
         reposted: postReposts.some((r) => r.user_id === user?.id),
         saved: (savesData || []).some((s) => s.post_id === p.id),
+        saveCount: postSaves.length,
         commentCount: postComments.length,
+        tags: postTags,
       };
     });
 
@@ -816,14 +1033,6 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
     a.click();
     document.body.removeChild(a);
     setMenuOpen(false);
-  };
-
-  // Owner-only: hide/unhide a specific count type on THIS post for everyone who views it
-  const toggleOwnerHideCount = async (field) => {
-    if (!reel || reel.user_id !== userId) return;
-    const nextVal = !reel[field];
-    setReels((prev) => prev.map((r, i) => (i === index ? { ...r, [field]: nextVal } : r)));
-    await supabase.from("posts").update({ [field]: nextVal }).eq("id", reel.id);
   };
 
   const deleteReel = async () => {
@@ -1020,38 +1229,6 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                   </button>
                 ))}
 
-                {reel.user_id === userId && (
-                  <>
-                    <div className="h-px my-1" style={{ background: "#2A2632" }} />
-                    <div className="px-4 py-1.5 text-[10px] uppercase tracking-wide" style={{ color: "#8B8494" }}>This reel: hide counts from everyone</div>
-                    {[
-                      ["hide_likes", "Likes"],
-                      ["hide_comments", "Comments"],
-                      ["hide_reposts", "Reposts"],
-                      ["hide_saves", "Saves"],
-                    ].map(([field, label]) => (
-                      <button
-                        key={field}
-                        onClick={() => toggleOwnerHideCount(field)}
-                        className="w-full flex items-center justify-between px-4 py-2 text-sm"
-                        style={{ color: "#F5F1EA" }}
-                      >
-                        <span>{label}</span>
-                        <span
-                          className="rounded-full"
-                          style={{ width: 30, height: 17, background: reel[field] ? ACCENT : "#3E3849", position: "relative" }}
-                        >
-                          <span
-                            className="rounded-full bg-white absolute"
-                            style={{ width: 13, height: 13, top: 2, left: reel[field] ? 15 : 2, transition: "left 0.15s" }}
-                          />
-                        </span>
-                      </button>
-                    ))}
-                  </>
-                )}
-
-                <div className="h-px my-1" style={{ background: "#2A2632" }} />
                 {reel.user_id === userId ? (
                   <button
                     onClick={deleteReel}
@@ -1114,6 +1291,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
             <MapPin size={11} /> {reel.location}
           </span>
         )}
+        <TaggedPeopleLine tags={reel.tags} onOpenProfile={onOpenProfile} />
         {reel.caption && (
           <div>
             <p
@@ -1154,26 +1332,46 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
               className="absolute bottom-24 flex flex-col items-center gap-5 py-3 px-2 rounded-full"
               style={{ background: "rgba(30,27,38,0.92)", border: "1px solid #2A2632" }}
             >
-              <button onClick={toggleLike} className="flex flex-col items-center gap-1">
+              <button
+                onClick={toggleLike}
+                onTouchStart={(e) => {
+                  e.currentTarget._pressTimer = setTimeout(() => setLikesPopupOpen(true), 500);
+                }}
+                onTouchEndCapture={(e) => clearTimeout(e.currentTarget._pressTimer)}
+                className="flex flex-col items-center gap-1"
+              >
                 <Heart size={26} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
-                {countPrefs.likes && !reel.hide_likes && <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.likeCount}</span>}
-                {reel.views_count > 0 && <span className="text-[9px]" style={{ color: "#8B8494" }}>{reel.views_count} views</span>}
               </button>
-              <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1">
-                <MessageCircle size={25} color="#F5F1EA" />
-                {countPrefs.comments && !reel.hide_comments && <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.commentCount}</span>}
-              </button>
+              {!reel.comments_disabled ? (
+                <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1">
+                  <MessageCircle size={25} color="#F5F1EA" />
+                  {countPrefs.comments && !reel.hide_comments && reel.commentCount > 0 && (
+                    <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.commentCount)}</span>
+                  )}
+                </button>
+              ) : (
+                <MessageCircle size={25} color="#4A4453" />
+              )}
               <button onClick={toggleRepost} className="flex flex-col items-center gap-1">
                 <Repeat2 size={26} color={reel.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={reel.reposted ? 2.4 : 2} />
-                {countPrefs.reposts && !reel.hide_reposts && <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.repostCount}</span>}
+                {countPrefs.reposts && !reel.hide_reposts && reel.repostCount > 0 && (
+                  <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.repostCount)}</span>
+                )}
               </button>
               <button className="flex flex-col items-center gap-1">
                 <SendHorizontal size={24} color="#F5F1EA" />
               </button>
               <button onClick={toggleSave} className="flex flex-col items-center gap-1">
                 <Bookmark size={24} color="#F5F1EA" fill={reel.saved ? "#F5F1EA" : "none"} />
+                {countPrefs.saves && !reel.hide_saves && reel.saveCount > 0 && (
+                  <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.saveCount)}</span>
+                )}
               </button>
             </div>
+          )}
+
+          {likesPopupOpen && (
+            <LikesViewsPopup post={reel} isOwner={reel.user_id === userId} onClose={() => setLikesPopupOpen(false)} />
           )}
 
           {/* audio / sound-source shortcut, sits just above the main heart button */}
@@ -1222,6 +1420,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           currentUserId={userId}
           postUsername={reel.username}
           postCaption={reel.caption}
+          commentsDisabled={reel.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentSheetOpen(false)}
           onCommentPosted={() =>
@@ -1259,6 +1458,7 @@ function ReelCommentsSheet({
   currentUserId,
   postUsername,
   postCaption,
+  commentsDisabled,
   onOpenProfile,
   onClose,
   onCommentPosted,
@@ -1499,38 +1699,44 @@ function ReelCommentsSheet({
         </div>
 
         <div className="px-4 pt-2 pb-4" style={{ borderTop: "1px solid #2A2632" }}>
-          {replyingTo && (
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px]" style={{ color: "#8B8494" }}>Replying to {replyingTo.username}</span>
-              <button onClick={() => setReplyingTo(null)}><X size={12} color="#8B8494" /></button>
-            </div>
+          {commentsDisabled ? (
+            <p className="text-xs text-center py-2" style={{ color: "#8B8494" }}>Comments are off for this post.</p>
+          ) : (
+            <>
+              {replyingTo && (
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px]" style={{ color: "#8B8494" }}>Replying to {replyingTo.username}</span>
+                  <button onClick={() => setReplyingTo(null)}><X size={12} color="#8B8494" /></button>
+                </div>
+              )}
+              <div className="flex items-end gap-2">
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Add a comment..."
+                  rows={1}
+                  className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
+                  style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA", maxHeight: 110 }}
+                />
+                <button
+                  disabled={posting}
+                  onClick={() => showCommentUploadHint()}
+                  title="Photo/GIF upload — coming soon"
+                  className="pb-2"
+                >
+                  <ImagePlus size={19} color="#8B8494" />
+                </button>
+                <button
+                  onClick={submitComment}
+                  disabled={posting || !text.trim()}
+                  className="text-sm pb-2"
+                  style={{ color: text.trim() ? "#FF5D73" : "#8B8494", fontWeight: 700 }}
+                >
+                  Post
+                </button>
+              </div>
+            </>
           )}
-          <div className="flex items-end gap-2">
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Add a comment..."
-              rows={1}
-              className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
-              style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA", maxHeight: 110 }}
-            />
-            <button
-              disabled={posting}
-              onClick={() => showCommentUploadHint()}
-              title="Photo/GIF upload — coming soon"
-              className="pb-2"
-            >
-              <ImagePlus size={19} color="#8B8494" />
-            </button>
-            <button
-              onClick={submitComment}
-              disabled={posting || !text.trim()}
-              className="text-sm pb-2"
-              style={{ color: text.trim() ? "#FF5D73" : "#8B8494", fontWeight: 700 }}
-            >
-              Post
-            </button>
-          </div>
         </div>
       </div>
     </>
@@ -1560,9 +1766,13 @@ function CommentRow({
   onReport,
 }) {
   const pressTimer = React.useRef(null);
+  const openedAtRef = React.useRef(0);
 
   const startPress = () => {
-    pressTimer.current = setTimeout(onOpenMenu, 500);
+    pressTimer.current = setTimeout(() => {
+      openedAtRef.current = Date.now();
+      onOpenMenu();
+    }, 500);
   };
   const cancelPress = () => {
     if (pressTimer.current) clearTimeout(pressTimer.current);
@@ -1576,6 +1786,7 @@ function CommentRow({
       onTouchMove={cancelPress}
       onContextMenu={(e) => {
         e.preventDefault();
+        openedAtRef.current = Date.now();
         onOpenMenu();
       }}
     >
@@ -1636,7 +1847,14 @@ function CommentRow({
 
       {menuOpen && (
         <>
-          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); onOpenMenu(); }} />
+          <div
+            className="fixed inset-0 z-40"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (Date.now() - openedAtRef.current < 400) return;
+              onOpenMenu();
+            }}
+          />
           <div
             className="absolute right-8 top-6 z-50 rounded-xl overflow-hidden py-1"
             style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 150 }}
@@ -1788,6 +2006,14 @@ function UploadScreen() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [caption, setCaption] = useState("");
   const [location, setLocation] = useState("");
+  const [hideLikes, setHideLikes] = useState(false);
+  const [hideComments, setHideComments] = useState(false);
+  const [hideRepostsSaves, setHideRepostsSaves] = useState(false);
+  const [turnOffComments, setTurnOffComments] = useState(false);
+  const [tagInput, setTagInput] = useState("");
+  const [pollEnabled, setPollEnabled] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState("");
+  const [pollOptions, setPollOptions] = useState(["", ""]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -1805,6 +2031,14 @@ function UploadScreen() {
     setPreviewUrl(null);
     setCaption("");
     setLocation("");
+    setHideLikes(false);
+    setHideComments(false);
+    setHideRepostsSaves(false);
+    setTurnOffComments(false);
+    setTagInput("");
+    setPollEnabled(false);
+    setPollQuestion("");
+    setPollOptions(["", ""]);
     setSuccess(false);
   };
 
@@ -1813,6 +2047,13 @@ function UploadScreen() {
     if (!file) {
       setError("Choose a photo or video first");
       return;
+    }
+    if (pollEnabled) {
+      const filledOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
+      if (!pollQuestion.trim() || filledOptions.length < 2) {
+        setError("A poll needs a question and at least 2 options");
+        return;
+      }
     }
     setUploading(true);
 
@@ -1842,21 +2083,70 @@ function UploadScreen() {
       data: { publicUrl },
     } = supabase.storage.from("posts").getPublicUrl(filePath);
 
-    const { error: insertError } = await supabase.from("posts").insert({
-      user_id: user.id,
-      media_url: publicUrl,
-      media_type: mode,
-      caption,
-      location: location.trim() || null,
-    });
-
-    setUploading(false);
+    const { data: insertedPost, error: insertError } = await supabase
+      .from("posts")
+      .insert({
+        user_id: user.id,
+        media_url: publicUrl,
+        media_type: mode,
+        caption,
+        location: location.trim() || null,
+        hide_likes: hideLikes,
+        hide_comments: hideComments,
+        hide_reposts: hideRepostsSaves,
+        hide_saves: hideRepostsSaves,
+        comments_disabled: turnOffComments,
+      })
+      .select("id")
+      .single();
 
     if (insertError) {
+      setUploading(false);
       setError(insertError.message);
       return;
     }
 
+    // Best-effort: tag people (skips silently if a username isn't found)
+    const usernames = tagInput
+      .split(/[,\s]+/)
+      .map((u) => u.replace(/^@/, "").trim())
+      .filter(Boolean);
+    if (usernames.length > 0) {
+      try {
+        const { data: matchedProfiles } = await supabase
+          .from("profiles")
+          .select("id, username")
+          .in("username", usernames);
+        if (matchedProfiles && matchedProfiles.length > 0) {
+          await supabase.from("post_tags").insert(
+            matchedProfiles.map((p) => ({ post_id: insertedPost.id, tagged_user_id: p.id }))
+          );
+        }
+      } catch (e) {
+        // Tagging is best-effort — never block publishing over it
+      }
+    }
+
+    // Best-effort: create the poll
+    if (pollEnabled) {
+      try {
+        const { data: pollRow } = await supabase
+          .from("polls")
+          .insert({ post_id: insertedPost.id, question: pollQuestion.trim() })
+          .select("id")
+          .single();
+        if (pollRow) {
+          const filledOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
+          await supabase.from("poll_options").insert(
+            filledOptions.map((text, i) => ({ poll_id: pollRow.id, option_text: text, position: i }))
+          );
+        }
+      } catch (e) {
+        // Poll creation is best-effort — never block publishing over it
+      }
+    }
+
+    setUploading(false);
     setSuccess(true);
   };
 
@@ -1958,7 +2248,7 @@ function UploadScreen() {
         />
 
         <div
-          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-4"
+          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-3"
           style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
         >
           <MapPin size={15} color="#8B8494" />
@@ -1970,6 +2260,92 @@ function UploadScreen() {
             className="flex-1 bg-transparent text-sm outline-none"
             style={{ color: "#F5F1EA" }}
           />
+        </div>
+
+        <div
+          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-4"
+          style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+        >
+          <span className="text-sm" style={{ color: "#8B8494", fontWeight: 700 }}>@</span>
+          <input
+            type="text"
+            placeholder="Tag people (e.g. nilufar.k, rafiq.tech)"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            className="flex-1 bg-transparent text-sm outline-none"
+            style={{ color: "#F5F1EA" }}
+          />
+        </div>
+
+        {/* Poll */}
+        <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+          <button
+            onClick={() => setPollEnabled((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2.5"
+          >
+            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>Add a poll</span>
+            <span className="rounded-full" style={{ width: 34, height: 19, background: pollEnabled ? ACCENT : "#3E3849", position: "relative" }}>
+              <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: pollEnabled ? 17 : 2, transition: "left 0.15s" }} />
+            </span>
+          </button>
+          {pollEnabled && (
+            <div className="px-3 pb-3">
+              <input
+                type="text"
+                placeholder="Ask a question..."
+                value={pollQuestion}
+                onChange={(e) => setPollQuestion(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-sm mb-2 outline-none"
+                style={{ background: "#14121A", border: "1px solid #2A2632", color: "#F5F1EA" }}
+              />
+              {pollOptions.map((opt, i) => (
+                <input
+                  key={i}
+                  type="text"
+                  placeholder={`Option ${i + 1}`}
+                  value={opt}
+                  onChange={(e) => {
+                    const next = [...pollOptions];
+                    next[i] = e.target.value;
+                    setPollOptions(next);
+                  }}
+                  className="w-full rounded-lg px-3 py-2 text-sm mb-2 outline-none"
+                  style={{ background: "#14121A", border: "1px solid #2A2632", color: "#F5F1EA" }}
+                />
+              ))}
+              {pollOptions.length < 4 && (
+                <button
+                  onClick={() => setPollOptions((prev) => [...prev, ""])}
+                  className="text-xs"
+                  style={{ color: "#FF5D73", fontWeight: 600 }}
+                >
+                  + Add option
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Per-post privacy settings */}
+        <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+          {[
+            ["Hide Like Count For This Post", hideLikes, setHideLikes],
+            ["Hide Comment Count For This Post", hideComments, setHideComments],
+            ["Hide Repost/Share/Save Count For This Post", hideRepostsSaves, setHideRepostsSaves],
+            ["Turn Off Comments", turnOffComments, setTurnOffComments],
+          ].map(([label, value, setValue], i) => (
+            <button
+              key={label}
+              onClick={() => setValue(!value)}
+              className="w-full flex items-center justify-between px-3 py-2.5 text-sm"
+              style={{ color: "#F5F1EA", borderTop: i > 0 ? "1px solid #2A2632" : "none" }}
+            >
+              <span>{label}</span>
+              <span className="rounded-full" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
+                <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: value ? 17 : 2, transition: "left 0.15s" }} />
+              </span>
+            </button>
+          ))}
         </div>
 
         {error && (
@@ -2002,6 +2378,7 @@ function ProfileScreen({ userId, onLogout, onBack }) {
   const [followingCount, setFollowingCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
+  const [editingPost, setEditingPost] = useState(null);
 
   const tabOrder = ["posts", "reposts", "tagged"];
   const mockTagged = Array.from({ length: 6 }, (_, i) => i);
@@ -2039,7 +2416,7 @@ function ProfileScreen({ userId, onLogout, onBack }) {
 
     const { data: postsData } = await supabase
       .from("posts")
-      .select("id, media_url, media_type")
+      .select("id, media_url, media_type, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled")
       .eq("user_id", targetId)
       .order("created_at", { ascending: false });
     setPosts(postsData || []);
@@ -2251,10 +2628,29 @@ function ProfileScreen({ userId, onLogout, onBack }) {
               {tab === "reposts" && (
                 <Repeat2 size={12} color="#FFB84D" className="absolute top-1.5 right-1.5" />
               )}
+              {tab === "posts" && isOwnProfile && (
+                <button
+                  onClick={() => setEditingPost(p)}
+                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center"
+                  style={{ background: "rgba(0,0,0,0.55)" }}
+                >
+                  <Pencil size={11} color="#F5F1EA" />
+                </button>
+              )}
             </div>
           ))
         )}
       </div>
+
+      {editingPost && (
+        <EditPostSettingsSheet
+          post={editingPost}
+          onClose={() => setEditingPost(null)}
+          onSaved={(patch) =>
+            setPosts((prev) => prev.map((p) => (p.id === editingPost.id ? { ...p, ...patch } : p)))
+          }
+        />
+      )}
     </div>
   );
 }
