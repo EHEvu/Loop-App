@@ -42,6 +42,9 @@ import {
   ImagePlus,
   ThumbsDown,
   Trash2,
+  MapPin,
+  Copy,
+  Pencil,
 } from "lucide-react";
 
 // ---- Design tokens ----
@@ -203,7 +206,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves")
+      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, views_count, location")
       .order("created_at", { ascending: false });
 
     if (postsError) {
@@ -381,6 +384,11 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               </button>
               <div className="flex flex-col leading-tight flex-1">
                 <button onClick={() => onOpenProfile(post.user_id)} className="text-sm text-left" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username}</button>
+                {post.location && (
+                  <span className="flex items-center gap-1 text-[11px]" style={{ color: "#8B8494" }}>
+                    <MapPin size={10} /> {post.location}
+                  </span>
+                )}
               </div>
 
               <div className="relative">
@@ -492,6 +500,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               {countPrefs.likes && !post.hide_likes && (
                 <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.likeCount} likes</span>
               )}
+              {post.media_type === "reel" && post.views_count > 0 && (
+                <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.views_count} plays</span>
+              )}
               {countPrefs.comments && !post.hide_comments && post.commentCount > 0 && (
                 <span className="text-xs ml-2" style={{ color: "#8B8494" }}>· {post.commentCount} comments</span>
               )}
@@ -529,6 +540,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
   const [autoScroll, setAutoScroll] = useState(getAutoScrollPref());
   const [fullscreen, setFullscreen] = useState(false);
   const [toast, setToast] = useState("");
+  const [captionExpanded, setCaptionExpanded] = useState(false);
   const [commentSheetOpen, setCommentSheetOpen] = useState(false);
   const [countPrefs, toggleCountPref] = useCountPrefs();
   const touchStartY = React.useRef(0);
@@ -544,6 +556,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       videoRef.current.currentTime = 0;
       setPlaying(true);
       videoRef.current.play().catch(() => {});
+    }
+    setCaptionExpanded(false);
+
+    const activeId = reels[index]?.id;
+    if (activeId) {
+      setReels((prev) => prev.map((r) => (r.id === activeId ? { ...r, views_count: (r.views_count || 0) + 1 } : r)));
+      supabase.rpc("increment_post_views", { p_post_id: activeId }).catch(() => {});
     }
   }, [index, reels[index]?.id]);
 
@@ -563,7 +582,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
 
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves")
+      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, views_count, location")
       .eq("media_type", "reel")
       .order("created_at", { ascending: false });
 
@@ -839,10 +858,12 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       {!playing && (
         <button
           onClick={() => setMuted((m) => !m)}
-          className="absolute top-14 right-3 w-8 h-8 rounded-full flex items-center justify-center"
-          style={{ background: "rgba(0,0,0,0.4)" }}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          className="absolute top-14 right-3 w-11 h-11 rounded-full flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.45)" }}
         >
-          {muted ? <VolumeX size={16} color="#fff" /> : <Volume2 size={16} color="#fff" />}
+          {muted ? <VolumeX size={20} color="#fff" /> : <Volume2 size={20} color="#fff" />}
         </button>
       )}
 
@@ -856,7 +877,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       )}
 
       {/* top label + options menu */}
-      <div className="absolute top-4 left-0 right-0 flex items-center justify-center">
+      <div
+        className="absolute top-4 left-0 right-0 flex items-center justify-center"
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+      >
         <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
           Reels
         </span>
@@ -1014,7 +1039,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       </div>
 
       {/* bottom-left caption + follow */}
-      <div className="absolute left-4 bottom-5 right-20">
+      <div
+        className="absolute left-4 bottom-5 right-20"
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center gap-2 mb-2">
           <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
@@ -1040,15 +1069,45 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
             </button>
           )}
         </div>
+        {reel.location && (
+          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "#C9C3D1" }}>
+            <MapPin size={11} /> {reel.location}
+          </span>
+        )}
         {reel.caption && (
-          <button onClick={() => setCommentSheetOpen(true)} className="text-left">
-            <p className="text-xs" style={{ color: "#E5E1EA", whiteSpace: "pre-wrap" }}>{reel.caption}</p>
-          </button>
+          <div>
+            <p
+              onClick={() => setCommentSheetOpen(true)}
+              className="text-xs"
+              style={{
+                color: "#E5E1EA",
+                whiteSpace: "pre-wrap",
+                ...(captionExpanded
+                  ? {}
+                  : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }),
+              }}
+            >
+              {reel.caption}
+            </p>
+            {reel.caption.length > 70 && (
+              <button
+                onClick={() => setCaptionExpanded((v) => !v)}
+                className="text-xs mt-0.5"
+                style={{ color: "#8B8494", fontWeight: 600 }}
+              >
+                {captionExpanded ? "less" : "...more"}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
       {/* Quick Actions — the only action control; expands to full-size icons */}
-      <div className="absolute right-3 bottom-6 flex flex-col items-center">
+      <div
+        className="absolute right-3 bottom-6 flex flex-col items-center"
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+      >
         <div className="relative flex flex-col items-center">
           {expanded && (
             <div
@@ -1058,6 +1117,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
               <button onClick={toggleLike} className="flex flex-col items-center gap-1">
                 <Heart size={26} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
                 {countPrefs.likes && !reel.hide_likes && <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{reel.likeCount}</span>}
+                {reel.views_count > 0 && <span className="text-[9px]" style={{ color: "#8B8494" }}>{reel.views_count} views</span>}
               </button>
               <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1">
                 <MessageCircle size={25} color="#F5F1EA" />
@@ -1168,6 +1228,9 @@ function ReelCommentsSheet({
   const [text, setText] = useState("");
   const [replyingTo, setReplyingTo] = useState(null);
   const [posting, setPosting] = useState(false);
+  const [menuFor, setMenuFor] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
 
   useEffect(() => {
     loadComments();
@@ -1263,9 +1326,50 @@ function ReelCommentsSheet({
     if (!window.confirm("Delete this comment?")) return;
     setComments((prev) => prev.filter((c) => c.id !== comment.id && c.parent_id !== comment.id));
     await supabase.from("comments").delete().eq("id", comment.id);
+    setMenuFor(null);
   };
 
-  const topLevel = comments.filter((c) => !c.parent_id);
+  const startEdit = (comment) => {
+    setEditingId(comment.id);
+    setEditText(comment.content);
+    setMenuFor(null);
+  };
+
+  const saveEdit = async (comment) => {
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: trimmed } : c)));
+    setEditingId(null);
+    await supabase.from("comments").update({ content: trimmed }).eq("id", comment.id);
+  };
+
+  const copyComment = (comment) => {
+    navigator.clipboard?.writeText(comment.content).catch(() => {});
+    setMenuFor(null);
+  };
+
+  const reportComment = async (comment) => {
+    setMenuFor(null);
+    if (!currentUserId) return;
+    await supabase.from("reports").insert({
+      post_id: postId,
+      comment_id: comment.id,
+      reporter_id: currentUserId,
+      reason: "Reported comment",
+    });
+    alert("Comment reported. Thanks for letting us know.");
+  };
+
+  // Pin the post owner's own comments to the top; keep chronological order otherwise
+  const topLevel = comments
+    .filter((c) => !c.parent_id)
+    .slice()
+    .sort((a, b) => {
+      const aOwner = a.user_id === postOwnerId ? 0 : 1;
+      const bOwner = b.user_id === postOwnerId ? 0 : 1;
+      if (aOwner !== bOwner) return aOwner - bOwner;
+      return new Date(a.created_at) - new Date(b.created_at);
+    });
   const repliesOf = (id) => comments.filter((c) => c.parent_id === id);
 
   return (
@@ -1301,7 +1405,7 @@ function ReelCommentsSheet({
           </button>
         )}
 
-        <div className="flex-1 overflow-y-auto px-4 pt-3">
+        <div className="flex-1 overflow-y-auto px-4 pt-3" onClick={() => setMenuFor(null)}>
           {loading ? (
             <p className="text-xs text-center py-6" style={{ color: "#8B8494" }}>Loading...</p>
           ) : topLevel.length === 0 ? (
@@ -1311,21 +1415,41 @@ function ReelCommentsSheet({
               <div key={c.id} className="mb-3">
                 <CommentRow
                   comment={c}
-                  isAuthor={c.user_id === postOwnerId}
-                  canDelete={c.user_id === currentUserId}
+                  isPinned={c.user_id === postOwnerId}
+                  isOwn={c.user_id === currentUserId}
+                  isEditing={editingId === c.id}
+                  editText={editText}
+                  onEditTextChange={setEditText}
+                  onSaveEdit={() => saveEdit(c)}
+                  onCancelEdit={() => setEditingId(null)}
                   onReact={(type) => setReaction(c, type)}
                   onReply={() => setReplyingTo(c)}
+                  menuOpen={menuFor === c.id}
+                  onOpenMenu={() => setMenuFor(menuFor === c.id ? null : c.id)}
+                  onEdit={() => startEdit(c)}
                   onDelete={() => deleteComment(c)}
+                  onCopy={() => copyComment(c)}
+                  onReport={() => reportComment(c)}
                 />
                 {repliesOf(c.id).map((r) => (
                   <div key={r.id} className="ml-9 mt-2">
                     <CommentRow
                       comment={r}
-                      isAuthor={r.user_id === postOwnerId}
-                      canDelete={r.user_id === currentUserId}
+                      isPinned={r.user_id === postOwnerId}
+                      isOwn={r.user_id === currentUserId}
+                      isEditing={editingId === r.id}
+                      editText={editText}
+                      onEditTextChange={setEditText}
+                      onSaveEdit={() => saveEdit(r)}
+                      onCancelEdit={() => setEditingId(null)}
                       onReact={(type) => setReaction(r, type)}
                       onReply={() => setReplyingTo(c)}
+                      menuOpen={menuFor === r.id}
+                      onOpenMenu={() => setMenuFor(menuFor === r.id ? null : r.id)}
+                      onEdit={() => startEdit(r)}
                       onDelete={() => deleteComment(r)}
+                      onCopy={() => copyComment(r)}
+                      onReport={() => reportComment(r)}
                     />
                   </div>
                 ))}
@@ -1377,35 +1501,89 @@ function showCommentUploadHint() {
   alert("Photo/GIF upload in comments — coming soon");
 }
 
-function CommentRow({ comment, isAuthor, canDelete, onReact, onReply, onDelete }) {
+function CommentRow({
+  comment,
+  isPinned,
+  isOwn,
+  isEditing,
+  editText,
+  onEditTextChange,
+  onSaveEdit,
+  onCancelEdit,
+  onReact,
+  onReply,
+  menuOpen,
+  onOpenMenu,
+  onEdit,
+  onDelete,
+  onCopy,
+  onReport,
+}) {
+  const pressTimer = React.useRef(null);
+
+  const startPress = () => {
+    pressTimer.current = setTimeout(onOpenMenu, 500);
+  };
+  const cancelPress = () => {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+  };
+
   return (
-    <div className="flex items-start gap-2.5">
+    <div
+      className="relative flex items-start gap-2.5"
+      onTouchStart={startPress}
+      onTouchEnd={cancelPress}
+      onTouchMove={cancelPress}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onOpenMenu();
+      }}
+    >
       <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
         <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[9px]" style={{ color: "#F5F1EA" }}>
           {comment.username[0].toUpperCase()}
         </div>
       </div>
       <div className="flex-1">
-        <p className="text-xs" style={{ color: "#F5F1EA" }}>
-          <span style={{ fontWeight: 700 }}>{comment.username} </span>
-          {isAuthor && (
-            <span className="text-[9px] mr-1 px-1.5 py-0.5 rounded" style={{ background: "#2A2632", color: "#8B8494" }}>Author</span>
-          )}
-          {comment.content}
-        </p>
-        <div className="flex items-center gap-3 mt-1">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs" style={{ color: "#F5F1EA", fontWeight: 700 }}>{comment.username}</span>
           <span className="text-[10px]" style={{ color: "#8B8494" }}>{timeAgo(comment.created_at)}</span>
-          <button onClick={onReply} className="text-[10px]" style={{ color: "#8B8494" }}>Reply</button>
-          {comment.likeCount > 0 && (
-            <span className="text-[10px]" style={{ color: "#8B8494" }}>{comment.likeCount} likes</span>
-          )}
-          {comment.dislikeCount > 0 && (
-            <span className="text-[10px]" style={{ color: "#8B8494" }}>{comment.dislikeCount} dislikes</span>
-          )}
-          {canDelete && (
-            <button onClick={onDelete} className="text-[10px]" style={{ color: "#FF5D73" }}>Delete</button>
+          {isPinned && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "#2A2632", color: "#8B8494" }}>Author</span>
           )}
         </div>
+
+        {isEditing ? (
+          <div className="mt-1">
+            <textarea
+              value={editText}
+              onChange={(e) => onEditTextChange(e.target.value)}
+              rows={1}
+              className="w-full rounded-lg px-2 py-1.5 text-xs outline-none resize-none"
+              style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+            />
+            <div className="flex items-center gap-3 mt-1">
+              <button onClick={onSaveEdit} className="text-[10px]" style={{ color: "#FF5D73", fontWeight: 700 }}>Save</button>
+              <button onClick={onCancelEdit} className="text-[10px]" style={{ color: "#8B8494" }}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="text-xs mt-0.5" style={{ color: "#E5E1EA", whiteSpace: "pre-wrap" }}>{comment.content}</p>
+            <div className="flex items-center gap-3 mt-1">
+              <button onClick={onReply} className="text-[10px]" style={{ color: "#8B8494" }}>Reply</button>
+              {isOwn && (
+                <button onClick={onEdit} className="text-[10px]" style={{ color: "#8B8494" }}>Edit</button>
+              )}
+              {comment.likeCount > 0 && (
+                <span className="text-[10px]" style={{ color: "#8B8494" }}>{comment.likeCount} likes</span>
+              )}
+              {comment.dislikeCount > 0 && (
+                <span className="text-[10px]" style={{ color: "#8B8494" }}>{comment.dislikeCount} dislikes</span>
+              )}
+            </div>
+          </>
+        )}
       </div>
       <div className="flex flex-col items-center gap-2 pt-0.5">
         <button onClick={() => onReact("like")}>
@@ -1415,6 +1593,38 @@ function CommentRow({ comment, isAuthor, canDelete, onReact, onReply, onDelete }
           <ThumbsDown size={12} color={comment.myReaction === "dislike" ? "#FFB84D" : "#8B8494"} fill={comment.myReaction === "dislike" ? "#FFB84D" : "none"} />
         </button>
       </div>
+
+      {menuOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); onOpenMenu(); }} />
+          <div
+            className="absolute right-8 top-6 z-50 rounded-xl overflow-hidden py-1"
+            style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 150 }}
+          >
+            {isOwn && (
+              <button onClick={onEdit} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+                <Pencil size={13} /> Edit
+              </button>
+            )}
+            {isOwn && (
+              <button onClick={onDelete} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+                <Trash2 size={13} /> Delete
+              </button>
+            )}
+            <button onClick={onCopy} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+              <Copy size={13} /> Copy
+            </button>
+            <button onClick={onReply} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+              <MessageCircle size={13} /> Reply
+            </button>
+            {!isOwn && (
+              <button onClick={onReport} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#FF5D73" }}>
+                Report
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1537,6 +1747,7 @@ function UploadScreen() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [caption, setCaption] = useState("");
+  const [location, setLocation] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -1553,6 +1764,7 @@ function UploadScreen() {
     setFile(null);
     setPreviewUrl(null);
     setCaption("");
+    setLocation("");
     setSuccess(false);
   };
 
@@ -1595,6 +1807,7 @@ function UploadScreen() {
       media_url: publicUrl,
       media_type: mode,
       caption,
+      location: location.trim() || null,
     });
 
     setUploading(false);
@@ -1700,9 +1913,24 @@ function UploadScreen() {
           rows={3}
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
-          className="w-full rounded-xl px-3 py-2.5 text-sm mb-4 outline-none resize-none"
+          className="w-full rounded-xl px-3 py-2.5 text-sm mb-3 outline-none resize-none"
           style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
         />
+
+        <div
+          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-4"
+          style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+        >
+          <MapPin size={15} color="#8B8494" />
+          <input
+            type="text"
+            placeholder="Add location"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            className="flex-1 bg-transparent text-sm outline-none"
+            style={{ color: "#F5F1EA" }}
+          />
+        </div>
 
         {error && (
           <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>
