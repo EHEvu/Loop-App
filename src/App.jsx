@@ -54,6 +54,39 @@ import {
 
 const ACCENT = "linear-gradient(135deg, #FF5D73 0%, #FFB84D 100%)";
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error("Loop screen crashed:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center px-6 text-center" style={{ background: "#14121A" }}>
+          <p className="text-sm mb-2" style={{ color: "#FF5D73", fontWeight: 700 }}>Something went wrong</p>
+          <p className="text-xs mb-4" style={{ color: "#8B8494", wordBreak: "break-word" }}>
+            {String(this.state.error?.message || this.state.error)}
+          </p>
+          <button
+            onClick={() => this.setState({ error: null })}
+            className="text-xs px-4 py-2 rounded-full"
+            style={{ background: ACCENT, color: "#14121A", fontWeight: 700 }}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ---- Local device preferences (per-browser, not synced to Supabase) ----
 function getCountPrefs() {
   try {
@@ -562,7 +595,14 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
     const activeId = reels[index]?.id;
     if (activeId) {
       setReels((prev) => prev.map((r) => (r.id === activeId ? { ...r, views_count: (r.views_count || 0) + 1 } : r)));
-      supabase.rpc("increment_post_views", { p_post_id: activeId }).catch(() => {});
+      try {
+        supabase.rpc("increment_post_views", { p_post_id: activeId }).then(
+          () => {},
+          () => {}
+        );
+      } catch (e) {
+        // View counting is best-effort only — never let it break the screen
+      }
     }
   }, [index, reels[index]?.id]);
 
@@ -3091,41 +3131,43 @@ export default function App() {
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "#14121A", borderRadius: 36, border: "8px solid #0A090D" }}
       >
-        {inboxOpen ? (
-          <MessagesScreen onBack={() => setInboxOpen(false)} />
-        ) : notificationsOpen ? (
-          <NotificationsScreen onBack={() => setNotificationsOpen(false)} />
-        ) : interestsOpen ? (
-          <InterestsScreen onBack={() => setInterestsOpen(false)} />
-        ) : commentsPostId !== null ? (
-          <CommentsScreen postId={commentsPostId} postOwnerId={commentsPostOwnerId} onBack={() => setCommentsPostId(null)} />
-        ) : reportPostId !== null ? (
-          <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
-        ) : viewProfileId !== null ? (
-          <ProfileScreen userId={viewProfileId} onBack={() => setViewProfileId(null)} />
-        ) : active === "feed" ? (
-          <FeedScreen
-            onOpenMessages={() => setInboxOpen(true)}
-            onOpenNotifications={() => setNotificationsOpen(true)}
-            onOpenComments={(postId, ownerId) => {
-              setCommentsPostId(postId);
-              setCommentsPostOwnerId(ownerId);
-            }}
-            onOpenReport={(postId) => setReportPostId(postId)}
-            onOpenProfile={(userId) => setViewProfileId(userId)}
-          />
-        ) : active === "reels" ? (
-          <ReelsScreen
-            onOpenReport={(postId) => setReportPostId(postId)}
-            onOpenProfile={(userId) => setViewProfileId(userId)}
-          />
-        ) : active === "search" ? (
-          <SearchScreen onOpenInterests={() => setInterestsOpen(true)} onOpenProfile={(userId) => setViewProfileId(userId)} />
-        ) : active === "profile" ? (
-          <ProfileScreen onLogout={() => supabase.auth.signOut()} />
-        ) : (
-          <ActiveScreen />
-        )}
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId)}>
+          {inboxOpen ? (
+            <MessagesScreen onBack={() => setInboxOpen(false)} />
+          ) : notificationsOpen ? (
+            <NotificationsScreen onBack={() => setNotificationsOpen(false)} />
+          ) : interestsOpen ? (
+            <InterestsScreen onBack={() => setInterestsOpen(false)} />
+          ) : commentsPostId !== null ? (
+            <CommentsScreen postId={commentsPostId} postOwnerId={commentsPostOwnerId} onBack={() => setCommentsPostId(null)} />
+          ) : reportPostId !== null ? (
+            <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
+          ) : viewProfileId !== null ? (
+            <ProfileScreen userId={viewProfileId} onBack={() => setViewProfileId(null)} />
+          ) : active === "feed" ? (
+            <FeedScreen
+              onOpenMessages={() => setInboxOpen(true)}
+              onOpenNotifications={() => setNotificationsOpen(true)}
+              onOpenComments={(postId, ownerId) => {
+                setCommentsPostId(postId);
+                setCommentsPostOwnerId(ownerId);
+              }}
+              onOpenReport={(postId) => setReportPostId(postId)}
+              onOpenProfile={(userId) => setViewProfileId(userId)}
+            />
+          ) : active === "reels" ? (
+            <ReelsScreen
+              onOpenReport={(postId) => setReportPostId(postId)}
+              onOpenProfile={(userId) => setViewProfileId(userId)}
+            />
+          ) : active === "search" ? (
+            <SearchScreen onOpenInterests={() => setInterestsOpen(true)} onOpenProfile={(userId) => setViewProfileId(userId)} />
+          ) : active === "profile" ? (
+            <ProfileScreen onLogout={() => supabase.auth.signOut()} />
+          ) : (
+            <ActiveScreen />
+          )}
+        </ErrorBoundary>
 
         {/* Bottom nav */}
         {!overlayOpen && (
