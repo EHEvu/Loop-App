@@ -43,6 +43,7 @@ import {
   ThumbsDown,
   Trash2,
   MapPin,
+  Pin,
   Copy,
   Pencil,
 } from "lucide-react";
@@ -271,42 +272,62 @@ function PollBlock({ postId, currentUserId }) {
 
 // Bottom sheet for the post owner to change per-post visibility settings
 // after publishing (opened from the Edit option in their own Profile grid)
-function EditPostSettingsSheet({ post, onClose, onSaved }) {
-  const [hideLikes, setHideLikes] = useState(!!post.hide_likes);
-  const [hideComments, setHideComments] = useState(!!post.hide_comments);
-  const [hideRepostsSaves, setHideRepostsSaves] = useState(!!post.hide_reposts || !!post.hide_saves);
-  const [turnOffComments, setTurnOffComments] = useState(!!post.comments_disabled);
-  const [saving, setSaving] = useState(false);
+function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
+  const [view, setView] = useState("menu"); // "menu" | "edit"
+  const [busyField, setBusyField] = useState(null);
+  const [editCaption, setEditCaption] = useState(post.caption || "");
+  const [editLocation, setEditLocation] = useState(post.location || "");
+  const [savingEdit, setSavingEdit] = useState(false);
 
-  const save = async () => {
-    setSaving(true);
-    await supabase
-      .from("posts")
-      .update({
-        hide_likes: hideLikes,
-        hide_comments: hideComments,
-        hide_reposts: hideRepostsSaves,
-        hide_saves: hideRepostsSaves,
-        comments_disabled: turnOffComments,
-      })
-      .eq("id", post.id);
-    setSaving(false);
-    onSaved?.({
-      hide_likes: hideLikes,
-      hide_comments: hideComments,
-      hide_reposts: hideRepostsSaves,
-      hide_saves: hideRepostsSaves,
-      comments_disabled: turnOffComments,
-    });
+  const patchPost = async (patch) => {
+    const field = Object.keys(patch)[0];
+    setBusyField(field);
+    await supabase.from("posts").update(patch).eq("id", post.id);
+    setBusyField(null);
+    onSaved?.(patch);
+  };
+
+  const toggleField = (field, current) => patchPost({ [field]: !current });
+
+  const handleDelete = async () => {
+    if (!window.confirm("Delete this post? This cannot be undone.")) return;
+    await supabase.from("posts").delete().eq("id", post.id);
+    onDeleted?.();
     onClose();
   };
 
-  const Toggle = ({ label, value, onChange }) => (
-    <button onClick={() => onChange(!value)} className="w-full flex items-center justify-between px-4 py-3 text-sm" style={{ color: "#F5F1EA" }}>
-      <span>{label}</span>
-      <span className="rounded-full" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
+  const saveEdit = async () => {
+    setSavingEdit(true);
+    await supabase
+      .from("posts")
+      .update({ caption: editCaption, location: editLocation.trim() || null })
+      .eq("id", post.id);
+    setSavingEdit(false);
+    onSaved?.({ caption: editCaption, location: editLocation.trim() || null });
+    onClose();
+  };
+
+  const Toggle = ({ label, field, value, extraField }) => (
+    <button
+      onClick={() => (extraField ? patchPost({ [field]: !value, [extraField]: !value }) : toggleField(field, value))}
+      disabled={busyField === field}
+      className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm"
+      style={{ color: "#F5F1EA", textAlign: "left", opacity: busyField === field ? 0.6 : 1 }}
+    >
+      <span style={{ textAlign: "left" }}>{label}</span>
+      <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
         <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: value ? 17 : 2, transition: "left 0.15s" }} />
       </span>
+    </button>
+  );
+
+  const MenuRow = ({ label, onClick, danger }) => (
+    <button
+      onClick={onClick}
+      className="w-full text-left px-4 py-3 text-sm"
+      style={{ color: danger ? "#FF5D73" : "#F5F1EA" }}
+    >
+      {label}
     </button>
   );
 
@@ -315,31 +336,89 @@ function EditPostSettingsSheet({ post, onClose, onSaved }) {
       <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <div
         className="fixed left-0 right-0 bottom-0 z-50 rounded-t-3xl"
-        style={{ background: "#14121A", border: "1px solid #2A2632" }}
+        style={{ background: "#14121A", border: "1px solid #2A2632", maxHeight: "80vh", overflowY: "auto" }}
       >
         <div className="flex items-center justify-center pt-2.5 pb-1">
           <div className="rounded-full" style={{ width: 36, height: 4, background: "#3E3849" }} />
         </div>
         <div className="flex items-center justify-between px-4 pb-2">
-          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>Edit post settings</span>
+          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>
+            {view === "edit" ? "Edit" : "Post options"}
+          </span>
           <button onClick={onClose}><X size={18} color="#8B8494" /></button>
         </div>
-        <div className="pb-2">
-          <Toggle label="Hide Like Count For This Post" value={hideLikes} onChange={setHideLikes} />
-          <Toggle label="Hide Comment Count For This Post" value={hideComments} onChange={setHideComments} />
-          <Toggle label="Hide Repost/Share/Save Count For This Post" value={hideRepostsSaves} onChange={setHideRepostsSaves} />
-          <Toggle label="Turn Off Comments" value={turnOffComments} onChange={setTurnOffComments} />
-        </div>
-        <div className="px-4 pb-6 pt-1">
-          <button
-            onClick={save}
-            disabled={saving}
-            className="w-full rounded-xl py-3 text-sm"
-            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: saving ? 0.6 : 1 }}
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
-        </div>
+
+        {view === "menu" ? (
+          <div className="pb-6">
+            <Toggle label="Hide Like Count For This Post" field="hide_likes" value={!!post.hide_likes} />
+            <Toggle label="Hide Comment Count For This Post" field="hide_comments" value={!!post.hide_comments} />
+            <Toggle
+              label="Hide Repost/Share/Save Count For This Post"
+              field="hide_reposts"
+              value={!!post.hide_reposts}
+              extraField="hide_saves"
+            />
+            <Toggle label="Turn Off Comments" field="comments_disabled" value={!!post.comments_disabled} />
+
+            <div className="h-px my-1.5" style={{ background: "#2A2632" }} />
+
+            <MenuRow
+              label={post.pinned ? "Unpin from your main grid" : "Pin to your main grid"}
+              onClick={() => toggleField("pinned", !!post.pinned)}
+            />
+            <MenuRow
+              label={post.archived ? "Unarchive" : "Archive"}
+              onClick={() => toggleField("archived", !!post.archived)}
+            />
+            <MenuRow label="Edit" onClick={() => setView("edit")} />
+            <MenuRow label="Adjust preview" onClick={() => alert("Adjust preview — coming soon")} />
+
+            <div className="h-px my-1.5" style={{ background: "#2A2632" }} />
+            <MenuRow label="Delete" onClick={handleDelete} danger />
+          </div>
+        ) : (
+          <div className="px-4 pb-6">
+            <textarea
+              value={editCaption}
+              onChange={(e) => setEditCaption(e.target.value)}
+              placeholder="Write a caption..."
+              rows={3}
+              className="w-full rounded-xl px-3 py-2.5 text-sm mb-3 outline-none resize-none"
+              style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+            />
+            <div
+              className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-4"
+              style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+            >
+              <MapPin size={15} color="#8B8494" />
+              <input
+                type="text"
+                placeholder="Add location"
+                value={editLocation}
+                onChange={(e) => setEditLocation(e.target.value)}
+                className="flex-1 bg-transparent text-sm outline-none"
+                style={{ color: "#F5F1EA" }}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setView("menu")}
+                className="flex-1 rounded-xl py-2.5 text-sm"
+                style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={savingEdit}
+                className="flex-1 rounded-xl py-2.5 text-sm"
+                style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: savingEdit ? 0.6 : 1 }}
+              >
+                {savingEdit ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
@@ -435,6 +514,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [userId, setUserId] = useState(null);
   const [menuOpenFor, setMenuOpenFor] = useState(null);
   const [likesPopupFor, setLikesPopupFor] = useState(null);
+  const [commentSheetFor, setCommentSheetFor] = useState(null);
   const pressTimers = React.useRef({});
   const [countPrefs] = useCountPrefs();
 
@@ -454,6 +534,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
       .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
+      .eq("archived", false)
       .order("created_at", { ascending: false });
 
     if (postsError) {
@@ -696,6 +777,23 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
             <div className="flex items-center justify-between px-4 pt-3">
               <div className="flex items-center gap-5">
+                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+                  <div className="h-8 flex items-center justify-center">
+                    <Send size={22} color="#F5F1EA" />
+                  </div>
+                  <span className="text-[10px] leading-none h-3 mt-0.5">&nbsp;</span>
+                </div>
+                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+                  <button onClick={() => toggleSave(post)} className="h-8 flex items-center justify-center">
+                    <Bookmark size={22} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+                  </button>
+                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                    {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col items-center" style={{ minWidth: 34 }}>
                 <button
                   onClick={() => toggleLike(post)}
                   onTouchStart={() => {
@@ -703,43 +801,35 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   }}
                   onTouchEnd={() => clearTimeout(pressTimers.current[post.id])}
                   onTouchMove={() => clearTimeout(pressTimers.current[post.id])}
-                  className="flex flex-col items-center"
+                  className="h-8 flex items-center justify-center"
                 >
-                  <Heart size={26} color={post.liked ? "#FF5D73" : "#F5F1EA"} fill={post.liked ? "#FF5D73" : "none"} />
+                  <Heart size={30} color={post.liked ? "#FF5D73" : "#F5F1EA"} fill={post.liked ? "#FF5D73" : "none"} />
                 </button>
-
-                {!post.comments_disabled ? (
-                  <div className="flex flex-col items-center">
-                    <button onClick={() => onOpenComments(post.id, post.user_id)}>
-                      <MessageCircle size={22} color="#F5F1EA" />
-                    </button>
-                    {countPrefs.comments && !post.hide_comments && post.commentCount > 0 && (
-                      <span className="text-[10px]" style={{ color: "#8B8494" }}>{formatCount(post.commentCount)}</span>
-                    )}
-                  </div>
-                ) : (
-                  <MessageCircle size={22} color="#3E3849" />
-                )}
-
-                <div className="flex flex-col items-center">
-                  <button onClick={() => toggleRepost(post)}>
-                    <Repeat2 size={24} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
-                  </button>
-                  {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 && (
-                    <span className="text-[10px]" style={{ color: "#8B8494" }}>{formatCount(post.repostCount)}</span>
-                  )}
-                </div>
+                <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                  {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
+                </span>
               </div>
 
               <div className="flex items-center gap-5">
-                <Send size={22} color="#F5F1EA" />
-                <div className="flex flex-col items-center">
-                  <button onClick={() => toggleSave(post)}>
-                    <Bookmark size={22} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+                  <button
+                    onClick={() => !post.comments_disabled && setCommentSheetFor(post)}
+                    disabled={post.comments_disabled}
+                    className="h-8 flex items-center justify-center"
+                  >
+                    <MessageCircle size={22} color={post.comments_disabled ? "#3E3849" : "#F5F1EA"} />
                   </button>
-                  {countPrefs.saves && !post.hide_saves && post.saveCount > 0 && (
-                    <span className="text-[10px]" style={{ color: "#8B8494" }}>{formatCount(post.saveCount)}</span>
-                  )}
+                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                    {countPrefs.comments && !post.hide_comments && post.commentCount > 0 ? formatCount(post.commentCount) : "\u00A0"}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+                  <button onClick={() => toggleRepost(post)} className="h-8 flex items-center justify-center">
+                    <Repeat2 size={24} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
+                  </button>
+                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                    {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -748,7 +838,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               <LikesViewsPopup post={post} isOwner={post.user_id === userId} onClose={() => setLikesPopupFor(null)} />
             )}
 
-            <div className="px-4 pt-1.5">
+            <div className="px-4 pt-1">
               <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
               {post.caption && (
                 <p className="text-sm mt-0.5" style={{ color: "#C9C3D1", whiteSpace: "pre-wrap" }}>
@@ -759,6 +849,23 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             </div>
           </div>
         ))
+      )}
+
+      {commentSheetFor && (
+        <ReelCommentsSheet
+          postId={commentSheetFor.id}
+          postOwnerId={commentSheetFor.user_id}
+          currentUserId={userId}
+          postUsername={commentSheetFor.username}
+          postCaption={commentSheetFor.caption}
+          commentsDisabled={commentSheetFor.comments_disabled}
+          onOpenProfile={onOpenProfile}
+          onClose={() => setCommentSheetFor(null)}
+          onCommentPosted={() => {
+            const id = commentSheetFor.id;
+            setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, commentCount: p.commentCount + 1 } : p)));
+          }}
+        />
       )}
     </div>
   );
@@ -830,6 +937,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       .from("posts")
       .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
       .eq("media_type", "reel")
+      .eq("archived", false)
       .order("created_at", { ascending: false });
 
     if (postsError) {
@@ -1341,6 +1449,9 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 className="flex flex-col items-center gap-1"
               >
                 <Heart size={26} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
+                {countPrefs.likes && !reel.hide_likes && reel.likeCount > 0 && (
+                  <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.likeCount)}</span>
+                )}
               </button>
               {!reel.comments_disabled ? (
                 <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1">
@@ -1529,6 +1640,26 @@ function ReelCommentsSheet({
           type: "comment",
           post_id: postId,
         });
+      }
+
+      // Best-effort: notify anyone @mentioned in the comment
+      try {
+        const mentioned = [...new Set((trimmed.match(/@([a-zA-Z0-9_.]+)/g) || []).map((m) => m.slice(1)))];
+        if (mentioned.length > 0) {
+          const { data: matchedProfiles } = await supabase
+            .from("profiles")
+            .select("id, username")
+            .in("username", mentioned);
+          if (matchedProfiles && matchedProfiles.length > 0) {
+            await supabase.from("notifications").insert(
+              matchedProfiles
+                .filter((p) => p.id !== currentUserId)
+                .map((p) => ({ user_id: p.id, actor_id: currentUserId, type: "mention", post_id: postId }))
+            );
+          }
+        }
+      } catch (e) {
+        // Mention notifications are best-effort — never block the comment over it
       }
     }
   };
@@ -2106,17 +2237,20 @@ function UploadScreen() {
       return;
     }
 
-    // Best-effort: tag people (skips silently if a username isn't found)
-    const usernames = tagInput
-      .split(/[,\s]+/)
-      .map((u) => u.replace(/^@/, "").trim())
-      .filter(Boolean);
-    if (usernames.length > 0) {
+    // Best-effort: tag people — from the dedicated field AND any @username
+    // written directly in the caption (skips silently if a username isn't found)
+    const captionMentions = (caption.match(/@([a-zA-Z0-9_.]+)/g) || []).map((m) => m.slice(1));
+    const usernames = [
+      ...tagInput.split(/[,\s]+/).map((u) => u.replace(/^@/, "").trim()),
+      ...captionMentions,
+    ].filter(Boolean);
+    const uniqueUsernames = [...new Set(usernames)];
+    if (uniqueUsernames.length > 0) {
       try {
         const { data: matchedProfiles } = await supabase
           .from("profiles")
           .select("id, username")
-          .in("username", usernames);
+          .in("username", uniqueUsernames);
         if (matchedProfiles && matchedProfiles.length > 0) {
           await supabase.from("post_tags").insert(
             matchedProfiles.map((p) => ({ post_id: insertedPost.id, tagged_user_id: p.id }))
@@ -2239,7 +2373,7 @@ function UploadScreen() {
         </label>
 
         <textarea
-          placeholder="Write a caption..."
+          placeholder="Write a caption... (use @username to tag someone)"
           rows={3}
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
@@ -2337,11 +2471,11 @@ function UploadScreen() {
             <button
               key={label}
               onClick={() => setValue(!value)}
-              className="w-full flex items-center justify-between px-3 py-2.5 text-sm"
-              style={{ color: "#F5F1EA", borderTop: i > 0 ? "1px solid #2A2632" : "none" }}
+              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
+              style={{ color: "#F5F1EA", borderTop: i > 0 ? "1px solid #2A2632" : "none", textAlign: "left" }}
             >
-              <span>{label}</span>
-              <span className="rounded-full" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
+              <span style={{ textAlign: "left" }}>{label}</span>
+              <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
                 <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: value ? 17 : 2, transition: "left 0.15s" }} />
               </span>
             </button>
@@ -2367,7 +2501,321 @@ function UploadScreen() {
   );
 }
 
-function ProfileScreen({ userId, onLogout, onBack }) {
+function SettingsScreen({ onBack }) {
+  const [view, setView] = useState("menu"); // "menu" | "editProfile" | "changeEmail" | "changePassword"
+  const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState(null);
+  const [profile, setProfile] = useState(null);
+
+  const [fullName, setFullName] = useState("");
+  const [username, setUsername] = useState("");
+  const [bio, setBio] = useState("");
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState("");
+
+  const [newEmail, setNewEmail] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState("");
+
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordMsg, setPasswordMsg] = useState("");
+
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  const loadProfile = async () => {
+    setLoading(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setUserId(user?.id ?? null);
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, username, full_name, bio, avatar_url")
+      .eq("id", user.id)
+      .single();
+    setProfile(data);
+    setFullName(data?.full_name || "");
+    setUsername(data?.username || "");
+    setBio(data?.bio || "");
+    setLoading(false);
+  };
+
+  const handleAvatarChange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    setAvatarFile(f);
+    setAvatarPreview(URL.createObjectURL(f));
+  };
+
+  const saveProfile = async () => {
+    setProfileError("");
+    if (!username.trim()) {
+      setProfileError("Username cannot be empty");
+      return;
+    }
+    setSavingProfile(true);
+
+    let avatarUrl = profile?.avatar_url || null;
+    if (avatarFile) {
+      const path = `${userId}/${Date.now()}-${avatarFile.name}`;
+      const { error: uploadError } = await supabase.storage.from("avatars").upload(path, avatarFile);
+      if (uploadError) {
+        setSavingProfile(false);
+        setProfileError(uploadError.message);
+        return;
+      }
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("avatars").getPublicUrl(path);
+      avatarUrl = publicUrl;
+    }
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ username: username.trim(), full_name: fullName.trim(), bio: bio.trim(), avatar_url: avatarUrl })
+      .eq("id", userId);
+
+    setSavingProfile(false);
+    if (error) {
+      setProfileError(error.message);
+      return;
+    }
+    setProfile((prev) => ({ ...prev, username: username.trim(), full_name: fullName.trim(), bio: bio.trim(), avatar_url: avatarUrl }));
+    setAvatarFile(null);
+    setAvatarPreview(null);
+    setView("menu");
+  };
+
+  const changeEmail = async () => {
+    setEmailMsg("");
+    if (!newEmail.trim()) return;
+    setEmailBusy(true);
+    const { error } = await supabase.auth.updateUser({ email: newEmail.trim() });
+    setEmailBusy(false);
+    setEmailMsg(error ? error.message : "Check your new email to confirm the change.");
+  };
+
+  const changePassword = async () => {
+    setPasswordMsg("");
+    if (newPassword.length < 6) {
+      setPasswordMsg("Password must be at least 6 characters");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordMsg("Passwords do not match");
+      return;
+    }
+    setPasswordBusy(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setPasswordBusy(false);
+    if (error) {
+      setPasswordMsg(error.message);
+      return;
+    }
+    setPasswordMsg("Password updated.");
+    setNewPassword("");
+    setConfirmPassword("");
+  };
+
+  const handleLogout = async () => {
+    if (!window.confirm("Log out of Loop?")) return;
+    await supabase.auth.signOut();
+  };
+
+  const Header = ({ title, back }) => (
+    <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
+      <button onClick={back} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
+      <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>{title}</h1>
+    </div>
+  );
+
+  const inputStyle = { background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
+        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
+      </div>
+    );
+  }
+
+  if (view === "editProfile") {
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+        <Header title="Edit Profile" back={() => setView("menu")} />
+        <div className="px-4 pt-5 flex flex-col items-center">
+          <label className="relative cursor-pointer">
+            <div className="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center" style={{ background: ACCENT }}>
+              {avatarPreview || profile?.avatar_url ? (
+                <img src={avatarPreview || profile.avatar_url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-2xl" style={{ color: "#14121A", fontWeight: 700 }}>
+                  {(username || "u")[0].toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div
+              className="absolute bottom-0 right-0 w-6 h-6 rounded-full flex items-center justify-center"
+              style={{ background: "#1E1B26", border: "2px solid #14121A" }}
+            >
+              <Pencil size={11} color="#F5F1EA" />
+            </div>
+            <input type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
+          </label>
+          <span className="text-xs mt-2" style={{ color: "#8B8494" }}>Tap to change photo</span>
+        </div>
+
+        <div className="px-4 pt-5">
+          <label className="text-[11px]" style={{ color: "#8B8494" }}>Name</label>
+          <input
+            type="text"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none"
+            style={inputStyle}
+          />
+
+          <label className="text-[11px]" style={{ color: "#8B8494" }}>Username</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none"
+            style={inputStyle}
+          />
+
+          <label className="text-[11px]" style={{ color: "#8B8494" }}>Bio</label>
+          <textarea
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
+            rows={3}
+            className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none resize-none"
+            style={inputStyle}
+          />
+
+          {profileError && (
+            <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>{profileError}</p>
+          )}
+
+          <button
+            onClick={saveProfile}
+            disabled={savingProfile}
+            className="w-full rounded-xl py-3 text-sm"
+            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: savingProfile ? 0.6 : 1 }}
+          >
+            {savingProfile ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "changeEmail") {
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+        <Header title="Change Email" back={() => setView("menu")} />
+        <div className="px-4 pt-5">
+          <label className="text-[11px]" style={{ color: "#8B8494" }}>New email address</label>
+          <input
+            type="email"
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            placeholder="you@example.com"
+            className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none"
+            style={inputStyle}
+          />
+          {emailMsg && (
+            <p className="text-xs mb-3" style={{ color: emailMsg.includes("Check") ? "#8B8494" : "#FF5D73" }}>{emailMsg}</p>
+          )}
+          <button
+            onClick={changeEmail}
+            disabled={emailBusy}
+            className="w-full rounded-xl py-3 text-sm"
+            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: emailBusy ? 0.6 : 1 }}
+          >
+            {emailBusy ? "Sending..." : "Update Email"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "changePassword") {
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+        <Header title="Change Password" back={() => setView("menu")} />
+        <div className="px-4 pt-5">
+          <label className="text-[11px]" style={{ color: "#8B8494" }}>New password</label>
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none"
+            style={inputStyle}
+          />
+          <label className="text-[11px]" style={{ color: "#8B8494" }}>Confirm new password</label>
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none"
+            style={inputStyle}
+          />
+          {passwordMsg && (
+            <p className="text-xs mb-3" style={{ color: passwordMsg === "Password updated." ? "#8B8494" : "#FF5D73" }}>{passwordMsg}</p>
+          )}
+          <button
+            onClick={changePassword}
+            disabled={passwordBusy}
+            className="w-full rounded-xl py-3 text-sm"
+            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: passwordBusy ? 0.6 : 1 }}
+          >
+            {passwordBusy ? "Updating..." : "Update Password"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+      <Header title="Settings" back={onBack} />
+
+      <div className="px-4 pt-3">
+        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "#8B8494" }}>Account</div>
+        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+          <button onClick={() => setView("editProfile")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#F5F1EA", borderBottom: "1px solid #2A2632" }}>
+            Edit Profile
+          </button>
+          <button onClick={() => setView("changeEmail")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#F5F1EA", borderBottom: "1px solid #2A2632" }}>
+            Change Email
+          </button>
+          <button onClick={() => setView("changePassword")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#F5F1EA" }}>
+            Change Password
+          </button>
+        </div>
+
+        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+          <button onClick={handleLogout} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#FF5D73", fontWeight: 600 }}>
+            Log Out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileScreen({ userId, onOpenSettings, onBack }) {
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -2409,17 +2857,26 @@ function ProfileScreen({ userId, onLogout, onBack }) {
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name")
+      .select("id, username, full_name, bio, avatar_url")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
 
-    const { data: postsData } = await supabase
+    const isViewingOwnPosts = user && user.id === targetId;
+
+    let postsQuery = supabase
       .from("posts")
-      .select("id, media_url, media_type, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled")
-      .eq("user_id", targetId)
-      .order("created_at", { ascending: false });
-    setPosts(postsData || []);
+      .select("id, media_url, media_type, caption, location, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived")
+      .eq("user_id", targetId);
+    if (!isViewingOwnPosts) {
+      postsQuery = postsQuery.eq("archived", false);
+    }
+    const { data: postsData } = await postsQuery.order("created_at", { ascending: false });
+    const sortedPosts = (postsData || []).slice().sort((a, b) => {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      return 0;
+    });
+    setPosts(sortedPosts);
 
     const { data: repostsData } = await supabase
       .from("reposts")
@@ -2511,7 +2968,7 @@ function ProfileScreen({ userId, onLogout, onBack }) {
           </span>
         </div>
         {isOwnProfile ? (
-          <button onClick={onLogout}>
+          <button onClick={onOpenSettings}>
             <Settings size={20} color="#F5F1EA" />
           </button>
         ) : (
@@ -2534,12 +2991,16 @@ function ProfileScreen({ userId, onLogout, onBack }) {
 
       <div className="flex items-center gap-5 px-4 mb-4">
         <div
-          className="w-20 h-20 rounded-full shrink-0 flex items-center justify-center"
+          className="w-20 h-20 rounded-full shrink-0 flex items-center justify-center overflow-hidden"
           style={{ background: ACCENT }}
         >
-          <span className="text-2xl" style={{ color: "#14121A", fontWeight: 700 }}>
-            {profile.username[0].toUpperCase()}
-          </span>
+          {profile.avatar_url ? (
+            <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-2xl" style={{ color: "#14121A", fontWeight: 700 }}>
+              {profile.username[0].toUpperCase()}
+            </span>
+          )}
         </div>
         <div className="flex gap-6">
           <div className="flex flex-col items-center">
@@ -2561,6 +3022,9 @@ function ProfileScreen({ userId, onLogout, onBack }) {
         <p className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>
           {profile.full_name || profile.username}
         </p>
+        {profile.bio && (
+          <p className="text-xs mt-1" style={{ color: "#C9C3D1", whiteSpace: "pre-wrap" }}>{profile.bio}</p>
+        )}
       </div>
 
       <div
@@ -2628,13 +3092,26 @@ function ProfileScreen({ userId, onLogout, onBack }) {
               {tab === "reposts" && (
                 <Repeat2 size={12} color="#FFB84D" className="absolute top-1.5 right-1.5" />
               )}
+              {tab === "posts" && p.pinned && (
+                <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
+                  <Pin size={10} color="#FFB84D" />
+                </div>
+              )}
+              {tab === "posts" && p.archived && isOwnProfile && (
+                <div
+                  className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5"
+                  style={{ background: "rgba(0,0,0,0.65)" }}
+                >
+                  <span className="text-[9px]" style={{ color: "#8B8494" }}>Archived</span>
+                </div>
+              )}
               {tab === "posts" && isOwnProfile && (
                 <button
                   onClick={() => setEditingPost(p)}
                   className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center"
                   style={{ background: "rgba(0,0,0,0.55)" }}
                 >
-                  <Pencil size={11} color="#F5F1EA" />
+                  <Ellipsis size={13} color="#F5F1EA" />
                 </button>
               )}
             </div>
@@ -2643,12 +3120,14 @@ function ProfileScreen({ userId, onLogout, onBack }) {
       </div>
 
       {editingPost && (
-        <EditPostSettingsSheet
+        <PostOptionsSheet
           post={editingPost}
           onClose={() => setEditingPost(null)}
-          onSaved={(patch) =>
-            setPosts((prev) => prev.map((p) => (p.id === editingPost.id ? { ...p, ...patch } : p)))
-          }
+          onSaved={(patch) => {
+            setEditingPost((prev) => (prev ? { ...prev, ...patch } : prev));
+            setPosts((prev) => prev.map((p) => (p.id === editingPost.id ? { ...p, ...patch } : p)));
+          }}
+          onDeleted={() => setPosts((prev) => prev.filter((p) => p.id !== editingPost.id))}
         />
       )}
     </div>
@@ -3480,8 +3959,9 @@ export default function App() {
   const [commentsPostOwnerId, setCommentsPostOwnerId] = useState(null);
   const [reportPostId, setReportPostId] = useState(null);
   const [viewProfileId, setViewProfileId] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen;
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -3527,7 +4007,7 @@ export default function App() {
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "#14121A", borderRadius: 36, border: "8px solid #0A090D" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId)}>
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen)}>
           {inboxOpen ? (
             <MessagesScreen onBack={() => setInboxOpen(false)} />
           ) : notificationsOpen ? (
@@ -3538,6 +4018,8 @@ export default function App() {
             <CommentsScreen postId={commentsPostId} postOwnerId={commentsPostOwnerId} onBack={() => setCommentsPostId(null)} />
           ) : reportPostId !== null ? (
             <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
+          ) : settingsOpen ? (
+            <SettingsScreen onBack={() => setSettingsOpen(false)} />
           ) : viewProfileId !== null ? (
             <ProfileScreen userId={viewProfileId} onBack={() => setViewProfileId(null)} />
           ) : active === "feed" ? (
@@ -3559,7 +4041,7 @@ export default function App() {
           ) : active === "search" ? (
             <SearchScreen onOpenInterests={() => setInterestsOpen(true)} onOpenProfile={(userId) => setViewProfileId(userId)} />
           ) : active === "profile" ? (
-            <ProfileScreen onLogout={() => supabase.auth.signOut()} />
+            <ProfileScreen onOpenSettings={() => setSettingsOpen(true)} />
           ) : (
             <ActiveScreen />
           )}
