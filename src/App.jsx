@@ -53,11 +53,52 @@ import {
 } from "lucide-react";
 
 // ---- Design tokens ----
-// bg: #14121A (deep aubergine-black)  card: #1E1B26
-// accent: #FF5D73 (coral) -> #FFB84D (amber) gradient
-// text: #F5F1EA (warm off-white)  muted: #8B8494
+// bg: var(--bg) (deep aubergine-black)  card: var(--surface)
+// accent: var(--accent-start) (coral) -> var(--accent-end) (amber) gradient
+// text: var(--text) (warm off-white)  muted: var(--text-muted)
 
-const ACCENT = "linear-gradient(135deg, #FF5D73 0%, #FFB84D 100%)";
+const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%)";
+
+// All theme colors live here as CSS custom properties. Dark is the default
+// (matches the app's original look exactly); light overrides swap the
+// surface/text scale while keeping brand accent colors consistent across
+// both themes. bg-sunken (Reels' video stage) and page-bg (the outer frame)
+// intentionally stay the same in both themes, matching how video players
+// conventionally stay dark regardless of app theme.
+const THEME_CSS = `
+  :root {
+    --bg: #14121A;
+    --bg-sunken: #0E0C13;
+    --page-bg: #0A090D;
+    --surface: #1E1B26;
+    --border: #2A2632;
+    --border-subtle: #221F2B;
+    --text: #F5F1EA;
+    --text-secondary: #C9C3D1;
+    --text-muted: #8B8494;
+    --text-disabled: #4A4453;
+    --toggle-off: #3E3849;
+    --accent-start: #FF5D73;
+    --accent-end: #FFB84D;
+    --tag-bg: #2A1B22;
+    --tag-border: #4A2530;
+    --tag-text: #F5B8C4;
+  }
+  [data-theme="light"] {
+    --bg: #FAFAFA;
+    --surface: #FFFFFF;
+    --border: #E8E3ED;
+    --border-subtle: #F0ECF2;
+    --text: #14121A;
+    --text-secondary: #4A4453;
+    --text-muted: #746D80;
+    --text-disabled: #C4BFCC;
+    --toggle-off: #DAD5E0;
+    --tag-bg: #FDF0F2;
+    --tag-border: #F5C6D0;
+    --tag-text: #C23558;
+  }
+`;
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -73,15 +114,15 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.error) {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center px-6 text-center" style={{ background: "#14121A" }}>
-          <p className="text-sm mb-2" style={{ color: "#FF5D73", fontWeight: 700 }}>Something went wrong</p>
-          <p className="text-xs mb-4" style={{ color: "#8B8494", wordBreak: "break-word" }}>
+        <div className="flex-1 flex flex-col items-center justify-center px-6 text-center" style={{ background: "var(--bg)" }}>
+          <p className="text-sm mb-2" style={{ color: "var(--accent-start)", fontWeight: 700 }}>Something went wrong</p>
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)", wordBreak: "break-word" }}>
             {String(this.state.error?.message || this.state.error)}
           </p>
           <button
             onClick={() => this.setState({ error: null })}
             className="text-xs px-4 py-2 rounded-full"
-            style={{ background: ACCENT, color: "#14121A", fontWeight: 700 }}
+            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
           >
             Try again
           </button>
@@ -154,7 +195,7 @@ function Avatar({ username, avatarUrl, size = 40 }) {
       {avatarUrl ? (
         <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
       ) : (
-        <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center" style={{ color: "#F5F1EA", fontSize: size * 0.4, fontWeight: 600 }}>
+        <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center" style={{ color: "var(--text)", fontSize: size * 0.4, fontWeight: 600 }}>
           {letter}
         </div>
       )}
@@ -170,25 +211,25 @@ function LikesViewsPopup({ post, isOwner, onClose }) {
       <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <div
         className="fixed left-1/2 top-1/2 z-50 rounded-2xl px-6 py-5 text-center"
-        style={{ background: "#1E1B26", border: "1px solid #2A2632", transform: "translate(-50%, -50%)", minWidth: 220 }}
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", transform: "translate(-50%, -50%)", minWidth: 220 }}
       >
-        <p className="text-sm mb-3" style={{ color: "#F5F1EA", fontWeight: 700 }}>Likes and Views</p>
+        <p className="text-sm mb-3" style={{ color: "var(--text)", fontWeight: 700 }}>Likes and Views</p>
         <div className="flex items-center justify-center gap-6">
           <div>
-            <p className="text-lg" style={{ color: "#F5F1EA", fontWeight: 700 }}>
+            <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>
               {isOwner || !post.hide_likes ? formatCount(post.likeCount) : "—"}
             </p>
-            <p className="text-[11px]" style={{ color: "#8B8494" }}>Likes</p>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Likes</p>
           </div>
           {post.media_type === "reel" && (
             <div>
-              <p className="text-lg" style={{ color: "#F5F1EA", fontWeight: 700 }}>{formatCount(post.views_count)}</p>
-              <p className="text-[11px]" style={{ color: "#8B8494" }}>Views</p>
+              <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(post.views_count)}</p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Views</p>
             </div>
           )}
         </div>
         {!isOwner && post.hide_likes && (
-          <p className="text-[10px] mt-3" style={{ color: "#8B8494" }}>The creator hid the like count on this post.</p>
+          <p className="text-[10px] mt-3" style={{ color: "var(--text-muted)" }}>The creator hid the like count on this post.</p>
         )}
       </div>
     </>
@@ -199,11 +240,11 @@ function LikesViewsPopup({ post, isOwner, onClose }) {
 function TaggedPeopleLine({ tags, onOpenProfile }) {
   if (!tags || tags.length === 0) return null;
   return (
-    <p className="text-[11px] mb-1" style={{ color: "#8B8494" }}>
+    <p className="text-[11px] mb-1" style={{ color: "var(--text-muted)" }}>
       with{" "}
       {tags.map((t, i) => (
         <React.Fragment key={t.tagged_user_id}>
-          <button onClick={() => onOpenProfile?.(t.tagged_user_id)} style={{ color: "#F5F1EA", fontWeight: 600 }}>
+          <button onClick={() => onOpenProfile?.(t.tagged_user_id)} style={{ color: "var(--text)", fontWeight: 600 }}>
             @{t.username}
           </button>
           {i < tags.length - 1 ? ", " : ""}
@@ -256,8 +297,8 @@ function PollBlock({ postId, currentUserId }) {
   const myVote = votes.find((v) => v.user_id === currentUserId)?.option_id;
 
   return (
-    <div className="mx-4 mt-2 mb-1 rounded-xl p-3" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
-      <p className="text-sm mb-2" style={{ color: "#F5F1EA", fontWeight: 600 }}>{poll.question}</p>
+    <div className="mx-4 mt-2 mb-1 rounded-xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <p className="text-sm mb-2" style={{ color: "var(--text)", fontWeight: 600 }}>{poll.question}</p>
       <div className="flex flex-col gap-1.5">
         {options.map((opt) => {
           const count = votes.filter((v) => v.option_id === opt.id).length;
@@ -268,7 +309,7 @@ function PollBlock({ postId, currentUserId }) {
               key={opt.id}
               onClick={() => vote(opt.id)}
               className="relative rounded-lg overflow-hidden text-left px-3 py-2"
-              style={{ background: "#14121A", border: isMine ? "1px solid #FF5D73" : "1px solid #2A2632" }}
+              style={{ background: "var(--bg)", border: isMine ? "1px solid var(--accent-start)" : "1px solid var(--border)" }}
             >
               {myVote && (
                 <div
@@ -277,15 +318,15 @@ function PollBlock({ postId, currentUserId }) {
                 />
               )}
               <div className="relative flex items-center justify-between">
-                <span className="text-xs" style={{ color: "#F5F1EA" }}>{opt.option_text}</span>
-                {myVote && <span className="text-[10px]" style={{ color: "#8B8494" }}>{pct}%</span>}
+                <span className="text-xs" style={{ color: "var(--text)" }}>{opt.option_text}</span>
+                {myVote && <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{pct}%</span>}
               </div>
             </button>
           );
         })}
       </div>
       {totalVotes > 0 && (
-        <p className="text-[10px] mt-1.5" style={{ color: "#8B8494" }}>{totalVotes} vote{totalVotes === 1 ? "" : "s"}</p>
+        <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>{totalVotes} vote{totalVotes === 1 ? "" : "s"}</p>
       )}
     </div>
   );
@@ -349,10 +390,10 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
       onClick={() => (extraField ? patchPost({ [field]: !value, [extraField]: !value }) : toggleField(field, value))}
       disabled={busyField === field}
       className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm"
-      style={{ color: "#F5F1EA", textAlign: "left", opacity: busyField === field ? 0.6 : 1 }}
+      style={{ color: "var(--text)", textAlign: "left", opacity: busyField === field ? 0.6 : 1 }}
     >
       <span style={{ textAlign: "left" }}>{label}</span>
-      <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
+      <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: value ? ACCENT : "var(--toggle-off)", position: "relative" }}>
         <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: value ? 17 : 2, transition: "left 0.15s" }} />
       </span>
     </button>
@@ -363,7 +404,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
       onClick={onClick}
       disabled={busy}
       className="w-full flex items-center gap-3 px-4 py-3 text-sm"
-      style={{ color: danger ? "#FF5D73" : "#F5F1EA", textAlign: "left", opacity: busy ? 0.6 : 1 }}
+      style={{ color: danger ? "var(--accent-start)" : "var(--text)", textAlign: "left", opacity: busy ? 0.6 : 1 }}
     >
       {icon}
       <span>{label}</span>
@@ -375,22 +416,22 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
       <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <div
         className="fixed left-0 right-0 bottom-0 z-50 rounded-t-3xl"
-        style={{ background: "#14121A", border: "1px solid #2A2632", maxHeight: "80vh", overflowY: "auto" }}
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", maxHeight: "80vh", overflowY: "auto" }}
       >
         <div className="flex items-center justify-center pt-2.5 pb-1">
-          <div className="rounded-full" style={{ width: 36, height: 4, background: "#3E3849" }} />
+          <div className="rounded-full" style={{ width: 36, height: 4, background: "var(--toggle-off)" }} />
         </div>
         <div className="flex items-center justify-between px-4 pb-2">
-          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>
             {view === "edit" ? "Edit" : "Post options"}
           </span>
-          <button onClick={onClose}><X size={18} color="#8B8494" /></button>
+          <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
         </div>
 
         {view === "menu" ? (
           <div className="pb-6">
             {menuError && (
-              <p className="text-xs px-4 pb-2" style={{ color: "#FF5D73" }}>{menuError}</p>
+              <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-start)" }}>{menuError}</p>
             )}
             <Toggle label="Hide Like Count For This Post" field="hide_likes" value={!!post.hide_likes} />
             <Toggle label="Hide Comment Count For This Post" field="hide_comments" value={!!post.hide_comments} />
@@ -402,29 +443,29 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
             />
             <Toggle label="Turn Off Comments" field="comments_disabled" value={!!post.comments_disabled} />
 
-            <div className="h-px my-1.5" style={{ background: "#2A2632" }} />
+            <div className="h-px my-1.5" style={{ background: "var(--border)" }} />
 
             <MenuRow
-              icon={<Pin size={16} color="#F5F1EA" />}
+              icon={<Pin size={16} color="var(--text)" />}
               label={post.pinned ? "Unpin from your main grid" : "Pin to your main grid"}
               onClick={() => toggleField("pinned", !!post.pinned)}
               busy={busyField === "pinned"}
             />
             <MenuRow
-              icon={<Archive size={16} color="#F5F1EA" />}
+              icon={<Archive size={16} color="var(--text)" />}
               label={post.archived ? "Unarchive" : "Archive"}
               onClick={() => toggleField("archived", !!post.archived)}
               busy={busyField === "archived"}
             />
-            <MenuRow icon={<Pencil size={16} color="#F5F1EA" />} label="Edit" onClick={() => setView("edit")} />
+            <MenuRow icon={<Pencil size={16} color="var(--text)" />} label="Edit" onClick={() => setView("edit")} />
             <MenuRow
-              icon={<Crop size={16} color="#F5F1EA" />}
+              icon={<Crop size={16} color="var(--text)" />}
               label="Adjust preview"
               onClick={() => alert("Adjust preview — coming soon. This app stores one image per post, so there's no second frame to pick from yet.")}
             />
 
-            <div className="h-px my-1.5" style={{ background: "#2A2632" }} />
-            <MenuRow icon={<Trash2 size={16} color="#FF5D73" />} label="Delete" onClick={handleDelete} danger />
+            <div className="h-px my-1.5" style={{ background: "var(--border)" }} />
+            <MenuRow icon={<Trash2 size={16} color="var(--accent-start)" />} label="Delete" onClick={handleDelete} danger />
           </div>
         ) : (
           <div className="px-4 pb-6">
@@ -434,30 +475,30 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
               placeholder="Write a caption..."
               rows={3}
               className="w-full rounded-xl px-3 py-2.5 text-sm mb-3 outline-none resize-none"
-              style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
             />
             <div
               className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-4"
-              style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
             >
-              <MapPin size={15} color="#8B8494" />
+              <MapPin size={15} color="var(--text-muted)" />
               <input
                 type="text"
                 placeholder="Add location"
                 value={editLocation}
                 onChange={(e) => setEditLocation(e.target.value)}
                 className="flex-1 bg-transparent text-sm outline-none"
-                style={{ color: "#F5F1EA" }}
+                style={{ color: "var(--text)" }}
               />
             </div>
             {editError && (
-              <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>{editError}</p>
+              <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>{editError}</p>
             )}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setView("menu")}
                 className="flex-1 rounded-xl py-2.5 text-sm"
-                style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
               >
                 Cancel
               </button>
@@ -465,7 +506,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
                 onClick={saveEdit}
                 disabled={savingEdit}
                 className="flex-1 rounded-xl py-2.5 text-sm"
-                style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: savingEdit ? 0.6 : 1 }}
+                style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: savingEdit ? 0.6 : 1 }}
               >
                 {savingEdit ? "Saving..." : "Save"}
               </button>
@@ -499,28 +540,28 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
     <div className="relative flex items-center justify-center px-4 pt-4 pb-3">
       {showNotifications && (
         <button onClick={onNotificationsClick} className="absolute left-4 top-1/2 -translate-y-1/2">
-          <Bell size={21} color="#F5F1EA" />
+          <Bell size={21} color="var(--text)" />
           {hasNotifications && (
             <span
               className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
-              style={{ background: "#FF5D73" }}
+              style={{ background: "var(--accent-start)" }}
             />
           )}
         </button>
       )}
       <h1
         className="text-xl tracking-tight"
-        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "#F5F1EA" }}
+        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "var(--text)" }}
       >
         {title}
       </h1>
       {showMessages && (
         <button onClick={onMessagesClick} className="absolute right-4 top-1/2 -translate-y-1/2">
-          <SendHorizontal size={22} color="#F5F1EA" />
+          <SendHorizontal size={22} color="var(--text)" />
           {unreadCount > 0 && (
             <span
               className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center text-[9px]"
-              style={{ background: ACCENT, color: "#14121A", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
+              style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
             >
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
@@ -538,24 +579,24 @@ function StoriesBar() {
         <div key={s.id} className="flex flex-col items-center gap-1 shrink-0" style={{ width: 56 }}>
           <div
             className="w-14 h-14 rounded-full flex items-center justify-center"
-            style={{ background: s.isSelf ? "#2A2632" : ACCENT, padding: s.isSelf ? 0 : 2 }}
+            style={{ background: s.isSelf ? "var(--border)" : ACCENT, padding: s.isSelf ? 0 : 2 }}
           >
             <div
               className="w-full h-full rounded-full flex items-center justify-center text-sm relative"
-              style={{ background: "#1E1B26", color: "#F5F1EA", border: "2px solid #14121A" }}
+              style={{ background: "var(--surface)", color: "var(--text)", border: "2px solid var(--bg)" }}
             >
               {s.user[0].toUpperCase()}
               {s.isSelf && (
                 <span
                   className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
-                  style={{ background: ACCENT, color: "#14121A", fontWeight: 700 }}
+                  style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
                 >
                   +
                 </span>
               )}
             </div>
           </div>
-          <span className="text-[10px] truncate w-full text-center" style={{ color: "#C9C3D1" }}>
+          <span className="text-[10px] truncate w-full text-center" style={{ color: "var(--text-secondary)" }}>
             {s.user}
           </span>
         </div>
@@ -764,15 +805,15 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       <StoriesBar />
 
       {loading ? (
-        <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
+        <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
           Loading...
         </p>
       ) : loadError ? (
-        <p className="text-center text-xs py-10 px-6" style={{ color: "#FF5D73" }}>
+        <p className="text-center text-xs py-10 px-6" style={{ color: "var(--accent-start)" }}>
           {loadError}
         </p>
       ) : posts.length === 0 ? (
-        <p className="text-center text-xs py-10" style={{ color: "#8B8494" }}>
+        <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
           No posts yet — be the first to post!
         </p>
       ) : (
@@ -784,14 +825,14 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 className="w-9 h-9 rounded-full shrink-0"
                 style={{ background: ACCENT, padding: 2 }}
               >
-                <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
+                <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[10px]" style={{ color: "var(--text)" }}>
                   {post.username[0].toUpperCase()}
                 </div>
               </button>
               <div className="flex flex-col leading-tight flex-1">
-                <button onClick={() => onOpenProfile(post.user_id)} className="text-sm text-left" style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username}</button>
+                <button onClick={() => onOpenProfile(post.user_id)} className="text-sm text-left" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</button>
                 {post.location && (
-                  <span className="flex items-center gap-1 text-[11px]" style={{ color: "#8B8494" }}>
+                  <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
                     <MapPin size={10} /> {post.location}
                   </span>
                 )}
@@ -799,7 +840,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
               <div className="relative">
                 <button onClick={() => setMenuOpenFor(menuOpenFor === post.id ? null : post.id)}>
-                  <Ellipsis size={18} color="#8B8494" />
+                  <Ellipsis size={18} color="var(--text-muted)" />
                 </button>
                 {menuOpenFor === post.id && (
                   <>
@@ -809,13 +850,13 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                     />
                     <div
                       className="absolute right-0 top-6 z-20 rounded-xl overflow-hidden py-1"
-                      style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 190 }}
+                      style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 190 }}
                     >
                       {post.user_id === userId ? (
                         <button
                           onClick={() => deletePost(post)}
                           className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                          style={{ color: "#FF5D73" }}
+                          style={{ color: "var(--accent-start)" }}
                         >
                           <Trash2 size={15} /> Delete
                         </button>
@@ -826,7 +867,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                             onOpenReport(post.id);
                           }}
                           className="w-full text-left px-4 py-2.5 text-sm"
-                          style={{ color: "#FF5D73" }}
+                          style={{ color: "var(--accent-start)" }}
                         >
                           Report
                         </button>
@@ -839,7 +880,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
             <div
               className="mx-4 rounded-2xl aspect-[4/5] overflow-hidden flex items-center justify-center"
-              style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
               onDoubleClick={() => toggleLike(post)}
             >
               {post.media_type === "photo" ? (
@@ -855,15 +896,15 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               <div className="flex items-center gap-5">
                 <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
                   <div className="h-8 flex items-center justify-center">
-                    <Send size={22} color="#F5F1EA" />
+                    <Send size={22} color="var(--text)" />
                   </div>
                   <span className="text-[10px] leading-none h-3 mt-0.5">&nbsp;</span>
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
                   <button onClick={() => toggleSave(post)} className="h-8 flex items-center justify-center">
-                    <Bookmark size={22} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+                    <Bookmark size={22} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} />
                   </button>
-                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
                     {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
                   </span>
                 </div>
@@ -879,9 +920,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   onTouchMove={() => clearTimeout(pressTimers.current[post.id])}
                   className="h-8 flex items-center justify-center"
                 >
-                  <Heart size={30} color={post.liked ? "#FF5D73" : "#F5F1EA"} fill={post.liked ? "#FF5D73" : "none"} />
+                  <Heart size={30} color={post.liked ? "var(--accent-start)" : "var(--text)"} fill={post.liked ? "var(--accent-start)" : "none"} />
                 </button>
-                <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
                   {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
                 </span>
               </div>
@@ -893,17 +934,17 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                     disabled={post.comments_disabled}
                     className="h-8 flex items-center justify-center"
                   >
-                    <MessageCircle size={22} color={post.comments_disabled ? "#3E3849" : "#F5F1EA"} />
+                    <MessageCircle size={22} color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"} />
                   </button>
-                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
                     {countPrefs.comments && !post.hide_comments && post.commentCount > 0 ? formatCount(post.commentCount) : "\u00A0"}
                   </span>
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
                   <button onClick={() => toggleRepost(post)} className="h-8 flex items-center justify-center">
-                    <Repeat2 size={24} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
+                    <Repeat2 size={24} color={post.reposted ? "var(--accent-end)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 2} />
                   </button>
-                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
                     {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
                   </span>
                 </div>
@@ -917,8 +958,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             <div className="px-4 pt-1">
               <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
               {post.caption && (
-                <p className="text-sm mt-0.5" style={{ color: "#C9C3D1", whiteSpace: "pre-wrap" }}>
-                  <span style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username} </span>
+                <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
+                  <span style={{ color: "var(--text)", fontWeight: 600 }}>{post.username} </span>
                   {post.caption}
                 </p>
               )}
@@ -1233,25 +1274,25 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "#0E0C13" }}>
-        <p className="text-xs" style={{ color: "#8B8494" }}>Loading...</p>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg-sunken)" }}>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Loading...</p>
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="flex-1 flex items-center justify-center px-6" style={{ background: "#0E0C13" }}>
-        <p className="text-xs text-center" style={{ color: "#FF5D73" }}>{loadError}</p>
+      <div className="flex-1 flex items-center justify-center px-6" style={{ background: "var(--bg-sunken)" }}>
+        <p className="text-xs text-center" style={{ color: "var(--accent-start)" }}>{loadError}</p>
       </div>
     );
   }
 
   if (reels.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-2" style={{ background: "#0E0C13" }}>
-        <Video size={32} color="#3E3849" />
-        <p className="text-xs" style={{ color: "#8B8494" }}>No reels yet — be the first to post one!</p>
+      <div className="flex-1 flex flex-col items-center justify-center gap-2" style={{ background: "var(--bg-sunken)" }}>
+        <Video size={32} color="var(--toggle-off)" />
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>No reels yet — be the first to post one!</p>
       </div>
     );
   }
@@ -1262,7 +1303,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
     <div
       ref={containerRef}
       className="flex-1 relative overflow-hidden"
-      style={{ background: "#0E0C13" }}
+      style={{ background: "var(--bg-sunken)" }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
@@ -1303,7 +1344,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       {toast && (
         <div
           className="absolute top-24 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-xs z-30"
-          style={{ background: "rgba(0,0,0,0.75)", color: "#F5F1EA" }}
+          style={{ background: "rgba(0,0,0,0.75)", color: "var(--text)" }}
         >
           {toast}
         </div>
@@ -1315,19 +1356,19 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
-        <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
+        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
           Reels
         </span>
         <div className="absolute right-3">
           <button onClick={() => setMenuOpen((v) => !v)}>
-            <Ellipsis size={20} color="#F5F1EA" />
+            <Ellipsis size={20} color="var(--text)" />
           </button>
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
               <div
                 className="absolute right-0 top-7 z-20 rounded-xl overflow-hidden py-1"
-                style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 190 }}
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 190 }}
               >
                 <button
                   onClick={() => {
@@ -1336,12 +1377,12 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                     setAutoScrollPref(next);
                   }}
                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
-                  style={{ color: "#F5F1EA" }}
+                  style={{ color: "var(--text)" }}
                 >
                   <span className="flex items-center gap-2"><RefreshCw size={15} /> Auto Scroll</span>
                   <span
                     className="rounded-full"
-                    style={{ width: 30, height: 17, background: autoScroll ? ACCENT : "#3E3849", position: "relative" }}
+                    style={{ width: 30, height: 17, background: autoScroll ? ACCENT : "var(--toggle-off)", position: "relative" }}
                   >
                     <span
                       className="rounded-full bg-white absolute"
@@ -1356,7 +1397,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                     showToast("Remix — coming soon");
                   }}
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                  style={{ color: "#F5F1EA" }}
+                  style={{ color: "var(--text)" }}
                 >
                   <Sparkles size={15} /> Remix
                 </button>
@@ -1364,7 +1405,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 <button
                   onClick={toggleFullscreen}
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                  style={{ color: "#F5F1EA" }}
+                  style={{ color: "var(--text)" }}
                 >
                   {fullscreen ? <Minimize size={15} /> : <Maximize size={15} />} View Full Screen
                 </button>
@@ -1372,7 +1413,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 <button
                   onClick={handleDownload}
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                  style={{ color: "#F5F1EA" }}
+                  style={{ color: "var(--text)" }}
                 >
                   <Download size={15} /> Download
                 </button>
@@ -1380,14 +1421,14 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 <button
                   onClick={() => showToast("Quality: Auto (only one version is uploaded)")}
                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
-                  style={{ color: "#F5F1EA" }}
+                  style={{ color: "var(--text)" }}
                 >
                   <span className="flex items-center gap-2"><Gauge size={15} /> Quality</span>
-                  <span className="text-xs" style={{ color: "#8B8494" }}>Auto</span>
+                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>Auto</span>
                 </button>
 
-                <div className="h-px my-1" style={{ background: "#2A2632" }} />
-                <div className="px-4 py-1.5 text-[10px] uppercase tracking-wide" style={{ color: "#8B8494" }}>My view: show counts</div>
+                <div className="h-px my-1" style={{ background: "var(--border)" }} />
+                <div className="px-4 py-1.5 text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>My view: show counts</div>
                 {[
                   ["likes", "Likes"],
                   ["comments", "Comments"],
@@ -1398,12 +1439,12 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                     key={key}
                     onClick={() => toggleCountPref(key)}
                     className="w-full flex items-center justify-between px-4 py-2 text-sm"
-                    style={{ color: "#F5F1EA" }}
+                    style={{ color: "var(--text)" }}
                   >
                     <span>{label}</span>
                     <span
                       className="rounded-full"
-                      style={{ width: 30, height: 17, background: countPrefs[key] ? ACCENT : "#3E3849", position: "relative" }}
+                      style={{ width: 30, height: 17, background: countPrefs[key] ? ACCENT : "var(--toggle-off)", position: "relative" }}
                     >
                       <span
                         className="rounded-full bg-white absolute"
@@ -1417,7 +1458,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                   <button
                     onClick={deleteReel}
                     className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                    style={{ color: "#FF5D73" }}
+                    style={{ color: "var(--accent-start)" }}
                   >
                     <Trash2 size={15} /> Delete
                   </button>
@@ -1428,7 +1469,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                       onOpenReport(reel.id);
                     }}
                     className="w-full text-left px-4 py-2.5 text-sm"
-                    style={{ color: "#FF5D73" }}
+                    style={{ color: "var(--accent-start)" }}
                   >
                     Report
                   </button>
@@ -1448,11 +1489,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         <div className="flex items-center gap-2 mb-2">
           <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-              <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
+              <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[10px]" style={{ color: "var(--text)" }}>
                 {reel.username[0].toUpperCase()}
               </div>
             </div>
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{reel.username}</span>
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{reel.username}</span>
           </button>
           {reel.user_id !== userId && (
             <button
@@ -1460,8 +1501,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
               className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs"
               style={{
                 background: isFollowing ? "transparent" : ACCENT,
-                border: isFollowing ? "1px solid #8B8494" : "none",
-                color: isFollowing ? "#F5F1EA" : "#14121A",
+                border: isFollowing ? "1px solid var(--text-muted)" : "none",
+                color: isFollowing ? "var(--text)" : "var(--bg)",
                 fontWeight: 700,
               }}
             >
@@ -1471,7 +1512,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           )}
         </div>
         {reel.location && (
-          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "#C9C3D1" }}>
+          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "var(--text-secondary)" }}>
             <MapPin size={11} /> {reel.location}
           </span>
         )}
@@ -1482,7 +1523,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
               onClick={() => setCommentSheetOpen(true)}
               className="text-xs"
               style={{
-                color: "#E5E1EA",
+                color: "var(--text-secondary)",
                 whiteSpace: "pre-wrap",
                 ...(captionExpanded
                   ? {}
@@ -1495,7 +1536,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
               <button
                 onClick={() => setCaptionExpanded((v) => !v)}
                 className="text-xs mt-0.5"
-                style={{ color: "#8B8494", fontWeight: 600 }}
+                style={{ color: "var(--text-muted)", fontWeight: 600 }}
               >
                 {captionExpanded ? "less" : "...more"}
               </button>
@@ -1514,7 +1555,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           {expanded && (
             <div
               className="absolute bottom-24 flex flex-col items-center gap-5 py-3 px-2 rounded-full"
-              style={{ background: "rgba(30,27,38,0.92)", border: "1px solid #2A2632" }}
+              style={{ background: "rgba(30,27,38,0.92)", border: "1px solid var(--border)" }}
             >
               <button
                 onClick={toggleLike}
@@ -1524,34 +1565,34 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 onTouchEndCapture={(e) => clearTimeout(e.currentTarget._pressTimer)}
                 className="flex flex-col items-center gap-1"
               >
-                <Heart size={26} color={reel.liked ? "#FF5D73" : "#F5F1EA"} fill={reel.liked ? "#FF5D73" : "none"} />
+                <Heart size={26} color={reel.liked ? "var(--accent-start)" : "var(--text)"} fill={reel.liked ? "var(--accent-start)" : "none"} />
                 {countPrefs.likes && !reel.hide_likes && reel.likeCount > 0 && (
-                  <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.likeCount)}</span>
+                  <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.likeCount)}</span>
                 )}
               </button>
               {!reel.comments_disabled ? (
                 <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1">
-                  <MessageCircle size={25} color="#F5F1EA" />
+                  <MessageCircle size={25} color="var(--text)" />
                   {countPrefs.comments && !reel.hide_comments && reel.commentCount > 0 && (
-                    <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.commentCount)}</span>
+                    <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.commentCount)}</span>
                   )}
                 </button>
               ) : (
-                <MessageCircle size={25} color="#4A4453" />
+                <MessageCircle size={25} color="var(--text-disabled)" />
               )}
               <button onClick={toggleRepost} className="flex flex-col items-center gap-1">
-                <Repeat2 size={26} color={reel.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={reel.reposted ? 2.4 : 2} />
+                <Repeat2 size={26} color={reel.reposted ? "var(--accent-end)" : "var(--text)"} strokeWidth={reel.reposted ? 2.4 : 2} />
                 {countPrefs.reposts && !reel.hide_reposts && reel.repostCount > 0 && (
-                  <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.repostCount)}</span>
+                  <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.repostCount)}</span>
                 )}
               </button>
               <button className="flex flex-col items-center gap-1">
-                <SendHorizontal size={24} color="#F5F1EA" />
+                <SendHorizontal size={24} color="var(--text)" />
               </button>
               <button onClick={toggleSave} className="flex flex-col items-center gap-1">
-                <Bookmark size={24} color="#F5F1EA" fill={reel.saved ? "#F5F1EA" : "none"} />
+                <Bookmark size={24} color="var(--text)" fill={reel.saved ? "var(--text)" : "none"} />
                 {countPrefs.saves && !reel.hide_saves && reel.saveCount > 0 && (
-                  <span className="text-[10px]" style={{ color: "#F5F1EA" }}>{formatCount(reel.saveCount)}</span>
+                  <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.saveCount)}</span>
                 )}
               </button>
             </div>
@@ -1565,20 +1606,20 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           <button
             onClick={() => showToast("Reels using this audio — coming soon")}
             className="w-8 h-8 rounded-lg mb-3 flex items-center justify-center"
-            style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
           >
-            <Music2 size={15} color="#F5F1EA" />
+            <Music2 size={15} color="var(--text)" />
           </button>
 
           <button
             onClick={() => setExpanded((v) => !v)}
             className="w-9 h-9 rounded-full flex items-center justify-center"
-            style={{ background: reel.liked ? ACCENT : "#1E1B26", border: reel.liked ? "none" : "1px solid #2A2632" }}
+            style={{ background: reel.liked ? ACCENT : "var(--surface)", border: reel.liked ? "none" : "1px solid var(--border)" }}
           >
             {expanded ? (
-              <Ellipsis size={19} color={reel.liked ? "#14121A" : "#F5F1EA"} />
+              <Ellipsis size={19} color={reel.liked ? "var(--bg)" : "var(--text)"} />
             ) : (
-              <Heart size={19} color={reel.liked ? "#14121A" : "#F5F1EA"} fill={reel.liked ? "#14121A" : "none"} />
+              <Heart size={19} color={reel.liked ? "var(--bg)" : "var(--text)"} fill={reel.liked ? "var(--bg)" : "none"} />
             )}
           </button>
         </div>
@@ -1593,7 +1634,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
             style={{
               width: 3,
               height: i === index ? 14 : 6,
-              background: i === index ? "#F5F1EA" : "#3E3849",
+              background: i === index ? "var(--text)" : "var(--toggle-off)",
               transition: "height 0.2s",
             }}
           />
@@ -1824,29 +1865,29 @@ function ReelCommentsSheet({
       <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <div
         className="fixed left-0 right-0 bottom-0 z-40 rounded-t-3xl flex flex-col"
-        style={{ background: "#14121A", maxHeight: "78vh", border: "1px solid #2A2632" }}
+        style={{ background: "var(--bg)", maxHeight: "78vh", border: "1px solid var(--border)" }}
       >
         <div className="flex items-center justify-center pt-2.5 pb-1">
-          <div className="rounded-full" style={{ width: 36, height: 4, background: "#3E3849" }} />
+          <div className="rounded-full" style={{ width: 36, height: 4, background: "var(--toggle-off)" }} />
         </div>
         <div className="flex items-center justify-between px-4 pb-2">
-          <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>Comments</span>
-          <button onClick={onClose}><X size={18} color="#8B8494" /></button>
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Comments</span>
+          <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
         </div>
 
         {postCaption && (
           <button
             onClick={() => onOpenProfile?.(postOwnerId)}
             className="text-left px-4 pb-3 flex items-start gap-2.5"
-            style={{ borderBottom: "1px solid #221F2B" }}
+            style={{ borderBottom: "1px solid var(--border-subtle)" }}
           >
             <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-              <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[9px]" style={{ color: "#F5F1EA" }}>
+              <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
                 {(postUsername || "u")[0].toUpperCase()}
               </div>
             </div>
-            <p className="text-xs" style={{ color: "#E5E1EA", whiteSpace: "pre-wrap" }}>
-              <span style={{ fontWeight: 700, color: "#F5F1EA" }}>{postUsername} </span>
+            <p className="text-xs" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
+              <span style={{ fontWeight: 700, color: "var(--text)" }}>{postUsername} </span>
               {postCaption}
             </p>
           </button>
@@ -1854,9 +1895,9 @@ function ReelCommentsSheet({
 
         <div className="flex-1 overflow-y-auto px-4 pt-3" onClick={() => setMenuFor(null)}>
           {loading ? (
-            <p className="text-xs text-center py-6" style={{ color: "#8B8494" }}>Loading...</p>
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
           ) : topLevel.length === 0 ? (
-            <p className="text-xs text-center py-6" style={{ color: "#8B8494" }}>No comments yet</p>
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No comments yet</p>
           ) : (
             topLevel.map((c) => (
               <div key={c.id} className="mb-3">
@@ -1905,15 +1946,15 @@ function ReelCommentsSheet({
           )}
         </div>
 
-        <div className="px-4 pt-2 pb-4" style={{ borderTop: "1px solid #2A2632" }}>
+        <div className="px-4 pt-2 pb-4" style={{ borderTop: "1px solid var(--border)" }}>
           {commentsDisabled ? (
-            <p className="text-xs text-center py-2" style={{ color: "#8B8494" }}>Comments are off for this post.</p>
+            <p className="text-xs text-center py-2" style={{ color: "var(--text-muted)" }}>Comments are off for this post.</p>
           ) : (
             <>
               {replyingTo && (
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[11px]" style={{ color: "#8B8494" }}>Replying to {replyingTo.username}</span>
-                  <button onClick={() => setReplyingTo(null)}><X size={12} color="#8B8494" /></button>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Replying to {replyingTo.username}</span>
+                  <button onClick={() => setReplyingTo(null)}><X size={12} color="var(--text-muted)" /></button>
                 </div>
               )}
               <div className="flex items-end gap-2">
@@ -1923,7 +1964,7 @@ function ReelCommentsSheet({
                   placeholder="Add a comment..."
                   rows={1}
                   className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
-                  style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA", maxHeight: 110 }}
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
                 />
                 <button
                   disabled={posting}
@@ -1931,13 +1972,13 @@ function ReelCommentsSheet({
                   title="Photo/GIF upload — coming soon"
                   className="pb-2"
                 >
-                  <ImagePlus size={19} color="#8B8494" />
+                  <ImagePlus size={19} color="var(--text-muted)" />
                 </button>
                 <button
                   onClick={submitComment}
                   disabled={posting || !text.trim()}
                   className="text-sm pb-2"
-                  style={{ color: text.trim() ? "#FF5D73" : "#8B8494", fontWeight: 700 }}
+                  style={{ color: text.trim() ? "var(--accent-start)" : "var(--text-muted)", fontWeight: 700 }}
                 >
                   Post
                 </button>
@@ -1998,16 +2039,16 @@ function CommentRow({
       }}
     >
       <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-        <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[9px]" style={{ color: "#F5F1EA" }}>
+        <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
           {comment.username[0].toUpperCase()}
         </div>
       </div>
       <div className="flex-1">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs" style={{ color: "#F5F1EA", fontWeight: 700 }}>{comment.username}</span>
-          <span className="text-[10px]" style={{ color: "#8B8494" }}>{timeAgo(comment.created_at)}</span>
+          <span className="text-xs" style={{ color: "var(--text)", fontWeight: 700 }}>{comment.username}</span>
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{timeAgo(comment.created_at)}</span>
           {isPinned && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "#2A2632", color: "#8B8494" }}>Author</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)" }}>Author</span>
           )}
         </div>
 
@@ -2018,26 +2059,26 @@ function CommentRow({
               onChange={(e) => onEditTextChange(e.target.value)}
               rows={1}
               className="w-full rounded-lg px-2 py-1.5 text-xs outline-none resize-none"
-              style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
             />
             <div className="flex items-center gap-3 mt-1">
-              <button onClick={onSaveEdit} className="text-[10px]" style={{ color: "#FF5D73", fontWeight: 700 }}>Save</button>
-              <button onClick={onCancelEdit} className="text-[10px]" style={{ color: "#8B8494" }}>Cancel</button>
+              <button onClick={onSaveEdit} className="text-[10px]" style={{ color: "var(--accent-start)", fontWeight: 700 }}>Save</button>
+              <button onClick={onCancelEdit} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Cancel</button>
             </div>
           </div>
         ) : (
           <>
-            <p className="text-xs mt-0.5" style={{ color: "#E5E1EA", whiteSpace: "pre-wrap" }}>{comment.content}</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{comment.content}</p>
             <div className="flex items-center gap-3 mt-1">
-              <button onClick={onReply} className="text-[10px]" style={{ color: "#8B8494" }}>Reply</button>
+              <button onClick={onReply} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Reply</button>
               {isOwn && (
-                <button onClick={onEdit} className="text-[10px]" style={{ color: "#8B8494" }}>Edit</button>
+                <button onClick={onEdit} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Edit</button>
               )}
               {comment.likeCount > 0 && (
-                <span className="text-[10px]" style={{ color: "#8B8494" }}>{comment.likeCount} likes</span>
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{comment.likeCount} likes</span>
               )}
               {comment.dislikeCount > 0 && (
-                <span className="text-[10px]" style={{ color: "#8B8494" }}>{comment.dislikeCount} dislikes</span>
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{comment.dislikeCount} dislikes</span>
               )}
             </div>
           </>
@@ -2045,10 +2086,10 @@ function CommentRow({
       </div>
       <div className="flex flex-col items-center gap-2 pt-0.5">
         <button onClick={() => onReact("like")}>
-          <Heart size={13} color={comment.myReaction === "like" ? "#FF5D73" : "#8B8494"} fill={comment.myReaction === "like" ? "#FF5D73" : "none"} />
+          <Heart size={13} color={comment.myReaction === "like" ? "var(--accent-start)" : "var(--text-muted)"} fill={comment.myReaction === "like" ? "var(--accent-start)" : "none"} />
         </button>
         <button onClick={() => onReact("dislike")}>
-          <ThumbsDown size={12} color={comment.myReaction === "dislike" ? "#FFB84D" : "#8B8494"} fill={comment.myReaction === "dislike" ? "#FFB84D" : "none"} />
+          <ThumbsDown size={12} color={comment.myReaction === "dislike" ? "var(--accent-end)" : "var(--text-muted)"} fill={comment.myReaction === "dislike" ? "var(--accent-end)" : "none"} />
         </button>
       </div>
 
@@ -2064,26 +2105,26 @@ function CommentRow({
           />
           <div
             className="absolute right-8 top-6 z-50 rounded-xl overflow-hidden py-1"
-            style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 150 }}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 150 }}
           >
             {isOwn && (
-              <button onClick={onEdit} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+              <button onClick={onEdit} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
                 <Pencil size={13} /> Edit
               </button>
             )}
             {isOwn && (
-              <button onClick={onDelete} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+              <button onClick={onDelete} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
                 <Trash2 size={13} /> Delete
               </button>
             )}
-            <button onClick={onCopy} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+            <button onClick={onCopy} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
               <Copy size={13} /> Copy
             </button>
-            <button onClick={onReply} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+            <button onClick={onReply} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
               <MessageCircle size={13} /> Reply
             </button>
             {!isOwn && (
-              <button onClick={onReport} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#FF5D73" }}>
+              <button onClick={onReport} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--accent-start)" }}>
                 Report
               </button>
             )}
@@ -2137,23 +2178,23 @@ function SearchScreen({ onOpenInterests, onOpenProfile }) {
         <div className="flex items-center gap-2 mb-4">
           <div
             className="flex-1 flex items-center gap-2 rounded-xl px-3 py-2.5"
-            style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
           >
-            <Search size={16} color="#8B8494" />
+            <Search size={16} color="var(--text-muted)" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search"
               className="flex-1 bg-transparent outline-none text-sm"
-              style={{ color: "#F5F1EA" }}
+              style={{ color: "var(--text)" }}
             />
           </div>
           <button
             onClick={onOpenInterests}
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
           >
-            <SlidersHorizontal size={17} color="#F5F1EA" />
+            <SlidersHorizontal size={17} color="var(--text)" />
           </button>
         </div>
       </div>
@@ -2161,11 +2202,11 @@ function SearchScreen({ onOpenInterests, onOpenProfile }) {
       {query ? (
         <div className="px-4">
           {searching ? (
-            <p className="text-xs text-center py-8" style={{ color: "#8B8494" }}>
+            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
               Searching...
             </p>
           ) : results.length === 0 ? (
-            <p className="text-xs text-center py-8" style={{ color: "#8B8494" }}>
+            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
               No accounts found
             </p>
           ) : (
@@ -2176,14 +2217,14 @@ function SearchScreen({ onOpenInterests, onOpenProfile }) {
                 className="flex items-center gap-3 py-2.5 w-full text-left"
               >
                 <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
-                  <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-xs" style={{ color: "#F5F1EA" }}>
+                  <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-xs" style={{ color: "var(--text)" }}>
                     {a.username[0].toUpperCase()}
                   </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: 600 }}>{a.username}</p>
+                  <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</p>
                   {a.full_name && (
-                    <p className="text-xs truncate" style={{ color: "#8B8494" }}>{a.full_name}</p>
+                    <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{a.full_name}</p>
                   )}
                 </div>
               </button>
@@ -2196,9 +2237,9 @@ function SearchScreen({ onOpenInterests, onOpenProfile }) {
             <div
               key={i}
               className="aspect-square flex items-center justify-center"
-              style={{ background: i % 4 === 0 ? "#1E1B26" : "#221F2B" }}
+              style={{ background: i % 4 === 0 ? "var(--surface)" : "var(--border-subtle)" }}
             >
-              <ImageIcon size={18} color="#3E3849" />
+              <ImageIcon size={18} color="var(--toggle-off)" />
             </div>
           ))}
         </div>
@@ -2362,20 +2403,20 @@ function UploadScreen() {
 
   if (success) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center px-6 text-center" style={{ background: "#14121A" }}>
+      <div className="flex-1 flex flex-col items-center justify-center px-6 text-center" style={{ background: "var(--bg)" }}>
         <div
           className="w-14 h-14 rounded-full flex items-center justify-center mb-3"
           style={{ background: ACCENT }}
         >
-          <PlusSquare size={24} color="#14121A" />
+          <PlusSquare size={24} color="var(--bg)" />
         </div>
-        <p className="text-sm mb-4" style={{ color: "#F5F1EA", fontWeight: 600 }}>
+        <p className="text-sm mb-4" style={{ color: "var(--text)", fontWeight: 600 }}>
           Posted!
         </p>
         <button
           onClick={resetForm}
           className="rounded-xl px-5 py-2.5 text-sm"
-          style={{ background: ACCENT, color: "#14121A", fontWeight: 700 }}
+          style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
         >
           Create another post
         </button>
@@ -2396,10 +2437,10 @@ function UploadScreen() {
             }}
             className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm transition"
             style={{
-              background: mode === "photo" ? ACCENT : "#1E1B26",
-              color: "#F5F1EA",
+              background: mode === "photo" ? ACCENT : "var(--surface)",
+              color: "var(--text)",
               fontWeight: 600,
-              border: mode === "photo" ? "none" : "1px solid #2A2632",
+              border: mode === "photo" ? "none" : "1px solid var(--border)",
             }}
           >
             <ImageIcon size={16} /> Photo
@@ -2412,10 +2453,10 @@ function UploadScreen() {
             }}
             className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm transition"
             style={{
-              background: mode === "reel" ? ACCENT : "#1E1B26",
-              color: "#F5F1EA",
+              background: mode === "reel" ? ACCENT : "var(--surface)",
+              color: "var(--text)",
               fontWeight: 600,
-              border: mode === "reel" ? "none" : "1px solid #2A2632",
+              border: mode === "reel" ? "none" : "1px solid var(--border)",
             }}
           >
             <Video size={16} /> Reel
@@ -2424,7 +2465,7 @@ function UploadScreen() {
 
         <label
           className="rounded-2xl aspect-square flex flex-col items-center justify-center gap-2 mb-4 overflow-hidden"
-          style={{ background: "#1E1B26", border: "1.5px dashed #3E3849" }}
+          style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)" }}
         >
           <input
             type="file"
@@ -2440,8 +2481,8 @@ function UploadScreen() {
             )
           ) : (
             <>
-              {mode === "photo" ? <ImageIcon size={28} color="#8B8494" /> : <Video size={28} color="#8B8494" />}
-              <span className="text-xs" style={{ color: "#8B8494" }}>
+              {mode === "photo" ? <ImageIcon size={28} color="var(--text-muted)" /> : <Video size={28} color="var(--text-muted)" />}
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                 {mode === "photo" ? "Choose a photo" : "Choose a video"}
               </span>
             </>
@@ -2454,47 +2495,47 @@ function UploadScreen() {
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
           className="w-full rounded-xl px-3 py-2.5 text-sm mb-3 outline-none resize-none"
-          style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
         />
 
         <div
           className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-3"
-          style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
         >
-          <MapPin size={15} color="#8B8494" />
+          <MapPin size={15} color="var(--text-muted)" />
           <input
             type="text"
             placeholder="Add location"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             className="flex-1 bg-transparent text-sm outline-none"
-            style={{ color: "#F5F1EA" }}
+            style={{ color: "var(--text)" }}
           />
         </div>
 
         <div
           className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-4"
-          style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
         >
-          <span className="text-sm" style={{ color: "#8B8494", fontWeight: 700 }}>@</span>
+          <span className="text-sm" style={{ color: "var(--text-muted)", fontWeight: 700 }}>@</span>
           <input
             type="text"
             placeholder="Tag people (e.g. nilufar.k, rafiq.tech)"
             value={tagInput}
             onChange={(e) => setTagInput(e.target.value)}
             className="flex-1 bg-transparent text-sm outline-none"
-            style={{ color: "#F5F1EA" }}
+            style={{ color: "var(--text)" }}
           />
         </div>
 
         {/* Poll */}
-        <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+        <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <button
             onClick={() => setPollEnabled((v) => !v)}
             className="w-full flex items-center justify-between px-3 py-2.5"
           >
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>Add a poll</span>
-            <span className="rounded-full" style={{ width: 34, height: 19, background: pollEnabled ? ACCENT : "#3E3849", position: "relative" }}>
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Add a poll</span>
+            <span className="rounded-full" style={{ width: 34, height: 19, background: pollEnabled ? ACCENT : "var(--toggle-off)", position: "relative" }}>
               <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: pollEnabled ? 17 : 2, transition: "left 0.15s" }} />
             </span>
           </button>
@@ -2506,7 +2547,7 @@ function UploadScreen() {
                 value={pollQuestion}
                 onChange={(e) => setPollQuestion(e.target.value)}
                 className="w-full rounded-lg px-3 py-2 text-sm mb-2 outline-none"
-                style={{ background: "#14121A", border: "1px solid #2A2632", color: "#F5F1EA" }}
+                style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}
               />
               {pollOptions.map((opt, i) => (
                 <input
@@ -2520,14 +2561,14 @@ function UploadScreen() {
                     setPollOptions(next);
                   }}
                   className="w-full rounded-lg px-3 py-2 text-sm mb-2 outline-none"
-                  style={{ background: "#14121A", border: "1px solid #2A2632", color: "#F5F1EA" }}
+                  style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}
                 />
               ))}
               {pollOptions.length < 4 && (
                 <button
                   onClick={() => setPollOptions((prev) => [...prev, ""])}
                   className="text-xs"
-                  style={{ color: "#FF5D73", fontWeight: 600 }}
+                  style={{ color: "var(--accent-start)", fontWeight: 600 }}
                 >
                   + Add option
                 </button>
@@ -2537,7 +2578,7 @@ function UploadScreen() {
         </div>
 
         {/* Per-post privacy settings */}
-        <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+        <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           {[
             ["Hide Like Count For This Post", hideLikes, setHideLikes],
             ["Hide Comment Count For This Post", hideComments, setHideComments],
@@ -2548,10 +2589,10 @@ function UploadScreen() {
               key={label}
               onClick={() => setValue(!value)}
               className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
-              style={{ color: "#F5F1EA", borderTop: i > 0 ? "1px solid #2A2632" : "none", textAlign: "left" }}
+              style={{ color: "var(--text)", borderTop: i > 0 ? "1px solid var(--border)" : "none", textAlign: "left" }}
             >
               <span style={{ textAlign: "left" }}>{label}</span>
-              <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: value ? ACCENT : "#3E3849", position: "relative" }}>
+              <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: value ? ACCENT : "var(--toggle-off)", position: "relative" }}>
                 <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: value ? 17 : 2, transition: "left 0.15s" }} />
               </span>
             </button>
@@ -2559,7 +2600,7 @@ function UploadScreen() {
         </div>
 
         {error && (
-          <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>
+          <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>
             {error}
           </p>
         )}
@@ -2568,7 +2609,7 @@ function UploadScreen() {
           onClick={handleShare}
           disabled={uploading}
           className="w-full rounded-xl py-3 text-sm"
-          style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: uploading ? 0.7 : 1 }}
+          style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: uploading ? 0.7 : 1 }}
         >
           {uploading ? "Uploading..." : "Share"}
         </button>
@@ -2577,8 +2618,8 @@ function UploadScreen() {
   );
 }
 
-function SettingsScreen({ onBack }) {
-  const [view, setView] = useState("menu"); // "menu" | "editProfile" | "changeEmail" | "changePassword"
+function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, onAccentChange }) {
+  const [view, setView] = useState("menu"); // "menu" | "editProfile" | "changeEmail" | "changePassword" | "appearance"
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -2599,6 +2640,11 @@ function SettingsScreen({ onBack }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState("");
+
+  const DEFAULT_ACCENT_START = "#FF5D73";
+  const DEFAULT_ACCENT_END = "#FFB84D";
+  const [pickerStart, setPickerStart] = useState(accentStart || DEFAULT_ACCENT_START);
+  const [pickerEnd, setPickerEnd] = useState(accentEnd || DEFAULT_ACCENT_END);
 
   useEffect(() => {
     loadProfile();
@@ -2709,25 +2755,25 @@ function SettingsScreen({ onBack }) {
   };
 
   const Header = ({ title, back }) => (
-    <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
-      <button onClick={back} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-      <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>{title}</h1>
+    <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+      <button onClick={back} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+      <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{title}</h1>
     </div>
   );
 
-  const inputStyle = { background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" };
+  const inputStyle = { background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" };
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
-        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
       </div>
     );
   }
 
   if (view === "editProfile") {
     return (
-      <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
         <Header title="Edit Profile" back={() => setView("menu")} />
         <div className="px-4 pt-5 flex flex-col items-center">
           <label className="relative cursor-pointer">
@@ -2735,24 +2781,24 @@ function SettingsScreen({ onBack }) {
               {avatarPreview || profile?.avatar_url ? (
                 <img src={avatarPreview || profile.avatar_url} alt="" className="w-full h-full object-cover" />
               ) : (
-                <span className="text-2xl" style={{ color: "#14121A", fontWeight: 700 }}>
+                <span className="text-2xl" style={{ color: "var(--bg)", fontWeight: 700 }}>
                   {(username || "u")[0].toUpperCase()}
                 </span>
               )}
             </div>
             <div
               className="absolute bottom-0 right-0 w-6 h-6 rounded-full flex items-center justify-center"
-              style={{ background: "#1E1B26", border: "2px solid #14121A" }}
+              style={{ background: "var(--surface)", border: "2px solid var(--bg)" }}
             >
-              <Pencil size={11} color="#F5F1EA" />
+              <Pencil size={11} color="var(--text)" />
             </div>
             <input type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
           </label>
-          <span className="text-xs mt-2" style={{ color: "#8B8494" }}>Tap to change photo</span>
+          <span className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>Tap to change photo</span>
         </div>
 
         <div className="px-4 pt-5">
-          <label className="text-[11px]" style={{ color: "#8B8494" }}>Name</label>
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Name</label>
           <input
             type="text"
             value={fullName}
@@ -2761,7 +2807,7 @@ function SettingsScreen({ onBack }) {
             style={inputStyle}
           />
 
-          <label className="text-[11px]" style={{ color: "#8B8494" }}>Username</label>
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Username</label>
           <input
             type="text"
             value={username}
@@ -2770,7 +2816,7 @@ function SettingsScreen({ onBack }) {
             style={inputStyle}
           />
 
-          <label className="text-[11px]" style={{ color: "#8B8494" }}>Bio</label>
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Bio</label>
           <textarea
             value={bio}
             onChange={(e) => setBio(e.target.value)}
@@ -2780,14 +2826,14 @@ function SettingsScreen({ onBack }) {
           />
 
           {profileError && (
-            <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>{profileError}</p>
+            <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>{profileError}</p>
           )}
 
           <button
             onClick={saveProfile}
             disabled={savingProfile}
             className="w-full rounded-xl py-3 text-sm"
-            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: savingProfile ? 0.6 : 1 }}
+            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: savingProfile ? 0.6 : 1 }}
           >
             {savingProfile ? "Saving..." : "Save"}
           </button>
@@ -2798,10 +2844,10 @@ function SettingsScreen({ onBack }) {
 
   if (view === "changeEmail") {
     return (
-      <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
         <Header title="Change Email" back={() => setView("menu")} />
         <div className="px-4 pt-5">
-          <label className="text-[11px]" style={{ color: "#8B8494" }}>New email address</label>
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>New email address</label>
           <input
             type="email"
             value={newEmail}
@@ -2811,13 +2857,13 @@ function SettingsScreen({ onBack }) {
             style={inputStyle}
           />
           {emailMsg && (
-            <p className="text-xs mb-3" style={{ color: emailMsg.includes("Check") ? "#8B8494" : "#FF5D73" }}>{emailMsg}</p>
+            <p className="text-xs mb-3" style={{ color: emailMsg.includes("Check") ? "var(--text-muted)" : "var(--accent-start)" }}>{emailMsg}</p>
           )}
           <button
             onClick={changeEmail}
             disabled={emailBusy}
             className="w-full rounded-xl py-3 text-sm"
-            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: emailBusy ? 0.6 : 1 }}
+            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: emailBusy ? 0.6 : 1 }}
           >
             {emailBusy ? "Sending..." : "Update Email"}
           </button>
@@ -2828,10 +2874,10 @@ function SettingsScreen({ onBack }) {
 
   if (view === "changePassword") {
     return (
-      <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
         <Header title="Change Password" back={() => setView("menu")} />
         <div className="px-4 pt-5">
-          <label className="text-[11px]" style={{ color: "#8B8494" }}>New password</label>
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>New password</label>
           <input
             type="password"
             value={newPassword}
@@ -2839,7 +2885,7 @@ function SettingsScreen({ onBack }) {
             className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none"
             style={inputStyle}
           />
-          <label className="text-[11px]" style={{ color: "#8B8494" }}>Confirm new password</label>
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Confirm new password</label>
           <input
             type="password"
             value={confirmPassword}
@@ -2848,13 +2894,13 @@ function SettingsScreen({ onBack }) {
             style={inputStyle}
           />
           {passwordMsg && (
-            <p className="text-xs mb-3" style={{ color: passwordMsg === "Password updated." ? "#8B8494" : "#FF5D73" }}>{passwordMsg}</p>
+            <p className="text-xs mb-3" style={{ color: passwordMsg === "Password updated." ? "var(--text-muted)" : "var(--accent-start)" }}>{passwordMsg}</p>
           )}
           <button
             onClick={changePassword}
             disabled={passwordBusy}
             className="w-full rounded-xl py-3 text-sm"
-            style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: passwordBusy ? 0.6 : 1 }}
+            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: passwordBusy ? 0.6 : 1 }}
           >
             {passwordBusy ? "Updating..." : "Update Password"}
           </button>
@@ -2863,26 +2909,130 @@ function SettingsScreen({ onBack }) {
     );
   }
 
+  if (view === "appearance") {
+    const applyAccent = () => onAccentChange?.(pickerStart, pickerEnd);
+    const resetAccent = () => {
+      setPickerStart(DEFAULT_ACCENT_START);
+      setPickerEnd(DEFAULT_ACCENT_END);
+      onAccentChange?.("", "");
+    };
+    const isCustomized = !!accentStart || !!accentEnd;
+
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+        <Header title="Theme & Color" back={() => setView("menu")} />
+
+        <div className="px-4 pt-4">
+          <div className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>Theme</div>
+          <div className="flex gap-2 mb-6">
+            <button
+              onClick={() => onThemeChange?.("dark")}
+              className="flex-1 rounded-xl py-3 text-sm flex flex-col items-center gap-1.5"
+              style={{
+                background: theme === "dark" ? "var(--surface)" : "transparent",
+                border: theme === "dark" ? "1.5px solid var(--accent-start)" : "1px solid var(--border)",
+                color: "var(--text)",
+              }}
+            >
+              <div className="w-8 h-8 rounded-full" style={{ background: "#14121A", border: "1px solid #2A2632" }} />
+              Dark
+            </button>
+            <button
+              onClick={() => onThemeChange?.("light")}
+              className="flex-1 rounded-xl py-3 text-sm flex flex-col items-center gap-1.5"
+              style={{
+                background: theme === "light" ? "var(--surface)" : "transparent",
+                border: theme === "light" ? "1.5px solid var(--accent-start)" : "1px solid var(--border)",
+                color: "var(--text)",
+              }}
+            >
+              <div className="w-8 h-8 rounded-full" style={{ background: "#FAFAFA", border: "1px solid #E8E3ED" }} />
+              Light
+            </button>
+          </div>
+
+          <div className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>Accent color</div>
+          <div
+            className="rounded-xl p-3 mb-3"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+          >
+            <div className="w-full h-10 rounded-lg mb-3" style={{ background: `linear-gradient(135deg, ${pickerStart} 0%, ${pickerEnd} 100%)` }} />
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-xs flex-1" style={{ color: "var(--text)" }}>Start</span>
+              <input
+                type="color"
+                value={pickerStart}
+                onChange={(e) => setPickerStart(e.target.value)}
+                className="w-10 h-8 rounded"
+                style={{ background: "transparent", border: "1px solid var(--border)" }}
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs flex-1" style={{ color: "var(--text)" }}>End</span>
+              <input
+                type="color"
+                value={pickerEnd}
+                onChange={(e) => setPickerEnd(e.target.value)}
+                className="w-10 h-8 rounded"
+                style={{ background: "transparent", border: "1px solid var(--border)" }}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              onClick={applyAccent}
+              className="flex-1 rounded-xl py-2.5 text-sm"
+              style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
+            >
+              Apply
+            </button>
+            {isCustomized && (
+              <button
+                onClick={resetAccent}
+                className="flex-1 rounded-xl py-2.5 text-sm"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
+              >
+                Reset to default
+              </button>
+            )}
+          </div>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            The accent color is used for buttons, links, and highlights throughout the app, in both Dark and Light theme.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
       <Header title="Settings" back={onBack} />
 
       <div className="px-4 pt-3">
-        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "#8B8494" }}>Account</div>
-        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
-          <button onClick={() => setView("editProfile")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#F5F1EA", borderBottom: "1px solid #2A2632" }}>
+        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Appearance</div>
+        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <button onClick={() => setView("appearance")} className="w-full flex items-center justify-between px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
+            <span>Theme & Color</span>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>{theme === "light" ? "Light" : "Dark"}</span>
+          </button>
+        </div>
+
+        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Account</div>
+        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <button onClick={() => setView("editProfile")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
             Edit Profile
           </button>
-          <button onClick={() => setView("changeEmail")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#F5F1EA", borderBottom: "1px solid #2A2632" }}>
+          <button onClick={() => setView("changeEmail")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
             Change Email
           </button>
-          <button onClick={() => setView("changePassword")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#F5F1EA" }}>
+          <button onClick={() => setView("changePassword")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
             Change Password
           </button>
         </div>
 
-        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
-          <button onClick={handleLogout} className="w-full text-left px-4 py-3 text-sm" style={{ color: "#FF5D73", fontWeight: 600 }}>
+        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <button onClick={handleLogout} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--accent-start)", fontWeight: 600 }}>
             Log Out
           </button>
         </div>
@@ -2987,17 +3137,17 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
-        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
       </div>
     );
   }
 
   if (loadError || !post) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ background: "#14121A" }}>
-        <span className="text-sm" style={{ color: "#8B8494" }}>{loadError || "Post not found"}</span>
-        <button onClick={onBack} className="text-sm" style={{ color: "#FF5D73" }}>Go back</button>
+      <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ background: "var(--bg)" }}>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}>{loadError || "Post not found"}</span>
+        <button onClick={onBack} className="text-sm" style={{ color: "var(--accent-start)" }}>Go back</button>
       </div>
     );
   }
@@ -3005,27 +3155,27 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
   const isOwner = post.user_id === userId;
 
   return (
-    <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
-      <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
+          <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
           <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-              <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[9px]" style={{ color: "#F5F1EA" }}>
+              <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
                 {post.username[0].toUpperCase()}
               </div>
             </div>
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{post.username}</span>
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{post.username}</span>
           </button>
         </div>
         <button onClick={() => (isOwner ? setOptionsOpen(true) : onOpenReport?.(post.id))}>
-          <Ellipsis size={20} color="#F5F1EA" />
+          <Ellipsis size={20} color="var(--text)" />
         </button>
       </div>
 
       <div
         className="w-full flex items-center justify-center"
-        style={{ background: "#1E1B26", aspectRatio: "4/5" }}
+        style={{ background: "var(--surface)", aspectRatio: "4/5" }}
         onDoubleClick={toggleLike}
       >
         {post.media_type === "photo" ? (
@@ -3039,15 +3189,15 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
         <div className="flex items-center gap-5">
           <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
             <div className="h-8 flex items-center justify-center">
-              <Send size={22} color="#F5F1EA" />
+              <Send size={22} color="var(--text)" />
             </div>
             <span className="text-[10px] leading-none h-3 mt-0.5">&nbsp;</span>
           </div>
           <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
             <button onClick={toggleSave} className="h-8 flex items-center justify-center">
-              <Bookmark size={22} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+              <Bookmark size={22} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} />
             </button>
-            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
               {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
             </span>
           </div>
@@ -3063,9 +3213,9 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             onTouchMove={() => clearTimeout(pressTimer.current)}
             className="h-8 flex items-center justify-center"
           >
-            <Heart size={30} color={post.liked ? "#FF5D73" : "#F5F1EA"} fill={post.liked ? "#FF5D73" : "none"} />
+            <Heart size={30} color={post.liked ? "var(--accent-start)" : "var(--text)"} fill={post.liked ? "var(--accent-start)" : "none"} />
           </button>
-          <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+          <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
             {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
           </span>
         </div>
@@ -3077,17 +3227,17 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
               disabled={post.comments_disabled}
               className="h-8 flex items-center justify-center"
             >
-              <MessageCircle size={22} color={post.comments_disabled ? "#3E3849" : "#F5F1EA"} />
+              <MessageCircle size={22} color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"} />
             </button>
-            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
               {countPrefs.comments && !post.hide_comments && post.commentCount > 0 ? formatCount(post.commentCount) : "\u00A0"}
             </span>
           </div>
           <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
             <button onClick={toggleRepost} className="h-8 flex items-center justify-center">
-              <Repeat2 size={24} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
+              <Repeat2 size={24} color={post.reposted ? "var(--accent-end)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 2} />
             </button>
-            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
               {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
             </span>
           </div>
@@ -3100,14 +3250,14 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
       <div className="px-4 pt-1 pb-6">
         {post.location && (
-          <span className="flex items-center gap-1 text-[11px] mb-1" style={{ color: "#8B8494" }}>
+          <span className="flex items-center gap-1 text-[11px] mb-1" style={{ color: "var(--text-muted)" }}>
             <MapPin size={11} /> {post.location}
           </span>
         )}
         <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
         {post.caption && (
-          <p className="text-sm mt-0.5" style={{ color: "#C9C3D1", whiteSpace: "pre-wrap" }}>
-            <span style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username} </span>
+          <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
+            <span style={{ color: "var(--text)", fontWeight: 600 }}>{post.username} </span>
             {post.caption}
           </p>
         )}
@@ -3268,16 +3418,16 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
-        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
       </div>
     );
   }
 
   if (!profile) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
-        <span className="text-sm" style={{ color: "#8B8494" }}>Profile not found</span>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Profile not found</span>
       </div>
     );
   }
@@ -3287,15 +3437,15 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div className="flex items-center gap-2">
           {onBack && (
-            <button onClick={onBack} className="text-sm mr-1" style={{ color: "#F5F1EA" }}>←</button>
+            <button onClick={onBack} className="text-sm mr-1" style={{ color: "var(--text)" }}>←</button>
           )}
-          <span className="text-base" style={{ color: "#F5F1EA", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
+          <span className="text-base" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
             {profile.username}
           </span>
         </div>
         {isOwnProfile ? (
           <button onClick={onOpenSettings}>
-            <Settings size={20} color="#F5F1EA" />
+            <Settings size={20} color="var(--text)" />
           </button>
         ) : (
           <button
@@ -3303,9 +3453,9 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
             disabled={followBusy}
             className="rounded-lg px-4 py-1.5 text-xs"
             style={{
-              background: isFollowing ? "#1E1B26" : ACCENT,
-              border: isFollowing ? "1px solid #2A2632" : "none",
-              color: isFollowing ? "#F5F1EA" : "#14121A",
+              background: isFollowing ? "var(--surface)" : ACCENT,
+              border: isFollowing ? "1px solid var(--border)" : "none",
+              color: isFollowing ? "var(--text)" : "var(--bg)",
               fontWeight: 700,
               opacity: followBusy ? 0.6 : 1,
             }}
@@ -3323,60 +3473,60 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
           {profile.avatar_url ? (
             <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
           ) : (
-            <span className="text-2xl" style={{ color: "#14121A", fontWeight: 700 }}>
+            <span className="text-2xl" style={{ color: "var(--bg)", fontWeight: 700 }}>
               {profile.username[0].toUpperCase()}
             </span>
           )}
         </div>
         <div className="flex gap-6">
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{posts.length}</span>
-            <span className="text-[11px]" style={{ color: "#8B8494" }}>Posts</span>
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{posts.length}</span>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Posts</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{followerCount}</span>
-            <span className="text-[11px]" style={{ color: "#8B8494" }}>Followers</span>
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{followerCount}</span>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Followers</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{followingCount}</span>
-            <span className="text-[11px]" style={{ color: "#8B8494" }}>Following</span>
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{followingCount}</span>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Following</span>
           </div>
         </div>
       </div>
 
       <div className="px-4 mb-4">
-        <p className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>
+        <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>
           {profile.full_name || profile.username}
         </p>
         {profile.bio && (
-          <p className="text-xs mt-1" style={{ color: "#C9C3D1", whiteSpace: "pre-wrap" }}>{profile.bio}</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{profile.bio}</p>
         )}
       </div>
 
       <div
         className="flex items-center justify-center gap-12 py-2.5 mx-4 mb-3"
-        style={{ borderTop: "1px solid #2A2632" }}
+        style={{ borderTop: "1px solid var(--border)" }}
       >
         <button
           onClick={() => setTab("posts")}
           className="flex items-center gap-1.5 py-2"
-          style={{ borderBottom: tab === "posts" ? "2px solid #F5F1EA" : "2px solid transparent" }}
+          style={{ borderBottom: tab === "posts" ? "2px solid var(--text)" : "2px solid transparent" }}
         >
-          <Grid3x3 size={24} color={tab === "posts" ? "#F5F1EA" : "#8B8494"} strokeWidth={tab === "posts" ? 2.2 : 1.8} />
+          <Grid3x3 size={24} color={tab === "posts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "posts" ? 2.2 : 1.8} />
         </button>
         <button
           onClick={() => setTab("reposts")}
           className="flex items-center gap-1.5 py-2"
-          style={{ borderBottom: tab === "reposts" ? "2px solid #F5F1EA" : "2px solid transparent" }}
+          style={{ borderBottom: tab === "reposts" ? "2px solid var(--text)" : "2px solid transparent" }}
         >
-          <Repeat2 size={25} color={tab === "reposts" ? "#F5F1EA" : "#8B8494"} strokeWidth={tab === "reposts" ? 2.2 : 1.8} />
+          <Repeat2 size={25} color={tab === "reposts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "reposts" ? 2.2 : 1.8} />
         </button>
         <button
           onClick={() => setTab("tagged")}
           className="flex items-center gap-1.5 py-2"
-          style={{ borderBottom: tab === "tagged" ? "2px solid #F5F1EA" : "2px solid transparent" }}
+          style={{ borderBottom: tab === "tagged" ? "2px solid var(--text)" : "2px solid transparent" }}
         >
-          <UserSquare2 size={24} color={tab === "tagged" ? "#F5F1EA" : "#8B8494"} strokeWidth={tab === "tagged" ? 2.2 : 1.8} />
+          <UserSquare2 size={24} color={tab === "tagged" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "tagged" ? 2.2 : 1.8} />
         </button>
       </div>
 
@@ -3391,15 +3541,15 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
             <div
               key={i}
               className="aspect-square flex items-center justify-center relative"
-              style={{ background: i % 3 === 0 ? "#1E1B26" : "#221F2B" }}
+              style={{ background: i % 3 === 0 ? "var(--surface)" : "var(--border-subtle)" }}
             >
-              <ImageIcon size={18} color="#3E3849" />
-              <UserSquare2 size={12} color="#FFB84D" className="absolute top-1.5 right-1.5" />
+              <ImageIcon size={18} color="var(--toggle-off)" />
+              <UserSquare2 size={12} color="var(--accent-end)" className="absolute top-1.5 right-1.5" />
             </div>
           ))
         ) : gridFor.length === 0 ? (
           <div className="col-span-3 py-10 text-center">
-            <span className="text-xs" style={{ color: "#8B8494" }}>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
               {tab === "posts" ? "No posts yet" : "No reposts yet"}
             </span>
           </div>
@@ -3409,7 +3559,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
               key={p.id}
               onClick={() => onOpenPost?.(p.id)}
               className="aspect-square flex items-center justify-center relative overflow-hidden"
-              style={{ background: "#1E1B26" }}
+              style={{ background: "var(--surface)" }}
             >
               {p.media_type === "photo" ? (
                 <img src={p.media_url} alt="" className="w-full h-full object-cover" />
@@ -3417,11 +3567,11 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
                 <video src={p.media_url} className="w-full h-full object-cover" />
               )}
               {tab === "reposts" && (
-                <Repeat2 size={12} color="#FFB84D" className="absolute top-1.5 right-1.5" />
+                <Repeat2 size={12} color="var(--accent-end)" className="absolute top-1.5 right-1.5" />
               )}
               {tab === "posts" && p.pinned && (
                 <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
-                  <Pin size={10} color="#FFB84D" />
+                  <Pin size={10} color="var(--accent-end)" />
                 </div>
               )}
               {tab === "posts" && p.archived && isOwnProfile && (
@@ -3429,7 +3579,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
                   className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5"
                   style={{ background: "rgba(0,0,0,0.65)" }}
                 >
-                  <span className="text-[9px]" style={{ color: "#8B8494" }}>Archived</span>
+                  <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>Archived</span>
                 </div>
               )}
             </button>
@@ -3654,31 +3804,31 @@ function MessagesScreen({ onBack }) {
   const showingSearch = query.trim().length > 0;
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
-      <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "#14121A" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
+      <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)" }}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
-            <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-            <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
+            <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+            <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
               Messages
             </h1>
           </div>
           <button
             onClick={() => setCreatingGroup(true)}
             className="flex items-center gap-1 rounded-full px-3 py-1.5 text-xs"
-            style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
           >
             <Users size={14} /> New group
           </button>
         </div>
-        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
-          <Search size={15} color="#8B8494" />
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <Search size={15} color="var(--text-muted)" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search people to message..."
             className="flex-1 bg-transparent outline-none text-sm"
-            style={{ color: "#F5F1EA" }}
+            style={{ color: "var(--text)" }}
           />
         </div>
       </div>
@@ -3686,24 +3836,24 @@ function MessagesScreen({ onBack }) {
       <div className="flex-1 overflow-y-auto">
         {showingSearch ? (
           searching ? (
-            <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>Searching...</p>
+            <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>Searching...</p>
           ) : searchResults.length === 0 ? (
-            <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>No accounts found</p>
+            <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>No accounts found</p>
           ) : (
             searchResults.map((p) => (
               <button key={p.id} onClick={() => startChat(p)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left">
                 <Avatar username={p.username} avatarUrl={p.avatar_url} size={44} />
-                <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{p.username}</span>
+                <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
               </button>
             ))
           )
         ) : loading ? (
-          <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>Loading...</p>
+          <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
         ) : conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center mt-16 px-8 text-center gap-2">
-            <Send size={30} color="#3E3849" />
-            <p className="text-sm" style={{ color: "#8B8494" }}>No messages yet</p>
-            <p className="text-xs" style={{ color: "#8B8494" }}>Search for someone above, or start a group.</p>
+            <Send size={30} color="var(--toggle-off)" />
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>No messages yet</p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>Search for someone above, or start a group.</p>
           </div>
         ) : (
           conversations.map((c) => (
@@ -3713,24 +3863,24 @@ function MessagesScreen({ onBack }) {
               className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
             >
               {c.isGroup ? (
-                <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center" style={{ background: "#2A2632" }}>
-                  <Users size={20} color="#F5F1EA" />
+                <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center" style={{ background: "var(--border)" }}>
+                  <Users size={20} color="var(--text)" />
                 </div>
               ) : (
                 <Avatar username={c.displayName} avatarUrl={c.avatarUrl} size={44} />
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: c.unread > 0 ? 700 : 600 }}>{c.displayName}</p>
-                <p className="text-xs truncate" style={{ color: c.unread > 0 ? "#F5F1EA" : "#8B8494", fontWeight: c.unread > 0 ? 600 : 400 }}>
+                <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: c.unread > 0 ? 700 : 600 }}>{c.displayName}</p>
+                <p className="text-xs truncate" style={{ color: c.unread > 0 ? "var(--text)" : "var(--text-muted)", fontWeight: c.unread > 0 ? 600 : 400 }}>
                   {c.lastMessage || "Say hi 👋"}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
-                <span className="text-[10px]" style={{ color: "#8B8494" }}>{timeShort(c.lastMessageAt)}</span>
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{timeShort(c.lastMessageAt)}</span>
                 {c.unread > 0 && (
                   <span
                     className="rounded-full flex items-center justify-center text-[9px]"
-                    style={{ background: ACCENT, color: "#14121A", fontWeight: 700, minWidth: 18, height: 18, padding: "0 5px" }}
+                    style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, minWidth: 18, height: 18, padding: "0 5px" }}
                   >
                     {c.unread > 99 ? "99+" : c.unread}
                   </span>
@@ -3804,17 +3954,17 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
-      <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>New group</h1>
+          <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>New group</h1>
         </div>
         <button
           onClick={create}
           disabled={creating || selected.length < 2}
           className="rounded-full px-4 py-1.5 text-xs"
-          style={{ background: selected.length >= 2 ? ACCENT : "#1E1B26", color: selected.length >= 2 ? "#14121A" : "#8B8494", fontWeight: 700 }}
+          style={{ background: selected.length >= 2 ? ACCENT : "var(--surface)", color: selected.length >= 2 ? "var(--bg)" : "var(--text-muted)", fontWeight: 700 }}
         >
           {creating ? "Creating..." : "Create"}
         </button>
@@ -3826,7 +3976,7 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Group name (optional)"
           className="w-full rounded-xl px-3 py-2.5 text-sm mb-3 outline-none"
-          style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
         />
 
         {selected.length > 0 && (
@@ -3836,28 +3986,28 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
                 key={s.id}
                 onClick={() => toggle(s)}
                 className="flex items-center gap-1 rounded-full pl-1 pr-2 py-1 text-xs"
-                style={{ background: "#2A2632", color: "#F5F1EA" }}
+                style={{ background: "var(--border)", color: "var(--text)" }}
               >
                 <Avatar username={s.username} avatarUrl={s.avatar_url} size={20} />
                 {s.username}
-                <X size={11} color="#8B8494" />
+                <X size={11} color="var(--text-muted)" />
               </button>
             ))}
           </div>
         )}
 
-        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 mb-2" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
-          <Search size={15} color="#8B8494" />
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <Search size={15} color="var(--text-muted)" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search people to add..."
             className="flex-1 bg-transparent outline-none text-sm"
-            style={{ color: "#F5F1EA" }}
+            style={{ color: "var(--text)" }}
           />
         </div>
 
-        {error && <p className="text-xs mb-2" style={{ color: "#FF5D73" }}>{error}</p>}
+        {error && <p className="text-xs mb-2" style={{ color: "var(--accent-start)" }}>{error}</p>}
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -3866,12 +4016,12 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
           return (
             <button key={p.id} onClick={() => toggle(p)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left">
               <Avatar username={p.username} avatarUrl={p.avatar_url} size={40} />
-              <span className="flex-1 text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{p.username}</span>
+              <span className="flex-1 text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
               <div
                 className="w-5 h-5 rounded-full flex items-center justify-center"
-                style={{ background: isSel ? ACCENT : "transparent", border: isSel ? "none" : "1.5px solid #3E3849" }}
+                style={{ background: isSel ? ACCENT : "transparent", border: isSel ? "none" : "1.5px solid var(--toggle-off)" }}
               >
-                {isSel && <Check size={12} color="#14121A" />}
+                {isSel && <Check size={12} color="var(--bg)" />}
               </div>
             </button>
           );
@@ -4105,24 +4255,24 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const seen = !isGroup && myLastMessage && otherLastRead && new Date(otherLastRead) >= new Date(myLastMessage.created_at);
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
-      <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
-        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
         {isGroup ? (
-          <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "#2A2632" }}>
-            <Users size={16} color="#F5F1EA" />
+          <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "var(--border)" }}>
+            <Users size={16} color="var(--text)" />
           </div>
         ) : (
           <Avatar username={chatTitle} avatarUrl={chatAvatarUrl} size={32} />
         )}
-        <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{chatTitle}</span>
+        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{chatTitle}</span>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3" onClick={() => setMenuFor(null)}>
         {loading ? (
-          <p className="text-center text-xs mt-4" style={{ color: "#8B8494" }}>Loading...</p>
+          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>Loading...</p>
         ) : messages.length === 0 ? (
-          <p className="text-center text-xs mt-4" style={{ color: "#8B8494" }}>No messages yet — say hi 👋</p>
+          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>No messages yet — say hi 👋</p>
         ) : (
           messages.map((m) => {
             const mine = m.sender_id === currentUserId;
@@ -4137,11 +4287,11 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       onChange={(e) => setEditText(e.target.value)}
                       rows={2}
                       className="w-full rounded-xl px-3 py-2 text-sm outline-none resize-none"
-                      style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+                      style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
                     />
                     <div className="flex justify-end gap-3 mt-1">
-                      <button onClick={() => setEditingId(null)} className="text-[11px]" style={{ color: "#8B8494" }}>Cancel</button>
-                      <button onClick={() => saveEdit(m)} className="text-[11px]" style={{ color: "#FF5D73", fontWeight: 700 }}>Save</button>
+                      <button onClick={() => setEditingId(null)} className="text-[11px]" style={{ color: "var(--text-muted)" }}>Cancel</button>
+                      <button onClick={() => saveEdit(m)} className="text-[11px]" style={{ color: "var(--accent-start)", fontWeight: 700 }}>Save</button>
                     </div>
                   </div>
                 </div>
@@ -4151,7 +4301,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
             return (
               <div key={m.id} className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}`}>
                 {isGroup && !mine && (
-                  <span className="text-[10px] mb-0.5 ml-1" style={{ color: "#8B8494" }}>{memberNames[m.sender_id] || "unknown"}</span>
+                  <span className="text-[10px] mb-0.5 ml-1" style={{ color: "var(--text-muted)" }}>{memberNames[m.sender_id] || "unknown"}</span>
                 )}
                 <div
                   onTouchStart={() => {
@@ -4174,7 +4324,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                   {m.deleted ? (
                     <div
                       className="px-3.5 py-2 text-sm italic"
-                      style={{ background: "#1E1B26", color: "#8B8494", borderRadius: 14, border: "1px solid #2A2632" }}
+                      style={{ background: "var(--surface)", color: "var(--text-muted)", borderRadius: 14, border: "1px solid var(--border)" }}
                     >
                       This message was deleted
                     </div>
@@ -4183,14 +4333,14 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       src={m.image_url}
                       alt=""
                       className="rounded-2xl max-w-full"
-                      style={{ maxHeight: 260, border: mine ? "none" : "1px solid #2A2632" }}
+                      style={{ maxHeight: 260, border: mine ? "none" : "1px solid var(--border)" }}
                     />
                   ) : (
                     <div
                       className="px-3.5 py-2 text-sm"
                       style={{
-                        background: mine ? ACCENT : "#1E1B26",
-                        color: mine ? "#14121A" : "#F5F1EA",
+                        background: mine ? ACCENT : "var(--surface)",
+                        color: mine ? "var(--bg)" : "var(--text)",
                         borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-word",
@@ -4212,20 +4362,20 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       />
                       <div
                         className={`absolute z-50 rounded-xl overflow-hidden py-1 ${mine ? "right-0" : "left-0"}`}
-                        style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 130, top: "100%", marginTop: 4 }}
+                        style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 130, top: "100%", marginTop: 4 }}
                       >
                         {m.content && (
-                          <button onClick={() => copyMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+                          <button onClick={() => copyMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
                             <Copy size={13} /> Copy
                           </button>
                         )}
                         {mine && m.content && (
-                          <button onClick={() => startEdit(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+                          <button onClick={() => startEdit(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
                             <Pencil size={13} /> Edit
                           </button>
                         )}
                         {mine && (
-                          <button onClick={() => deleteMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#FF5D73" }}>
+                          <button onClick={() => deleteMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--accent-start)" }}>
                             <Trash2 size={13} /> Delete
                           </button>
                         )}
@@ -4235,7 +4385,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                 </div>
 
                 {!m.deleted && (
-                  <span className="text-[9px] mt-0.5 mx-1" style={{ color: "#8B8494" }}>
+                  <span className="text-[9px] mt-0.5 mx-1" style={{ color: "var(--text-muted)" }}>
                     {timeShort(m.created_at)}
                     {m.edited_at ? " · edited" : ""}
                     {mine && isLast && seen ? " · Seen" : ""}
@@ -4248,8 +4398,8 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
 
         {typingUsers.length > 0 && (
           <div className="flex items-center gap-1 ml-1 mb-1">
-            <div className="px-3 py-2 rounded-2xl" style={{ background: "#1E1B26" }}>
-              <span className="text-xs" style={{ color: "#8B8494" }}>
+            <div className="px-3 py-2 rounded-2xl" style={{ background: "var(--surface)" }}>
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                 {isGroup ? `${typingUsers.join(", ")} typing...` : "typing..."}
               </span>
             </div>
@@ -4257,12 +4407,12 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         )}
       </div>
 
-      <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid #221F2B" }}>
+      <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
         <label className="pb-2 cursor-pointer shrink-0">
           {imageUploading ? (
-            <span className="text-[10px]" style={{ color: "#8B8494" }}>...</span>
+            <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>...</span>
           ) : (
-            <ImagePlus size={22} color="#8B8494" />
+            <ImagePlus size={22} color="var(--text-muted)" />
           )}
           <input
             type="file"
@@ -4280,15 +4430,15 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           placeholder="Message..."
           rows={1}
           className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
-          style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA", maxHeight: 110 }}
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
         />
         <button
           onClick={send}
           disabled={sending || !text.trim()}
           className="rounded-full w-10 h-10 flex items-center justify-center shrink-0"
-          style={{ background: text.trim() ? ACCENT : "#1E1B26", border: text.trim() ? "none" : "1px solid #2A2632" }}
+          style={{ background: text.trim() ? ACCENT : "var(--surface)", border: text.trim() ? "none" : "1px solid var(--border)" }}
         >
-          <SendHorizontal size={18} color={text.trim() ? "#14121A" : "#8B8494"} />
+          <SendHorizontal size={18} color={text.trim() ? "var(--bg)" : "var(--text-muted)"} />
         </button>
       </div>
     </div>
@@ -4296,10 +4446,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
 }
 
 const mockNotifications = [
-  { id: 1, user: "nilufar.k", action: "liked your post", time: "5m", icon: Heart, color: "#FF5D73" },
-  { id: 2, user: "rafiq.tech", action: "started following you", time: "22m", icon: CircleUserRound, color: "#8B8494" },
-  { id: 3, user: "meherun.a", action: "commented on your Reel", time: "1h", icon: MessageCircle, color: "#8B8494" },
-  { id: 4, user: "tanvir.v", action: "reposted your post", time: "3h", icon: Repeat2, color: "#FFB84D" },
+  { id: 1, user: "nilufar.k", action: "liked your post", time: "5m", icon: Heart, color: "var(--accent-start)" },
+  { id: 2, user: "rafiq.tech", action: "started following you", time: "22m", icon: CircleUserRound, color: "var(--text-muted)" },
+  { id: 3, user: "meherun.a", action: "commented on your Reel", time: "1h", icon: MessageCircle, color: "var(--text-muted)" },
+  { id: 4, user: "tanvir.v", action: "reposted your post", time: "3h", icon: Repeat2, color: "var(--accent-end)" },
 ];
 
 function NotificationsScreen({ onBack }) {
@@ -4359,26 +4509,26 @@ function NotificationsScreen({ onBack }) {
 
   const iconFor = (type) =>
     type === "like" ? Heart : type === "comment" || type === "mention" ? MessageCircle : type === "message" ? SendHorizontal : CircleUserRound;
-  const colorFor = (type) => (type === "like" ? "#FF5D73" : "#8B8494");
+  const colorFor = (type) => (type === "like" ? "var(--accent-start)" : "var(--text-muted)");
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
-        style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
+        style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
+        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Notifications
         </h1>
       </div>
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
+          <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
             Loading...
           </p>
         ) : notifications.length === 0 ? (
-          <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
+          <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
             No notifications yet
           </p>
         ) : (
@@ -4387,12 +4537,12 @@ function NotificationsScreen({ onBack }) {
             return (
               <div key={n.id} className="flex items-center gap-3 px-4 py-2.5">
                 <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
-                  <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-xs" style={{ color: "#F5F1EA" }}>
+                  <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-xs" style={{ color: "var(--text)" }}>
                     {n.username[0].toUpperCase()}
                   </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm" style={{ color: "#F5F1EA" }}>
+                  <p className="text-sm" style={{ color: "var(--text)" }}>
                     <span style={{ fontWeight: 600 }}>{n.username}</span> {actionText(n.type)}
                   </p>
                 </div>
@@ -4442,20 +4592,20 @@ function ReportScreen({ postId, onBack }) {
 
   if (submitted) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center px-6 text-center" style={{ background: "#14121A" }}>
+      <div className="flex-1 flex flex-col items-center justify-center px-6 text-center" style={{ background: "var(--bg)" }}>
         <div
           className="w-14 h-14 rounded-full flex items-center justify-center mb-3"
           style={{ background: ACCENT }}
         >
-          <Ellipsis size={22} color="#14121A" />
+          <Ellipsis size={22} color="var(--bg)" />
         </div>
-        <p className="text-sm mb-1" style={{ color: "#F5F1EA", fontWeight: 600 }}>
+        <p className="text-sm mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>
           Reported
         </p>
-        <p className="text-xs mb-6" style={{ color: "#8B8494" }}>
+        <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>
           Thanks for letting us know. We'll review it.
         </p>
-        <button onClick={onBack} style={{ color: "#FF5D73", fontWeight: 600 }} className="text-sm">
+        <button onClick={onBack} style={{ color: "var(--accent-start)", fontWeight: 600 }} className="text-sm">
           Go back
         </button>
       </div>
@@ -4463,17 +4613,17 @@ function ReportScreen({ postId, onBack }) {
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
-        style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
+        style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
+        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Report
         </h1>
       </div>
-      <p className="text-xs px-4 pt-4 pb-2" style={{ color: "#8B8494" }}>
+      <p className="text-xs px-4 pt-4 pb-2" style={{ color: "var(--text-muted)" }}>
         Why are you reporting this post?
       </p>
       <div className="flex-1 overflow-y-auto">
@@ -4483,7 +4633,7 @@ function ReportScreen({ postId, onBack }) {
             onClick={() => handleReport(reason)}
             disabled={submitting}
             className="w-full text-left px-4 py-3.5 text-sm"
-            style={{ color: "#F5F1EA", borderBottom: "1px solid #221F2B", opacity: submitting ? 0.6 : 1 }}
+            style={{ color: "var(--text)", borderBottom: "1px solid var(--border-subtle)", opacity: submitting ? 0.6 : 1 }}
           >
             {reason}
           </button>
@@ -4573,40 +4723,40 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
-        style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
+        style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
+        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Comments
         </h1>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pt-3">
         {loading ? (
-          <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
+          <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
             Loading...
           </p>
         ) : comments.length === 0 ? (
-          <p className="text-center text-xs py-8" style={{ color: "#8B8494" }}>
+          <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
             No comments yet — be the first to comment
           </p>
         ) : (
           comments.map((c) => (
             <div key={c.id} className="flex items-start gap-3 mb-4">
               <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-                <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[10px]" style={{ color: "#F5F1EA" }}>
+                <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[10px]" style={{ color: "var(--text)" }}>
                   {c.username[0].toUpperCase()}
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm" style={{ color: "#F5F1EA", whiteSpace: "pre-wrap" }}>
+                <p className="text-sm" style={{ color: "var(--text)", whiteSpace: "pre-wrap" }}>
                   <span style={{ fontWeight: 600 }}>{c.username}</span> {c.content}
                 </p>
                 {c.user_id === userId && (
-                  <button onClick={() => deleteComment(c)} className="text-[10px] mt-1" style={{ color: "#FF5D73" }}>
+                  <button onClick={() => deleteComment(c)} className="text-[10px] mt-1" style={{ color: "var(--accent-start)" }}>
                     Delete
                   </button>
                 )}
@@ -4616,20 +4766,20 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
         )}
       </div>
 
-      <div className="flex items-end gap-2 px-4 py-3" style={{ borderTop: "1px solid #221F2B" }}>
+      <div className="flex items-end gap-2 px-4 py-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
         <textarea
           value={newComment}
           onChange={(e) => setNewComment(e.target.value)}
           placeholder="Write a comment..."
           rows={1}
           className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none resize-none"
-          style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA", maxHeight: 110 }}
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
         />
         <button
           onClick={handlePost}
           disabled={posting || !newComment.trim()}
           className="rounded-xl px-4 py-2.5 text-sm"
-          style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: posting || !newComment.trim() ? 0.6 : 1 }}
+          style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: posting || !newComment.trim() ? 0.6 : 1 }}
         >
           Send
         </button>
@@ -4642,20 +4792,20 @@ function AuthInput({ icon: Icon, type, placeholder, value, onChange, showToggle,
   return (
     <div
       className="flex items-center gap-2.5 rounded-xl px-3.5 py-3 mb-3"
-      style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
     >
-      <Icon size={17} color="#8B8494" />
+      <Icon size={17} color="var(--text-muted)" />
       <input
         type={type}
         placeholder={placeholder}
         value={value}
         onChange={onChange}
         className="flex-1 bg-transparent outline-none text-sm"
-        style={{ color: "#F5F1EA" }}
+        style={{ color: "var(--text)" }}
       />
       {showToggle && (
         <button onClick={onToggle} type="button">
-          {revealed ? <EyeOff size={16} color="#8B8494" /> : <Eye size={16} color="#8B8494" />}
+          {revealed ? <EyeOff size={16} color="var(--text-muted)" /> : <Eye size={16} color="var(--text-muted)" />}
         </button>
       )}
     </div>
@@ -4686,14 +4836,14 @@ function LoginScreen({ onLogin, onGoSignup }) {
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "#14121A" }}>
+    <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "var(--bg)" }}>
       <h1
         className="text-3xl text-center mb-1"
-        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "#F5F1EA" }}
+        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "var(--text)" }}
       >
         Loop
       </h1>
-      <p className="text-center text-xs mb-8" style={{ color: "#8B8494" }}>
+      <p className="text-center text-xs mb-8" style={{ color: "var(--text-muted)" }}>
         Share your moments
       </p>
 
@@ -4710,7 +4860,7 @@ function LoginScreen({ onLogin, onGoSignup }) {
       />
 
       {error && (
-        <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>
+        <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>
           {error}
         </p>
       )}
@@ -4719,14 +4869,14 @@ function LoginScreen({ onLogin, onGoSignup }) {
         onClick={handleLogin}
         disabled={loading}
         className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
-        style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
+        style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
         {loading ? "Please wait..." : "Log In"}
       </button>
 
-      <p className="text-center text-xs" style={{ color: "#8B8494" }}>
+      <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
         Don't have an account?{" "}
-        <button onClick={onGoSignup} style={{ color: "#FF5D73", fontWeight: 600 }}>
+        <button onClick={onGoSignup} style={{ color: "var(--accent-start)", fontWeight: 600 }}>
           Sign Up
         </button>
       </p>
@@ -4769,15 +4919,15 @@ function SignupScreen({ onSignup, onGoLogin }) {
 
   if (confirmSent) {
     return (
-      <div className="flex-1 flex flex-col justify-center items-center px-6 text-center" style={{ background: "#14121A" }}>
-        <Mail size={32} color="#FF5D73" className="mb-3" />
-        <p className="text-sm mb-2" style={{ color: "#F5F1EA", fontWeight: 600 }}>
+      <div className="flex-1 flex flex-col justify-center items-center px-6 text-center" style={{ background: "var(--bg)" }}>
+        <Mail size={32} color="var(--accent-start)" className="mb-3" />
+        <p className="text-sm mb-2" style={{ color: "var(--text)", fontWeight: 600 }}>
           Check your email
         </p>
-        <p className="text-xs mb-6" style={{ color: "#8B8494" }}>
+        <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>
           A confirmation link was sent to {email}. Click the link to verify your account, then log in.
         </p>
-        <button onClick={onGoLogin} style={{ color: "#FF5D73", fontWeight: 600 }} className="text-sm">
+        <button onClick={onGoLogin} style={{ color: "var(--accent-start)", fontWeight: 600 }} className="text-sm">
           Back to Login
         </button>
       </div>
@@ -4785,14 +4935,14 @@ function SignupScreen({ onSignup, onGoLogin }) {
   }
 
   return (
-    <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "#14121A" }}>
+    <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "var(--bg)" }}>
       <h1
         className="text-3xl text-center mb-1"
-        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "#F5F1EA" }}
+        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "var(--text)" }}
       >
         New Account
       </h1>
-      <p className="text-center text-xs mb-8" style={{ color: "#8B8494" }}>
+      <p className="text-center text-xs mb-8" style={{ color: "var(--text-muted)" }}>
         Get started in seconds
       </p>
 
@@ -4810,7 +4960,7 @@ function SignupScreen({ onSignup, onGoLogin }) {
       />
 
       {error && (
-        <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>
+        <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>
           {error}
         </p>
       )}
@@ -4819,14 +4969,14 @@ function SignupScreen({ onSignup, onGoLogin }) {
         onClick={handleSignup}
         disabled={loading}
         className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
-        style={{ background: ACCENT, color: "#14121A", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
+        style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
         {loading ? "Please wait..." : "Sign Up"}
       </button>
 
-      <p className="text-center text-xs" style={{ color: "#8B8494" }}>
+      <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
         Already have an account?{" "}
-        <button onClick={onGoLogin} style={{ color: "#FF5D73", fontWeight: 600 }}>
+        <button onClick={onGoLogin} style={{ color: "var(--accent-start)", fontWeight: 600 }}>
           Log In
         </button>
       </p>
@@ -4895,18 +5045,18 @@ function InterestsScreen({ onBack }) {
   const matches = mockTaggedContent.filter((c) => selected.includes(c.tag));
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div
         className="sticky top-0 z-10 px-4 pt-4 pb-3"
-        style={{ background: "#14121A", borderBottom: "1px solid #221F2B" }}
+        style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
+          <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
             Interests
           </h1>
         </div>
-        <p className="text-xs mt-1" style={{ color: "#8B8494" }}>
+        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
           You'll see more posts and reels related to the topics you pick
         </p>
       </div>
@@ -4921,13 +5071,13 @@ function InterestsScreen({ onBack }) {
                 onClick={() => toggleTopic(t)}
                 className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs"
                 style={{
-                  background: isSelected ? ACCENT : "#1E1B26",
-                  color: isSelected ? "#14121A" : "#F5F1EA",
+                  background: isSelected ? ACCENT : "var(--surface)",
+                  color: isSelected ? "var(--bg)" : "var(--text)",
                   fontWeight: isSelected ? 700 : 500,
-                  border: isSelected ? "none" : "1px solid #2A2632",
+                  border: isSelected ? "none" : "1px solid var(--border)",
                 }}
               >
-                <Hash size={12} color={isSelected ? "#14121A" : "#8B8494"} />
+                <Hash size={12} color={isSelected ? "var(--bg)" : "var(--text-muted)"} />
                 {t}
               </button>
             );
@@ -4936,7 +5086,7 @@ function InterestsScreen({ onBack }) {
           {adding ? (
             <div
               className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5"
-              style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
             >
               <input
                 autoFocus
@@ -4945,9 +5095,9 @@ function InterestsScreen({ onBack }) {
                 onKeyDown={(e) => e.key === "Enter" && handleAddTopic()}
                 placeholder="New topic..."
                 className="bg-transparent outline-none text-xs w-24"
-                style={{ color: "#F5F1EA" }}
+                style={{ color: "var(--text)" }}
               />
-              <button onClick={handleAddTopic} className="text-xs" style={{ color: "#FF5D73", fontWeight: 700 }}>
+              <button onClick={handleAddTopic} className="text-xs" style={{ color: "var(--accent-start)", fontWeight: 700 }}>
                 Add
               </button>
             </div>
@@ -4955,19 +5105,19 @@ function InterestsScreen({ onBack }) {
             <button
               onClick={() => setAdding(true)}
               className="flex items-center gap-1 rounded-full px-3.5 py-2 text-xs"
-              style={{ background: "#1E1B26", border: "1.5px dashed #3E3849", color: "#C9C3D1" }}
+              style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)", color: "var(--text-secondary)" }}
             >
               <Plus size={13} /> Add
             </button>
           )}
         </div>
 
-        <div style={{ borderTop: "1px solid #221F2B" }} className="pt-4">
-          <p className="text-xs mb-3" style={{ color: "#8B8494" }}>
+        <div style={{ borderTop: "1px solid var(--border-subtle)" }} className="pt-4">
+          <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
             Related Posts & Reels
           </p>
           {matches.length === 0 ? (
-            <p className="text-xs text-center py-8" style={{ color: "#8B8494" }}>
+            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
               Pick at least one topic above
             </p>
           ) : (
@@ -4976,14 +5126,14 @@ function InterestsScreen({ onBack }) {
                 <div
                   key={c.id}
                   className="relative aspect-square flex flex-col items-center justify-center gap-1 rounded-lg"
-                  style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
                 >
                   {c.type === "reel" ? (
-                    <Play size={16} color="#3E3849" fill="#3E3849" />
+                    <Play size={16} color="var(--toggle-off)" fill="var(--toggle-off)" />
                   ) : (
-                    <ImageIcon size={16} color="#3E3849" />
+                    <ImageIcon size={16} color="var(--toggle-off)" />
                   )}
-                  <span className="text-[9px] px-1 text-center" style={{ color: "#8B8494" }}>
+                  <span className="text-[9px] px-1 text-center" style={{ color: "var(--text-muted)" }}>
                     #{c.tag}
                   </span>
                 </div>
@@ -4992,11 +5142,11 @@ function InterestsScreen({ onBack }) {
           )}
         </div>
 
-        <div style={{ borderTop: "1px solid #221F2B" }} className="pt-4 mt-5 pb-2">
-          <p className="text-xs mb-1" style={{ color: "#F5F1EA", fontWeight: 600 }}>
+        <div style={{ borderTop: "1px solid var(--border-subtle)" }} className="pt-4 mt-5 pb-2">
+          <p className="text-xs mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>
             What you want to see less
           </p>
-          <p className="text-[11px] mb-3" style={{ color: "#8B8494" }}>
+          <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>
             The algorithm will stop showing posts/reels about these topics
           </p>
 
@@ -5006,9 +5156,9 @@ function InterestsScreen({ onBack }) {
                 key={t}
                 onClick={() => removeLessTopic(t)}
                 className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs"
-                style={{ background: "#2A1B22", border: "1px solid #4A2530", color: "#F5B8C4" }}
+                style={{ background: "var(--tag-bg)", border: "1px solid var(--tag-border)", color: "var(--tag-text)" }}
               >
-                <Hash size={12} color="#F5B8C4" />
+                <Hash size={12} color="var(--tag-text)" />
                 {t}
                 <span style={{ fontWeight: 700 }}>×</span>
               </button>
@@ -5017,7 +5167,7 @@ function InterestsScreen({ onBack }) {
             {addingLess ? (
               <div
                 className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5"
-                style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
               >
                 <input
                   autoFocus
@@ -5026,9 +5176,9 @@ function InterestsScreen({ onBack }) {
                   onKeyDown={(e) => e.key === "Enter" && handleAddLessTopic()}
                   placeholder="New topic..."
                   className="bg-transparent outline-none text-xs w-24"
-                  style={{ color: "#F5F1EA" }}
+                  style={{ color: "var(--text)" }}
                 />
-                <button onClick={handleAddLessTopic} className="text-xs" style={{ color: "#FF5D73", fontWeight: 700 }}>
+                <button onClick={handleAddLessTopic} className="text-xs" style={{ color: "var(--accent-start)", fontWeight: 700 }}>
                   Add
                 </button>
               </div>
@@ -5036,7 +5186,7 @@ function InterestsScreen({ onBack }) {
               <button
                 onClick={() => setAddingLess(true)}
                 className="flex items-center gap-1 rounded-full px-3.5 py-2 text-xs"
-                style={{ background: "#1E1B26", border: "1.5px dashed #3E3849", color: "#C9C3D1" }}
+                style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)", color: "var(--text-secondary)" }}
               >
                 <Plus size={13} /> Add
               </button>
@@ -5069,6 +5219,49 @@ export default function App() {
   const [viewProfileId, setViewProfileId] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewPostId, setViewPostId] = useState(null);
+  const [theme, setThemeState] = useState(() => {
+    try {
+      return localStorage.getItem("loop_theme") || "dark";
+    } catch {
+      return "dark";
+    }
+  });
+  const [accentStart, setAccentStartState] = useState(() => {
+    try {
+      return localStorage.getItem("loop_accent_start") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [accentEnd, setAccentEndState] = useState(() => {
+    try {
+      return localStorage.getItem("loop_accent_end") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const setTheme = (next) => {
+    setThemeState(next);
+    try {
+      localStorage.setItem("loop_theme", next);
+    } catch {}
+  };
+  const setCustomAccent = (start, end) => {
+    setAccentStartState(start);
+    setAccentEndState(end);
+    try {
+      if (start) localStorage.setItem("loop_accent_start", start);
+      else localStorage.removeItem("loop_accent_start");
+      if (end) localStorage.setItem("loop_accent_end", end);
+      else localStorage.removeItem("loop_accent_end");
+    } catch {}
+  };
+
+  const rootVarOverrides = {};
+  if (accentStart) rootVarOverrides["--accent-start"] = accentStart;
+  if (accentEnd) rootVarOverrides["--accent-end"] = accentEnd;
+
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
   const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null;
 
@@ -5087,18 +5280,20 @@ export default function App() {
 
   if (checkingSession) {
     return (
-      <div className="w-full min-h-screen flex items-center justify-center" style={{ background: "#0A090D" }}>
-        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
+      <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+        <style>{THEME_CSS}</style>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
       </div>
     );
   }
 
   if (authScreen) {
     return (
-      <div className="w-full min-h-screen flex items-center justify-center" style={{ background: "#0A090D" }}>
+      <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+        <style>{THEME_CSS}</style>
         <div
           className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
-          style={{ background: "#14121A", borderRadius: 36, border: "8px solid #0A090D" }}
+          style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
         >
           {authScreen === "login" ? (
             <LoginScreen onLogin={() => setAuthScreen(null)} onGoSignup={() => setAuthScreen("signup")} />
@@ -5111,10 +5306,11 @@ export default function App() {
   }
 
   return (
-    <div className="w-full min-h-screen flex items-center justify-center" style={{ background: "#0A090D" }}>
+    <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+      <style>{THEME_CSS}</style>
       <div
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
-        style={{ background: "#14121A", borderRadius: 36, border: "8px solid #0A090D" }}
+        style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
         <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId)}>
           {inboxOpen ? (
@@ -5128,7 +5324,14 @@ export default function App() {
           ) : reportPostId !== null ? (
             <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
           ) : settingsOpen ? (
-            <SettingsScreen onBack={() => setSettingsOpen(false)} />
+            <SettingsScreen
+              onBack={() => setSettingsOpen(false)}
+              theme={theme}
+              onThemeChange={setTheme}
+              accentStart={accentStart}
+              accentEnd={accentEnd}
+              onAccentChange={setCustomAccent}
+            />
           ) : viewPostId !== null ? (
             <PostDetailScreen
               postId={viewPostId}
@@ -5171,7 +5374,7 @@ export default function App() {
         {!overlayOpen && (
           <div
             className="flex items-center justify-around px-2 py-3 shrink-0"
-            style={{ background: "#14121A", borderTop: "1px solid #221F2B" }}
+            style={{ background: "var(--bg)", borderTop: "1px solid var(--border-subtle)" }}
           >
             {TABS.map((tab) => {
               const Icon = tab.icon;
@@ -5183,7 +5386,7 @@ export default function App() {
                   className="flex flex-col items-center justify-center"
                   style={{ width: 44, height: 32 }}
                 >
-                  <Icon size={22} color={isActive ? "#FF5D73" : "#8B8494"} strokeWidth={2} />
+                  <Icon size={22} color={isActive ? "var(--accent-start)" : "var(--text-muted)"} strokeWidth={2} />
                 </button>
               );
             })}
