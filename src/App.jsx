@@ -46,6 +46,8 @@ import {
   Pin,
   Archive,
   Crop,
+  Users,
+  Check,
   Copy,
   Pencil,
 } from "lucide-react";
@@ -492,16 +494,18 @@ const mockStories = [
   { id: 5, user: "priya.dances" },
 ];
 
-function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNotificationsClick }) {
+function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNotificationsClick, unreadCount = 0, hasNotifications = false }) {
   return (
     <div className="relative flex items-center justify-center px-4 pt-4 pb-3">
       {showNotifications && (
         <button onClick={onNotificationsClick} className="absolute left-4 top-1/2 -translate-y-1/2">
           <Bell size={21} color="#F5F1EA" />
-          <span
-            className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
-            style={{ background: "#FF5D73" }}
-          />
+          {hasNotifications && (
+            <span
+              className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
+              style={{ background: "#FF5D73" }}
+            />
+          )}
         </button>
       )}
       <h1
@@ -513,12 +517,14 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
       {showMessages && (
         <button onClick={onMessagesClick} className="absolute right-4 top-1/2 -translate-y-1/2">
           <SendHorizontal size={22} color="#F5F1EA" />
-          <span
-            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center text-[9px]"
-            style={{ background: ACCENT, color: "#14121A", fontWeight: 700 }}
-          >
-            3
-          </span>
+          {unreadCount > 0 && (
+            <span
+              className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center text-[9px]"
+              style={{ background: ACCENT, color: "#14121A", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
+            >
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )}
         </button>
       )}
     </div>
@@ -566,12 +572,29 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [menuOpenFor, setMenuOpenFor] = useState(null);
   const [likesPopupFor, setLikesPopupFor] = useState(null);
   const [commentSheetFor, setCommentSheetFor] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [hasNotifications, setHasNotifications] = useState(false);
   const pressTimers = React.useRef({});
   const [countPrefs] = useCountPrefs();
 
   useEffect(() => {
     loadFeed();
+    loadBadges();
   }, []);
+
+  const loadBadges = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: unread } = await supabase.rpc("my_unread_count");
+    setUnreadCount(unread || 0);
+    const { count } = await supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
+    setHasNotifications((count || 0) > 0);
+  };
 
   const loadFeed = async () => {
     setLoading(true);
@@ -735,6 +758,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         onMessagesClick={onOpenMessages}
         showNotifications
         onNotificationsClick={onOpenNotifications}
+        unreadCount={unreadCount}
+        hasNotifications={hasNotifications}
       />
       <StoriesBar />
 
@@ -3436,7 +3461,8 @@ function MessagesScreen({ onBack }) {
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [openChat, setOpenChat] = useState(null); // { conversationId, otherUser: {id, username, avatar_url} }
+  const [openChat, setOpenChat] = useState(null);
+  const [creatingGroup, setCreatingGroup] = useState(false);
 
   useEffect(() => {
     init();
@@ -3457,10 +3483,25 @@ function MessagesScreen({ onBack }) {
   };
 
   const loadConversations = async (uid) => {
+    // Which conversations am I a member of, and when did I last read each?
+    const { data: memberships } = await supabase
+      .from("conversation_members")
+      .select("conversation_id, last_read_at")
+      .eq("user_id", uid);
+
+    if (!memberships || memberships.length === 0) {
+      setConversations([]);
+      return;
+    }
+
+    const convoIds = memberships.map((m) => m.conversation_id);
+    const lastReadMap = {};
+    memberships.forEach((m) => (lastReadMap[m.conversation_id] = m.last_read_at));
+
     const { data: convos } = await supabase
       .from("conversations")
-      .select("id, user_a, user_b, last_message, last_message_at")
-      .or(`user_a.eq.${uid},user_b.eq.${uid}`)
+      .select("id, user_a, user_b, is_group, title, last_message, last_message_at")
+      .in("id", convoIds)
       .order("last_message_at", { ascending: false, nullsFirst: false });
 
     if (!convos || convos.length === 0) {
@@ -3468,26 +3509,72 @@ function MessagesScreen({ onBack }) {
       return;
     }
 
-    const otherIds = convos.map((c) => (c.user_a === uid ? c.user_b : c.user_a));
+    // Gather all members of these conversations (to name groups + get 1:1 other person)
+    const { data: allMembers } = await supabase
+      .from("conversation_members")
+      .select("conversation_id, user_id")
+      .in("conversation_id", convoIds);
+
+    const otherIds = new Set();
+    (allMembers || []).forEach((m) => {
+      if (m.user_id !== uid) otherIds.add(m.user_id);
+    });
+
     const { data: profiles } = await supabase
       .from("profiles")
       .select("id, username, avatar_url")
-      .in("id", otherIds);
+      .in("id", otherIds.size > 0 ? [...otherIds] : ["00000000-0000-0000-0000-000000000000"]);
+
+    const profMap = {};
+    (profiles || []).forEach((p) => (profMap[p.id] = p));
+
+    // Count unread per conversation
+    const { data: recentMsgs } = await supabase
+      .from("messages")
+      .select("conversation_id, sender_id, created_at, deleted")
+      .in("conversation_id", convoIds)
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    const unreadMap = {};
+    (recentMsgs || []).forEach((m) => {
+      if (m.sender_id === uid || m.deleted) return;
+      const lastRead = lastReadMap[m.conversation_id];
+      if (!lastRead || new Date(m.created_at) > new Date(lastRead)) {
+        unreadMap[m.conversation_id] = (unreadMap[m.conversation_id] || 0) + 1;
+      }
+    });
 
     const merged = convos.map((c) => {
-      const otherId = c.user_a === uid ? c.user_b : c.user_a;
-      const prof = (profiles || []).find((p) => p.id === otherId);
+      const members = (allMembers || []).filter((m) => m.conversation_id === c.id).map((m) => m.user_id);
+      let displayName, avatarUrl, otherUser;
+      if (c.is_group) {
+        const names = members.filter((m) => m !== uid).map((m) => profMap[m]?.username || "?");
+        displayName = c.title || names.slice(0, 3).join(", ") || "Group";
+        avatarUrl = null;
+        otherUser = null;
+      } else {
+        const otherId = members.find((m) => m !== uid) || (c.user_a === uid ? c.user_b : c.user_a);
+        const prof = profMap[otherId];
+        displayName = prof?.username || "unknown";
+        avatarUrl = prof?.avatar_url || null;
+        otherUser = { id: otherId, username: displayName, avatar_url: avatarUrl };
+      }
       return {
         conversationId: c.id,
-        otherUser: { id: otherId, username: prof?.username || "unknown", avatar_url: prof?.avatar_url || null },
+        isGroup: c.is_group,
+        title: c.title,
+        displayName,
+        avatarUrl,
+        otherUser,
         lastMessage: c.last_message,
         lastMessageAt: c.last_message_at,
+        unread: unreadMap[c.id] || 0,
       };
     });
     setConversations(merged);
   };
 
-  // Search accounts to start a new chat (Instagram-style)
   useEffect(() => {
     const q = query.trim();
     if (!q) {
@@ -3522,22 +3609,44 @@ function MessagesScreen({ onBack }) {
     }
     setOpenChat({
       conversationId: convoId,
+      isGroup: false,
+      displayName: profile.username,
+      avatarUrl: profile.avatar_url,
       otherUser: { id: profile.id, username: profile.username, avatar_url: profile.avatar_url },
     });
   };
+
+  const backToList = () => {
+    setOpenChat(null);
+    setCreatingGroup(false);
+    setQuery("");
+    setSearchResults([]);
+    if (userId) loadConversations(userId);
+  };
+
+  if (creatingGroup) {
+    return (
+      <NewGroupScreen
+        currentUserId={userId}
+        onBack={() => setCreatingGroup(false)}
+        onCreated={(convo) => {
+          setCreatingGroup(false);
+          setOpenChat(convo);
+        }}
+      />
+    );
+  }
 
   if (openChat) {
     return (
       <ChatScreen
         conversationId={openChat.conversationId}
+        isGroup={openChat.isGroup}
+        chatTitle={openChat.displayName}
+        chatAvatarUrl={openChat.avatarUrl}
         otherUser={openChat.otherUser}
         currentUserId={userId}
-        onBack={() => {
-          setOpenChat(null);
-          setQuery("");
-          setSearchResults([]);
-          if (userId) loadConversations(userId);
-        }}
+        onBack={backToList}
       />
     );
   }
@@ -3547,11 +3656,20 @@ function MessagesScreen({ onBack }) {
   return (
     <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
       <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "#14121A" }}>
-        <div className="flex items-center gap-3 mb-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
-            Messages
-          </h1>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
+            <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
+              Messages
+            </h1>
+          </div>
+          <button
+            onClick={() => setCreatingGroup(true)}
+            className="flex items-center gap-1 rounded-full px-3 py-1.5 text-xs"
+            style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+          >
+            <Users size={14} /> New group
+          </button>
         </div>
         <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
           <Search size={15} color="#8B8494" />
@@ -3585,21 +3703,39 @@ function MessagesScreen({ onBack }) {
           <div className="flex flex-col items-center justify-center mt-16 px-8 text-center gap-2">
             <Send size={30} color="#3E3849" />
             <p className="text-sm" style={{ color: "#8B8494" }}>No messages yet</p>
-            <p className="text-xs" style={{ color: "#8B8494" }}>Search for someone above to start a conversation.</p>
+            <p className="text-xs" style={{ color: "#8B8494" }}>Search for someone above, or start a group.</p>
           </div>
         ) : (
           conversations.map((c) => (
             <button
               key={c.conversationId}
-              onClick={() => setOpenChat({ conversationId: c.conversationId, otherUser: c.otherUser })}
+              onClick={() => setOpenChat(c)}
               className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
             >
-              <Avatar username={c.otherUser.username} avatarUrl={c.otherUser.avatar_url} size={44} />
+              {c.isGroup ? (
+                <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center" style={{ background: "#2A2632" }}>
+                  <Users size={20} color="#F5F1EA" />
+                </div>
+              ) : (
+                <Avatar username={c.displayName} avatarUrl={c.avatarUrl} size={44} />
+              )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: 600 }}>{c.otherUser.username}</p>
-                <p className="text-xs truncate" style={{ color: "#8B8494" }}>{c.lastMessage || "Say hi 👋"}</p>
+                <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: c.unread > 0 ? 700 : 600 }}>{c.displayName}</p>
+                <p className="text-xs truncate" style={{ color: c.unread > 0 ? "#F5F1EA" : "#8B8494", fontWeight: c.unread > 0 ? 600 : 400 }}>
+                  {c.lastMessage || "Say hi 👋"}
+                </p>
               </div>
-              <span className="text-[10px] shrink-0" style={{ color: "#8B8494" }}>{timeShort(c.lastMessageAt)}</span>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <span className="text-[10px]" style={{ color: "#8B8494" }}>{timeShort(c.lastMessageAt)}</span>
+                {c.unread > 0 && (
+                  <span
+                    className="rounded-full flex items-center justify-center text-[9px]"
+                    style={{ background: ACCENT, color: "#14121A", fontWeight: 700, minWidth: 18, height: 18, padding: "0 5px" }}
+                  >
+                    {c.unread > 99 ? "99+" : c.unread}
+                  </span>
+                )}
+              </div>
             </button>
           ))
         )}
@@ -3608,30 +3744,204 @@ function MessagesScreen({ onBack }) {
   );
 }
 
-function ChatScreen({ conversationId, otherUser, currentUserId, onBack }) {
+function NewGroupScreen({ currentUserId, onBack, onCreated }) {
+  const [title, setTitle] = useState("");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [selected, setSelected] = useState([]); // array of {id, username, avatar_url}
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, avatar_url")
+        .ilike("username", `%${q}%`)
+        .neq("id", currentUserId || "")
+        .limit(20);
+      if (!cancelled) setResults(data || []);
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [query, currentUserId]);
+
+  const toggle = (p) => {
+    setSelected((prev) => (prev.some((s) => s.id === p.id) ? prev.filter((s) => s.id !== p.id) : [...prev, p]));
+  };
+
+  const create = async () => {
+    setError("");
+    if (selected.length < 2) {
+      setError("Pick at least 2 people for a group");
+      return;
+    }
+    setCreating(true);
+    const { data: convoId, error: rpcError } = await supabase.rpc("create_group_conversation", {
+      group_title: title.trim() || null,
+      member_ids: selected.map((s) => s.id),
+    });
+    setCreating(false);
+    if (rpcError) {
+      setError(rpcError.message);
+      return;
+    }
+    onCreated({
+      conversationId: convoId,
+      isGroup: true,
+      displayName: title.trim() || selected.map((s) => s.username).slice(0, 3).join(", "),
+      avatarUrl: null,
+      otherUser: null,
+    });
+  };
+
+  return (
+    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
+      <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
+          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>New group</h1>
+        </div>
+        <button
+          onClick={create}
+          disabled={creating || selected.length < 2}
+          className="rounded-full px-4 py-1.5 text-xs"
+          style={{ background: selected.length >= 2 ? ACCENT : "#1E1B26", color: selected.length >= 2 ? "#14121A" : "#8B8494", fontWeight: 700 }}
+        >
+          {creating ? "Creating..." : "Create"}
+        </button>
+      </div>
+
+      <div className="px-4 pt-3">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Group name (optional)"
+          className="w-full rounded-xl px-3 py-2.5 text-sm mb-3 outline-none"
+          style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+        />
+
+        {selected.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {selected.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => toggle(s)}
+                className="flex items-center gap-1 rounded-full pl-1 pr-2 py-1 text-xs"
+                style={{ background: "#2A2632", color: "#F5F1EA" }}
+              >
+                <Avatar username={s.username} avatarUrl={s.avatar_url} size={20} />
+                {s.username}
+                <X size={11} color="#8B8494" />
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 mb-2" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
+          <Search size={15} color="#8B8494" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search people to add..."
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "#F5F1EA" }}
+          />
+        </div>
+
+        {error && <p className="text-xs mb-2" style={{ color: "#FF5D73" }}>{error}</p>}
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {results.map((p) => {
+          const isSel = selected.some((s) => s.id === p.id);
+          return (
+            <button key={p.id} onClick={() => toggle(p)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left">
+              <Avatar username={p.username} avatarUrl={p.avatar_url} size={40} />
+              <span className="flex-1 text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{p.username}</span>
+              <div
+                className="w-5 h-5 rounded-full flex items-center justify-center"
+                style={{ background: isSel ? ACCENT : "transparent", border: isSel ? "none" : "1.5px solid #3E3849" }}
+              >
+                {isSel && <Check size={12} color="#14121A" />}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [otherLastRead, setOtherLastRead] = useState(null);
+  const [typingUsers, setTypingUsers] = useState([]); // usernames currently typing
+  const [menuFor, setMenuFor] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [memberNames, setMemberNames] = useState({}); // id -> username, for group sender labels
+  const [imageUploading, setImageUploading] = useState(false);
   const scrollRef = React.useRef(null);
+  const channelRef = React.useRef(null);
+  const typingTimeoutRef = React.useRef(null);
+  const openedAtRef = React.useRef(0);
+  const pressTimerRef = React.useRef(null);
 
   useEffect(() => {
     loadMessages();
+    markRead();
+    if (isGroup) loadMemberNames();
 
-    // Realtime: listen for new messages in this conversation
-    const channel = supabase
-      .channel(`messages:${conversationId}`)
+    const channel = supabase.channel(`chat:${conversationId}`, {
+      config: { broadcast: { self: false } },
+    });
+
+    channel
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
         (payload) => {
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === payload.new.id)) return prev; // avoid dupe of my own optimistic send
-            return [...prev, payload.new];
-          });
+          setMessages((prev) => (prev.some((m) => m.id === payload.new.id) ? prev : [...prev, payload.new]));
+          if (payload.new.sender_id !== currentUserId) markRead();
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
+        (payload) => {
+          setMessages((prev) => prev.map((m) => (m.id === payload.new.id ? payload.new : m)));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "conversation_members", filter: `conversation_id=eq.${conversationId}` },
+        (payload) => {
+          if (payload.new.user_id !== currentUserId) setOtherLastRead(payload.new.last_read_at);
+        }
+      )
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+        if (payload.userId === currentUserId) return;
+        setTypingUsers((prev) => (prev.includes(payload.username) ? prev : [...prev, payload.username]));
+        setTimeout(() => {
+          setTypingUsers((prev) => prev.filter((u) => u !== payload.username));
+        }, 3000);
+      })
       .subscribe();
+
+    channelRef.current = channel;
+    loadOtherRead();
 
     return () => {
       supabase.removeChannel(channel);
@@ -3639,21 +3949,78 @@ function ChatScreen({ conversationId, otherUser, currentUserId, onBack }) {
   }, [conversationId]);
 
   useEffect(() => {
-    // Auto-scroll to the newest message
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, typingUsers]);
 
   const loadMessages = async () => {
     setLoading(true);
     const { data } = await supabase
       .from("messages")
-      .select("id, sender_id, content, created_at")
+      .select("id, sender_id, content, image_url, created_at, edited_at, deleted")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
     setMessages(data || []);
     setLoading(false);
+  };
+
+  const loadMemberNames = async () => {
+    const { data: members } = await supabase
+      .from("conversation_members")
+      .select("user_id")
+      .eq("conversation_id", conversationId);
+    const ids = (members || []).map((m) => m.user_id);
+    if (ids.length === 0) return;
+    const { data: profiles } = await supabase.from("profiles").select("id, username").in("id", ids);
+    const map = {};
+    (profiles || []).forEach((p) => (map[p.id] = p.username));
+    setMemberNames(map);
+  };
+
+  const loadOtherRead = async () => {
+    if (isGroup) return;
+    const { data } = await supabase
+      .from("conversation_members")
+      .select("user_id, last_read_at")
+      .eq("conversation_id", conversationId)
+      .neq("user_id", currentUserId)
+      .limit(1);
+    if (data && data[0]) setOtherLastRead(data[0].last_read_at);
+  };
+
+  const markRead = async () => {
+    if (!currentUserId) return;
+    await supabase
+      .from("conversation_members")
+      .update({ last_read_at: new Date().toISOString() })
+      .eq("conversation_id", conversationId)
+      .eq("user_id", currentUserId);
+  };
+
+  const broadcastTyping = () => {
+    if (!channelRef.current) return;
+    channelRef.current.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { userId: currentUserId, username: "Someone" },
+    });
+  };
+
+  const onChangeText = (v) => {
+    setText(v);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    broadcastTyping();
+    typingTimeoutRef.current = setTimeout(() => {}, 1500);
+  };
+
+  const afterSend = async (contentForSummary) => {
+    await supabase
+      .from("conversations")
+      .update({ last_message: contentForSummary, last_message_at: new Date().toISOString() })
+      .eq("id", conversationId);
+
+    if (!isGroup && otherUser?.id && otherUser.id !== currentUserId) {
+      await supabase.from("notifications").insert({ user_id: otherUser.id, actor_id: currentUserId, type: "message" });
+    }
   };
 
   const send = async () => {
@@ -3665,44 +4032,93 @@ function ChatScreen({ conversationId, otherUser, currentUserId, onBack }) {
     const { data: inserted, error } = await supabase
       .from("messages")
       .insert({ conversation_id: conversationId, sender_id: currentUserId, content: trimmed })
-      .select("id, sender_id, content, created_at")
+      .select("id, sender_id, content, image_url, created_at, edited_at, deleted")
       .single();
 
     setSending(false);
-
     if (error) {
-      setText(trimmed); // restore so the message isn't lost
+      setText(trimmed);
       alert(error.message);
       return;
     }
-
-    // Optimistically add (realtime will skip the dupe by id)
     setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
-
-    // Update the conversation's last-message summary + notify the other person
-    await supabase
-      .from("conversations")
-      .update({ last_message: trimmed, last_message_at: new Date().toISOString() })
-      .eq("id", conversationId);
-
-    if (otherUser?.id && otherUser.id !== currentUserId) {
-      await supabase.from("notifications").insert({
-        user_id: otherUser.id,
-        actor_id: currentUserId,
-        type: "message",
-      });
-    }
+    afterSend(trimmed);
   };
+
+  const sendImage = async (file) => {
+    if (!file || !currentUserId) return;
+    setImageUploading(true);
+    const path = `${currentUserId}/${conversationId}/${Date.now()}-${file.name}`;
+    const { error: upErr } = await supabase.storage.from("messages").upload(path, file);
+    if (upErr) {
+      setImageUploading(false);
+      alert(upErr.message);
+      return;
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("messages").getPublicUrl(path);
+
+    const { data: inserted, error } = await supabase
+      .from("messages")
+      .insert({ conversation_id: conversationId, sender_id: currentUserId, image_url: publicUrl })
+      .select("id, sender_id, content, image_url, created_at, edited_at, deleted")
+      .single();
+
+    setImageUploading(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
+    afterSend("📷 Photo");
+  };
+
+  const deleteMessage = async (m) => {
+    setMenuFor(null);
+    if (!window.confirm("Delete this message?")) return;
+    setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, deleted: true, content: null, image_url: null } : x)));
+    await supabase.from("messages").update({ deleted: true, content: null, image_url: null }).eq("id", m.id);
+  };
+
+  const startEdit = (m) => {
+    setMenuFor(null);
+    setEditingId(m.id);
+    setEditText(m.content || "");
+  };
+
+  const saveEdit = async (m) => {
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, content: trimmed, edited_at: new Date().toISOString() } : x)));
+    setEditingId(null);
+    await supabase.from("messages").update({ content: trimmed, edited_at: new Date().toISOString() }).eq("id", m.id);
+  };
+
+  const copyMessage = (m) => {
+    setMenuFor(null);
+    navigator.clipboard?.writeText(m.content || "").catch(() => {});
+  };
+
+  // read receipt: my last non-deleted message seen if other's last_read >= its time
+  const myLastMessage = [...messages].reverse().find((m) => m.sender_id === currentUserId && !m.deleted);
+  const seen = !isGroup && myLastMessage && otherLastRead && new Date(otherLastRead) >= new Date(myLastMessage.created_at);
 
   return (
     <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
       <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
         <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
-        <Avatar username={otherUser.username} avatarUrl={otherUser.avatar_url} size={32} />
-        <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{otherUser.username}</span>
+        {isGroup ? (
+          <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "#2A2632" }}>
+            <Users size={16} color="#F5F1EA" />
+          </div>
+        ) : (
+          <Avatar username={chatTitle} avatarUrl={chatAvatarUrl} size={32} />
+        )}
+        <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{chatTitle}</span>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3" onClick={() => setMenuFor(null)}>
         {loading ? (
           <p className="text-center text-xs mt-4" style={{ color: "#8B8494" }}>Loading...</p>
         ) : messages.length === 0 ? (
@@ -3710,30 +4126,157 @@ function ChatScreen({ conversationId, otherUser, currentUserId, onBack }) {
         ) : (
           messages.map((m) => {
             const mine = m.sender_id === currentUserId;
-            return (
-              <div key={m.id} className={`flex mb-2 ${mine ? "justify-end" : "justify-start"}`}>
-                <div
-                  className="max-w-[75%] px-3.5 py-2 text-sm"
-                  style={{
-                    background: mine ? ACCENT : "#1E1B26",
-                    color: mine ? "#14121A" : "#F5F1EA",
-                    borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {m.content}
+            const isLast = myLastMessage && m.id === myLastMessage.id;
+
+            if (editingId === m.id) {
+              return (
+                <div key={m.id} className="flex justify-end mb-2">
+                  <div className="max-w-[80%] w-full">
+                    <textarea
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-xl px-3 py-2 text-sm outline-none resize-none"
+                      style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA" }}
+                    />
+                    <div className="flex justify-end gap-3 mt-1">
+                      <button onClick={() => setEditingId(null)} className="text-[11px]" style={{ color: "#8B8494" }}>Cancel</button>
+                      <button onClick={() => saveEdit(m)} className="text-[11px]" style={{ color: "#FF5D73", fontWeight: 700 }}>Save</button>
+                    </div>
+                  </div>
                 </div>
+              );
+            }
+
+            return (
+              <div key={m.id} className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}`}>
+                {isGroup && !mine && (
+                  <span className="text-[10px] mb-0.5 ml-1" style={{ color: "#8B8494" }}>{memberNames[m.sender_id] || "unknown"}</span>
+                )}
+                <div
+                  onTouchStart={() => {
+                    if (m.deleted) return;
+                    pressTimerRef.current = setTimeout(() => {
+                      openedAtRef.current = Date.now();
+                      setMenuFor(m.id);
+                    }, 500);
+                  }}
+                  onTouchEnd={() => clearTimeout(pressTimerRef.current)}
+                  onTouchMove={() => clearTimeout(pressTimerRef.current)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (m.deleted) return;
+                    openedAtRef.current = Date.now();
+                    setMenuFor(m.id);
+                  }}
+                  className="relative max-w-[75%]"
+                >
+                  {m.deleted ? (
+                    <div
+                      className="px-3.5 py-2 text-sm italic"
+                      style={{ background: "#1E1B26", color: "#8B8494", borderRadius: 14, border: "1px solid #2A2632" }}
+                    >
+                      This message was deleted
+                    </div>
+                  ) : m.image_url ? (
+                    <img
+                      src={m.image_url}
+                      alt=""
+                      className="rounded-2xl max-w-full"
+                      style={{ maxHeight: 260, border: mine ? "none" : "1px solid #2A2632" }}
+                    />
+                  ) : (
+                    <div
+                      className="px-3.5 py-2 text-sm"
+                      style={{
+                        background: mine ? ACCENT : "#1E1B26",
+                        color: mine ? "#14121A" : "#F5F1EA",
+                        borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {m.content}
+                    </div>
+                  )}
+
+                  {menuFor === m.id && !m.deleted && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (Date.now() - openedAtRef.current < 400) return;
+                          setMenuFor(null);
+                        }}
+                      />
+                      <div
+                        className={`absolute z-50 rounded-xl overflow-hidden py-1 ${mine ? "right-0" : "left-0"}`}
+                        style={{ background: "#1E1B26", border: "1px solid #2A2632", minWidth: 130, top: "100%", marginTop: 4 }}
+                      >
+                        {m.content && (
+                          <button onClick={() => copyMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+                            <Copy size={13} /> Copy
+                          </button>
+                        )}
+                        {mine && m.content && (
+                          <button onClick={() => startEdit(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#F5F1EA" }}>
+                            <Pencil size={13} /> Edit
+                          </button>
+                        )}
+                        {mine && (
+                          <button onClick={() => deleteMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "#FF5D73" }}>
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {!m.deleted && (
+                  <span className="text-[9px] mt-0.5 mx-1" style={{ color: "#8B8494" }}>
+                    {timeShort(m.created_at)}
+                    {m.edited_at ? " · edited" : ""}
+                    {mine && isLast && seen ? " · Seen" : ""}
+                  </span>
+                )}
               </div>
             );
           })
         )}
+
+        {typingUsers.length > 0 && (
+          <div className="flex items-center gap-1 ml-1 mb-1">
+            <div className="px-3 py-2 rounded-2xl" style={{ background: "#1E1B26" }}>
+              <span className="text-xs" style={{ color: "#8B8494" }}>
+                {isGroup ? `${typingUsers.join(", ")} typing...` : "typing..."}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid #221F2B" }}>
+        <label className="pb-2 cursor-pointer shrink-0">
+          {imageUploading ? (
+            <span className="text-[10px]" style={{ color: "#8B8494" }}>...</span>
+          ) : (
+            <ImagePlus size={22} color="#8B8494" />
+          )}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files[0]) sendImage(e.target.files[0]);
+              e.target.value = "";
+            }}
+          />
+        </label>
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => onChangeText(e.target.value)}
           placeholder="Message..."
           rows={1}
           className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
