@@ -44,6 +44,8 @@ import {
   Trash2,
   MapPin,
   Pin,
+  Archive,
+  Crop,
   Copy,
   Pencil,
 } from "lucide-react";
@@ -275,15 +277,22 @@ function PollBlock({ postId, currentUserId }) {
 function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
   const [view, setView] = useState("menu"); // "menu" | "edit"
   const [busyField, setBusyField] = useState(null);
+  const [menuError, setMenuError] = useState("");
   const [editCaption, setEditCaption] = useState(post.caption || "");
   const [editLocation, setEditLocation] = useState(post.location || "");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState("");
 
   const patchPost = async (patch) => {
     const field = Object.keys(patch)[0];
     setBusyField(field);
-    await supabase.from("posts").update(patch).eq("id", post.id);
+    setMenuError("");
+    const { error } = await supabase.from("posts").update(patch).eq("id", post.id);
     setBusyField(null);
+    if (error) {
+      setMenuError(error.message);
+      return;
+    }
     onSaved?.(patch);
   };
 
@@ -291,18 +300,27 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
 
   const handleDelete = async () => {
     if (!window.confirm("Delete this post? This cannot be undone.")) return;
-    await supabase.from("posts").delete().eq("id", post.id);
+    const { error } = await supabase.from("posts").delete().eq("id", post.id);
+    if (error) {
+      setMenuError(error.message);
+      return;
+    }
     onDeleted?.();
     onClose();
   };
 
   const saveEdit = async () => {
     setSavingEdit(true);
-    await supabase
+    setEditError("");
+    const { error } = await supabase
       .from("posts")
       .update({ caption: editCaption, location: editLocation.trim() || null })
       .eq("id", post.id);
     setSavingEdit(false);
+    if (error) {
+      setEditError(error.message);
+      return;
+    }
     onSaved?.({ caption: editCaption, location: editLocation.trim() || null });
     onClose();
   };
@@ -321,13 +339,15 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
     </button>
   );
 
-  const MenuRow = ({ label, onClick, danger }) => (
+  const MenuRow = ({ label, icon, onClick, danger, busy }) => (
     <button
       onClick={onClick}
-      className="w-full text-left px-4 py-3 text-sm"
-      style={{ color: danger ? "#FF5D73" : "#F5F1EA" }}
+      disabled={busy}
+      className="w-full flex items-center gap-3 px-4 py-3 text-sm"
+      style={{ color: danger ? "#FF5D73" : "#F5F1EA", textAlign: "left", opacity: busy ? 0.6 : 1 }}
     >
-      {label}
+      {icon}
+      <span>{label}</span>
     </button>
   );
 
@@ -350,6 +370,9 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
 
         {view === "menu" ? (
           <div className="pb-6">
+            {menuError && (
+              <p className="text-xs px-4 pb-2" style={{ color: "#FF5D73" }}>{menuError}</p>
+            )}
             <Toggle label="Hide Like Count For This Post" field="hide_likes" value={!!post.hide_likes} />
             <Toggle label="Hide Comment Count For This Post" field="hide_comments" value={!!post.hide_comments} />
             <Toggle
@@ -363,18 +386,26 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
             <div className="h-px my-1.5" style={{ background: "#2A2632" }} />
 
             <MenuRow
+              icon={<Pin size={16} color="#F5F1EA" />}
               label={post.pinned ? "Unpin from your main grid" : "Pin to your main grid"}
               onClick={() => toggleField("pinned", !!post.pinned)}
+              busy={busyField === "pinned"}
             />
             <MenuRow
+              icon={<Archive size={16} color="#F5F1EA" />}
               label={post.archived ? "Unarchive" : "Archive"}
               onClick={() => toggleField("archived", !!post.archived)}
+              busy={busyField === "archived"}
             />
-            <MenuRow label="Edit" onClick={() => setView("edit")} />
-            <MenuRow label="Adjust preview" onClick={() => alert("Adjust preview — coming soon")} />
+            <MenuRow icon={<Pencil size={16} color="#F5F1EA" />} label="Edit" onClick={() => setView("edit")} />
+            <MenuRow
+              icon={<Crop size={16} color="#F5F1EA" />}
+              label="Adjust preview"
+              onClick={() => alert("Adjust preview — coming soon. This app stores one image per post, so there's no second frame to pick from yet.")}
+            />
 
             <div className="h-px my-1.5" style={{ background: "#2A2632" }} />
-            <MenuRow label="Delete" onClick={handleDelete} danger />
+            <MenuRow icon={<Trash2 size={16} color="#FF5D73" />} label="Delete" onClick={handleDelete} danger />
           </div>
         ) : (
           <div className="px-4 pb-6">
@@ -400,6 +431,9 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
                 style={{ color: "#F5F1EA" }}
               />
             </div>
+            {editError && (
+              <p className="text-xs mb-3" style={{ color: "#FF5D73" }}>{editError}</p>
+            )}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setView("menu")}
@@ -2815,7 +2849,258 @@ function SettingsScreen({ onBack }) {
   );
 }
 
-function ProfileScreen({ userId, onOpenSettings, onBack }) {
+function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDeleted }) {
+  const [post, setPost] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [userId, setUserId] = useState(null);
+  const [likesPopupOpen, setLikesPopupOpen] = useState(false);
+  const [commentSheetOpen, setCommentSheetOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [countPrefs] = useCountPrefs();
+  const pressTimer = React.useRef(null);
+
+  useEffect(() => {
+    load();
+  }, [postId]);
+
+  const load = async () => {
+    setLoading(true);
+    setLoadError("");
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setUserId(user?.id ?? null);
+
+    const { data: p, error } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, caption, location, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count")
+      .eq("id", postId)
+      .single();
+
+    if (error || !p) {
+      setLoadError(error?.message || "Post not found");
+      setLoading(false);
+      return;
+    }
+
+    const { data: profile } = await supabase.from("profiles").select("id, username").eq("id", p.user_id).single();
+    const { data: likes } = await supabase.from("likes").select("user_id").eq("post_id", postId);
+    const { data: reposts } = await supabase.from("reposts").select("user_id").eq("post_id", postId);
+    const { data: allSaves } = await supabase.from("saves").select("user_id").eq("post_id", postId);
+    const { data: comments } = await supabase.from("comments").select("id").eq("post_id", postId);
+    const { data: tagsData } = await supabase.from("post_tags").select("tagged_user_id");
+
+    setPost({
+      ...p,
+      username: profile?.username || "unknown",
+      likeCount: (likes || []).length,
+      liked: (likes || []).some((l) => l.user_id === user?.id),
+      repostCount: (reposts || []).length,
+      reposted: (reposts || []).some((r) => r.user_id === user?.id),
+      saveCount: (allSaves || []).length,
+      saved: (allSaves || []).some((s) => s.user_id === user?.id),
+      commentCount: (comments || []).length,
+      tags: tagsData || [],
+    });
+    setLoading(false);
+  };
+
+  const toggleLike = async () => {
+    if (!userId || !post) return;
+    const was = post.liked;
+    setPost((prev) => ({ ...prev, liked: !was, likeCount: was ? prev.likeCount - 1 : prev.likeCount + 1 }));
+    if (was) {
+      await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", userId);
+    } else {
+      await supabase.from("likes").insert({ post_id: post.id, user_id: userId });
+      if (post.user_id !== userId) {
+        await supabase.from("notifications").insert({ user_id: post.user_id, actor_id: userId, type: "like", post_id: post.id });
+      }
+    }
+  };
+
+  const toggleRepost = async () => {
+    if (!userId || !post) return;
+    const was = post.reposted;
+    setPost((prev) => ({ ...prev, reposted: !was, repostCount: was ? prev.repostCount - 1 : prev.repostCount + 1 }));
+    if (was) {
+      await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
+    } else {
+      await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
+    }
+  };
+
+  const toggleSave = async () => {
+    if (!userId || !post) return;
+    const was = post.saved;
+    setPost((prev) => ({ ...prev, saved: !was, saveCount: was ? prev.saveCount - 1 : prev.saveCount + 1 }));
+    if (was) {
+      await supabase.from("saves").delete().eq("post_id", post.id).eq("user_id", userId);
+    } else {
+      await supabase.from("saves").insert({ post_id: post.id, user_id: userId });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "#14121A" }}>
+        <span className="text-sm" style={{ color: "#8B8494" }}>Loading...</span>
+      </div>
+    );
+  }
+
+  if (loadError || !post) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ background: "#14121A" }}>
+        <span className="text-sm" style={{ color: "#8B8494" }}>{loadError || "Post not found"}</span>
+        <button onClick={onBack} className="text-sm" style={{ color: "#FF5D73" }}>Go back</button>
+      </div>
+    );
+  }
+
+  const isOwner = post.user_id === userId;
+
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "#14121A" }}>
+      <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
+          <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
+              <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-[9px]" style={{ color: "#F5F1EA" }}>
+                {post.username[0].toUpperCase()}
+              </div>
+            </div>
+            <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{post.username}</span>
+          </button>
+        </div>
+        <button onClick={() => (isOwner ? setOptionsOpen(true) : onOpenReport?.(post.id))}>
+          <Ellipsis size={20} color="#F5F1EA" />
+        </button>
+      </div>
+
+      <div
+        className="w-full flex items-center justify-center"
+        style={{ background: "#1E1B26", aspectRatio: "4/5" }}
+        onDoubleClick={toggleLike}
+      >
+        {post.media_type === "photo" ? (
+          <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <video src={post.media_url} className="w-full h-full object-cover" controls />
+        )}
+      </div>
+
+      <div className="flex items-center justify-between px-4 pt-3">
+        <div className="flex items-center gap-5">
+          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+            <div className="h-8 flex items-center justify-center">
+              <Send size={22} color="#F5F1EA" />
+            </div>
+            <span className="text-[10px] leading-none h-3 mt-0.5">&nbsp;</span>
+          </div>
+          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+            <button onClick={toggleSave} className="h-8 flex items-center justify-center">
+              <Bookmark size={22} color="#F5F1EA" fill={post.saved ? "#F5F1EA" : "none"} />
+            </button>
+            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+              {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center" style={{ minWidth: 34 }}>
+          <button
+            onClick={toggleLike}
+            onTouchStart={() => {
+              pressTimer.current = setTimeout(() => setLikesPopupOpen(true), 500);
+            }}
+            onTouchEnd={() => clearTimeout(pressTimer.current)}
+            onTouchMove={() => clearTimeout(pressTimer.current)}
+            className="h-8 flex items-center justify-center"
+          >
+            <Heart size={30} color={post.liked ? "#FF5D73" : "#F5F1EA"} fill={post.liked ? "#FF5D73" : "none"} />
+          </button>
+          <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+            {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-5">
+          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+            <button
+              onClick={() => !post.comments_disabled && setCommentSheetOpen(true)}
+              disabled={post.comments_disabled}
+              className="h-8 flex items-center justify-center"
+            >
+              <MessageCircle size={22} color={post.comments_disabled ? "#3E3849" : "#F5F1EA"} />
+            </button>
+            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+              {countPrefs.comments && !post.hide_comments && post.commentCount > 0 ? formatCount(post.commentCount) : "\u00A0"}
+            </span>
+          </div>
+          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+            <button onClick={toggleRepost} className="h-8 flex items-center justify-center">
+              <Repeat2 size={24} color={post.reposted ? "#FFB84D" : "#F5F1EA"} strokeWidth={post.reposted ? 2.6 : 2} />
+            </button>
+            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "#8B8494" }}>
+              {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {likesPopupOpen && (
+        <LikesViewsPopup post={post} isOwner={isOwner} onClose={() => setLikesPopupOpen(false)} />
+      )}
+
+      <div className="px-4 pt-1 pb-6">
+        {post.location && (
+          <span className="flex items-center gap-1 text-[11px] mb-1" style={{ color: "#8B8494" }}>
+            <MapPin size={11} /> {post.location}
+          </span>
+        )}
+        <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
+        {post.caption && (
+          <p className="text-sm mt-0.5" style={{ color: "#C9C3D1", whiteSpace: "pre-wrap" }}>
+            <span style={{ color: "#F5F1EA", fontWeight: 600 }}>{post.username} </span>
+            {post.caption}
+          </p>
+        )}
+      </div>
+
+      {commentSheetOpen && (
+        <ReelCommentsSheet
+          postId={post.id}
+          postOwnerId={post.user_id}
+          currentUserId={userId}
+          postUsername={post.username}
+          postCaption={post.caption}
+          commentsDisabled={post.comments_disabled}
+          onOpenProfile={onOpenProfile}
+          onClose={() => setCommentSheetOpen(false)}
+          onCommentPosted={() => setPost((prev) => ({ ...prev, commentCount: prev.commentCount + 1 }))}
+        />
+      )}
+
+      {optionsOpen && (
+        <PostOptionsSheet
+          post={post}
+          onClose={() => setOptionsOpen(false)}
+          onSaved={(patch) => setPost((prev) => ({ ...prev, ...patch }))}
+          onDeleted={() => {
+            onDeleted?.();
+            onBack();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -2826,7 +3111,6 @@ function ProfileScreen({ userId, onOpenSettings, onBack }) {
   const [followingCount, setFollowingCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
-  const [editingPost, setEditingPost] = useState(null);
 
   const tabOrder = ["posts", "reposts", "tagged"];
   const mockTagged = Array.from({ length: 6 }, (_, i) => i);
@@ -3079,8 +3363,9 @@ function ProfileScreen({ userId, onOpenSettings, onBack }) {
           </div>
         ) : (
           gridFor.map((p) => (
-            <div
+            <button
               key={p.id}
+              onClick={() => onOpenPost?.(p.id)}
               className="aspect-square flex items-center justify-center relative overflow-hidden"
               style={{ background: "#1E1B26" }}
             >
@@ -3105,31 +3390,10 @@ function ProfileScreen({ userId, onOpenSettings, onBack }) {
                   <span className="text-[9px]" style={{ color: "#8B8494" }}>Archived</span>
                 </div>
               )}
-              {tab === "posts" && isOwnProfile && (
-                <button
-                  onClick={() => setEditingPost(p)}
-                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center"
-                  style={{ background: "rgba(0,0,0,0.55)" }}
-                >
-                  <Ellipsis size={13} color="#F5F1EA" />
-                </button>
-              )}
-            </div>
+            </button>
           ))
         )}
       </div>
-
-      {editingPost && (
-        <PostOptionsSheet
-          post={editingPost}
-          onClose={() => setEditingPost(null)}
-          onSaved={(patch) => {
-            setEditingPost((prev) => (prev ? { ...prev, ...patch } : prev));
-            setPosts((prev) => prev.map((p) => (p.id === editingPost.id ? { ...p, ...patch } : p)));
-          }}
-          onDeleted={() => setPosts((prev) => prev.filter((p) => p.id !== editingPost.id))}
-        />
-      )}
     </div>
   );
 }
@@ -3960,8 +4224,9 @@ export default function App() {
   const [reportPostId, setReportPostId] = useState(null);
   const [viewProfileId, setViewProfileId] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [viewPostId, setViewPostId] = useState(null);
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null;
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -4007,7 +4272,7 @@ export default function App() {
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "#14121A", borderRadius: 36, border: "8px solid #0A090D" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen)}>
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId)}>
           {inboxOpen ? (
             <MessagesScreen onBack={() => setInboxOpen(false)} />
           ) : notificationsOpen ? (
@@ -4020,8 +4285,19 @@ export default function App() {
             <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
           ) : settingsOpen ? (
             <SettingsScreen onBack={() => setSettingsOpen(false)} />
+          ) : viewPostId !== null ? (
+            <PostDetailScreen
+              postId={viewPostId}
+              onBack={() => setViewPostId(null)}
+              onOpenProfile={(userId) => {
+                setViewPostId(null);
+                setViewProfileId(userId);
+              }}
+              onOpenReport={(postId) => setReportPostId(postId)}
+              onDeleted={() => {}}
+            />
           ) : viewProfileId !== null ? (
-            <ProfileScreen userId={viewProfileId} onBack={() => setViewProfileId(null)} />
+            <ProfileScreen userId={viewProfileId} onOpenPost={(postId) => setViewPostId(postId)} onBack={() => setViewProfileId(null)} />
           ) : active === "feed" ? (
             <FeedScreen
               onOpenMessages={() => setInboxOpen(true)}
@@ -4041,7 +4317,7 @@ export default function App() {
           ) : active === "search" ? (
             <SearchScreen onOpenInterests={() => setInterestsOpen(true)} onOpenProfile={(userId) => setViewProfileId(userId)} />
           ) : active === "profile" ? (
-            <ProfileScreen onOpenSettings={() => setSettingsOpen(true)} />
+            <ProfileScreen onOpenSettings={() => setSettingsOpen(true)} onOpenPost={(postId) => setViewPostId(postId)} />
           ) : (
             <ActiveScreen />
           )}
