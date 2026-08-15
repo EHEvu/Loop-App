@@ -143,6 +143,23 @@ function formatCount(n) {
   return String(num);
 }
 
+// Shared avatar: shows the uploaded photo if present, else the first letter
+// of the username on the accent ring. size is the outer diameter in px.
+function Avatar({ username, avatarUrl, size = 40 }) {
+  const letter = (username || "u")[0].toUpperCase();
+  return (
+    <div className="rounded-full shrink-0 overflow-hidden flex items-center justify-center" style={{ width: size, height: size, background: ACCENT, padding: avatarUrl ? 0 : 2 }}>
+      {avatarUrl ? (
+        <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
+      ) : (
+        <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center" style={{ color: "#F5F1EA", fontSize: size * 0.4, fontWeight: 600 }}>
+          {letter}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Long-press-triggered popup showing total Likes (and Views, for reels) —
 // replaces a permanently-visible number next to the Like icon.
 function LikesViewsPopup({ post, isOwner, onClose }) {
@@ -3398,65 +3415,338 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
   );
 }
 
-const mockChats = [
-  { id: 1, user: "nilufar.k", last: "The photo turned out amazing!", time: "2m" },
-  { id: 2, user: "rafiq.tech", last: "Okay, sounds good 👍", time: "1h" },
-  { id: 3, user: "meherun.a", last: "See you tomorrow", time: "5h" },
-];
+function timeShort(dateStr) {
+  if (!dateStr) return "";
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d`;
+  const weeks = Math.floor(days / 7);
+  return `${weeks}w`;
+}
 
 function MessagesScreen({ onBack }) {
+  const [userId, setUserId] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const filteredChats = mockChats.filter((c) =>
-    c.user.toLowerCase().includes(query.toLowerCase())
-  );
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [openChat, setOpenChat] = useState(null); // { conversationId, otherUser: {id, username, avatar_url} }
+
+  useEffect(() => {
+    init();
+  }, []);
+
+  const init = async () => {
+    setLoading(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setUserId(user?.id ?? null);
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    await loadConversations(user.id);
+    setLoading(false);
+  };
+
+  const loadConversations = async (uid) => {
+    const { data: convos } = await supabase
+      .from("conversations")
+      .select("id, user_a, user_b, last_message, last_message_at")
+      .or(`user_a.eq.${uid},user_b.eq.${uid}`)
+      .order("last_message_at", { ascending: false, nullsFirst: false });
+
+    if (!convos || convos.length === 0) {
+      setConversations([]);
+      return;
+    }
+
+    const otherIds = convos.map((c) => (c.user_a === uid ? c.user_b : c.user_a));
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, username, avatar_url")
+      .in("id", otherIds);
+
+    const merged = convos.map((c) => {
+      const otherId = c.user_a === uid ? c.user_b : c.user_a;
+      const prof = (profiles || []).find((p) => p.id === otherId);
+      return {
+        conversationId: c.id,
+        otherUser: { id: otherId, username: prof?.username || "unknown", avatar_url: prof?.avatar_url || null },
+        lastMessage: c.last_message,
+        lastMessageAt: c.last_message_at,
+      };
+    });
+    setConversations(merged);
+  };
+
+  // Search accounts to start a new chat (Instagram-style)
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, avatar_url")
+        .ilike("username", `%${q}%`)
+        .neq("id", userId || "")
+        .limit(20);
+      if (!cancelled) {
+        setSearchResults(data || []);
+        setSearching(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [query, userId]);
+
+  const startChat = async (profile) => {
+    const { data: convoId, error } = await supabase.rpc("get_or_create_conversation", { other_user: profile.id });
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setOpenChat({
+      conversationId: convoId,
+      otherUser: { id: profile.id, username: profile.username, avatar_url: profile.avatar_url },
+    });
+  };
+
+  if (openChat) {
+    return (
+      <ChatScreen
+        conversationId={openChat.conversationId}
+        otherUser={openChat.otherUser}
+        currentUserId={userId}
+        onBack={() => {
+          setOpenChat(null);
+          setQuery("");
+          setSearchResults([]);
+          if (userId) loadConversations(userId);
+        }}
+      />
+    );
+  }
+
+  const showingSearch = query.trim().length > 0;
 
   return (
     <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
-      <div
-        className="sticky top-0 z-10 px-4 pt-4 pb-3"
-        style={{ background: "#14121A" }}
-      >
+      <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "#14121A" }}>
         <div className="flex items-center gap-3 mb-3">
           <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
           <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "#F5F1EA" }}>
             Messages
           </h1>
         </div>
-        <div
-          className="flex items-center gap-2 rounded-xl px-3 py-2.5"
-          style={{ background: "#1E1B26", border: "1px solid #2A2632" }}
-        >
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "#1E1B26", border: "1px solid #2A2632" }}>
           <Search size={15} color="#8B8494" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by ID..."
+            placeholder="Search people to message..."
             className="flex-1 bg-transparent outline-none text-sm"
             style={{ color: "#F5F1EA" }}
           />
         </div>
       </div>
+
       <div className="flex-1 overflow-y-auto">
-        {filteredChats.length === 0 ? (
-          <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>
-            No ID found
-          </p>
+        {showingSearch ? (
+          searching ? (
+            <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>Searching...</p>
+          ) : searchResults.length === 0 ? (
+            <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>No accounts found</p>
+          ) : (
+            searchResults.map((p) => (
+              <button key={p.id} onClick={() => startChat(p)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left">
+                <Avatar username={p.username} avatarUrl={p.avatar_url} size={44} />
+                <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 600 }}>{p.username}</span>
+              </button>
+            ))
+          )
+        ) : loading ? (
+          <p className="text-center text-xs mt-6" style={{ color: "#8B8494" }}>Loading...</p>
+        ) : conversations.length === 0 ? (
+          <div className="flex flex-col items-center justify-center mt-16 px-8 text-center gap-2">
+            <Send size={30} color="#3E3849" />
+            <p className="text-sm" style={{ color: "#8B8494" }}>No messages yet</p>
+            <p className="text-xs" style={{ color: "#8B8494" }}>Search for someone above to start a conversation.</p>
+          </div>
         ) : (
-          filteredChats.map((c) => (
-            <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
-              <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
-                <div className="w-full h-full rounded-full bg-[#14121A] flex items-center justify-center text-xs" style={{ color: "#F5F1EA" }}>
-                  {c.user[0].toUpperCase()}
-                </div>
-              </div>
+          conversations.map((c) => (
+            <button
+              key={c.conversationId}
+              onClick={() => setOpenChat({ conversationId: c.conversationId, otherUser: c.otherUser })}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
+            >
+              <Avatar username={c.otherUser.username} avatarUrl={c.otherUser.avatar_url} size={44} />
               <div className="flex-1 min-w-0">
-                <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: 600 }}>{c.user}</p>
-                <p className="text-xs truncate" style={{ color: "#8B8494" }}>{c.last}</p>
+                <p className="text-sm truncate" style={{ color: "#F5F1EA", fontWeight: 600 }}>{c.otherUser.username}</p>
+                <p className="text-xs truncate" style={{ color: "#8B8494" }}>{c.lastMessage || "Say hi 👋"}</p>
               </div>
-              <span className="text-[10px] shrink-0" style={{ color: "#8B8494" }}>{c.time}</span>
-            </div>
+              <span className="text-[10px] shrink-0" style={{ color: "#8B8494" }}>{timeShort(c.lastMessageAt)}</span>
+            </button>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+function ChatScreen({ conversationId, otherUser, currentUserId, onBack }) {
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const scrollRef = React.useRef(null);
+
+  useEffect(() => {
+    loadMessages();
+
+    // Realtime: listen for new messages in this conversation
+    const channel = supabase
+      .channel(`messages:${conversationId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
+        (payload) => {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === payload.new.id)) return prev; // avoid dupe of my own optimistic send
+            return [...prev, payload.new];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversationId]);
+
+  useEffect(() => {
+    // Auto-scroll to the newest message
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const loadMessages = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("messages")
+      .select("id, sender_id, content, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true });
+    setMessages(data || []);
+    setLoading(false);
+  };
+
+  const send = async () => {
+    const trimmed = text.trim();
+    if (!trimmed || !currentUserId || sending) return;
+    setSending(true);
+    setText("");
+
+    const { data: inserted, error } = await supabase
+      .from("messages")
+      .insert({ conversation_id: conversationId, sender_id: currentUserId, content: trimmed })
+      .select("id, sender_id, content, created_at")
+      .single();
+
+    setSending(false);
+
+    if (error) {
+      setText(trimmed); // restore so the message isn't lost
+      alert(error.message);
+      return;
+    }
+
+    // Optimistically add (realtime will skip the dupe by id)
+    setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
+
+    // Update the conversation's last-message summary + notify the other person
+    await supabase
+      .from("conversations")
+      .update({ last_message: trimmed, last_message_at: new Date().toISOString() })
+      .eq("id", conversationId);
+
+    if (otherUser?.id && otherUser.id !== currentUserId) {
+      await supabase.from("notifications").insert({
+        user_id: otherUser.id,
+        actor_id: currentUserId,
+        type: "message",
+      });
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
+      <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid #221F2B" }}>
+        <button onClick={onBack} className="text-sm" style={{ color: "#F5F1EA" }}>←</button>
+        <Avatar username={otherUser.username} avatarUrl={otherUser.avatar_url} size={32} />
+        <span className="text-sm" style={{ color: "#F5F1EA", fontWeight: 700 }}>{otherUser.username}</span>
+      </div>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
+        {loading ? (
+          <p className="text-center text-xs mt-4" style={{ color: "#8B8494" }}>Loading...</p>
+        ) : messages.length === 0 ? (
+          <p className="text-center text-xs mt-4" style={{ color: "#8B8494" }}>No messages yet — say hi 👋</p>
+        ) : (
+          messages.map((m) => {
+            const mine = m.sender_id === currentUserId;
+            return (
+              <div key={m.id} className={`flex mb-2 ${mine ? "justify-end" : "justify-start"}`}>
+                <div
+                  className="max-w-[75%] px-3.5 py-2 text-sm"
+                  style={{
+                    background: mine ? ACCENT : "#1E1B26",
+                    color: mine ? "#14121A" : "#F5F1EA",
+                    borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {m.content}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid #221F2B" }}>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Message..."
+          rows={1}
+          className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
+          style={{ background: "#1E1B26", border: "1px solid #2A2632", color: "#F5F1EA", maxHeight: 110 }}
+        />
+        <button
+          onClick={send}
+          disabled={sending || !text.trim()}
+          className="rounded-full w-10 h-10 flex items-center justify-center shrink-0"
+          style={{ background: text.trim() ? ACCENT : "#1E1B26", border: text.trim() ? "none" : "1px solid #2A2632" }}
+        >
+          <SendHorizontal size={18} color={text.trim() ? "#14121A" : "#8B8494"} />
+        </button>
       </div>
     </div>
   );
@@ -3512,10 +3802,21 @@ function NotificationsScreen({ onBack }) {
   };
 
   const actionText = (type) =>
-    type === "like" ? "liked your post" : type === "follow" ? "started following you" : type === "comment" ? "commented on your post" : "";
+    type === "like"
+      ? "liked your post"
+      : type === "follow"
+      ? "started following you"
+      : type === "comment"
+      ? "commented on your post"
+      : type === "mention"
+      ? "mentioned you in a comment"
+      : type === "message"
+      ? "sent you a message"
+      : "";
 
-  const iconFor = (type) => (type === "like" ? Heart : type === "comment" ? MessageCircle : CircleUserRound);
-  const colorFor = (type) => (type === "like" ? "#FF5D73" : type === "comment" ? "#8B8494" : "#8B8494");
+  const iconFor = (type) =>
+    type === "like" ? Heart : type === "comment" || type === "mention" ? MessageCircle : type === "message" ? SendHorizontal : CircleUserRound;
+  const colorFor = (type) => (type === "like" ? "#FF5D73" : "#8B8494");
 
   return (
     <div className="flex flex-col h-full" style={{ background: "#14121A" }}>
