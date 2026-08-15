@@ -66,37 +66,52 @@ const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end
 // intentionally stay the same in both themes, matching how video players
 // conventionally stay dark regardless of app theme.
 const THEME_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap');
   :root {
-    --bg: #14121A;
-    --bg-sunken: #0E0C13;
-    --page-bg: #0A090D;
-    --surface: #1E1B26;
-    --border: #2A2632;
-    --border-subtle: #221F2B;
-    --text: #F5F1EA;
-    --text-secondary: #C9C3D1;
-    --text-muted: #8B8494;
-    --text-disabled: #4A4453;
-    --toggle-off: #3E3849;
-    --accent-start: #FF5D73;
-    --accent-end: #FFB84D;
-    --tag-bg: #2A1B22;
-    --tag-border: #4A2530;
-    --tag-text: #F5B8C4;
+    /* ---- DARK: premium gold on near-black ---- */
+    --bg: #0D0D0F;
+    --bg-sunken: #000000;
+    --page-bg: #000000;
+    --surface: #17171A;
+    --surface-raised: #1F1F23;
+    --border: #2A2A2F;
+    --border-subtle: #202024;
+    --text: #F5F3EE;
+    --text-secondary: #C7C3BA;
+    --text-muted: #8A867D;
+    --text-disabled: #4C4A46;
+    --toggle-off: #3A3A3F;
+    /* gold gradient — used everywhere Instagram uses its rainbow */
+    --accent-start: #F5D77E;
+    --accent-end: #B8860B;
+    --accent-solid: #D4AF37;
+    --on-accent: #1A1408;
+    --tag-bg: #2A2410;
+    --tag-border: #4A3E18;
+    --tag-text: #E8C766;
   }
   [data-theme="light"] {
-    --bg: #FAFAFA;
+    /* ---- LIGHT: positive blue on white (from the Loop logo) ---- */
+    --bg: #F7F9FC;
+    --bg-sunken: #ECF1F8;
+    --page-bg: #E4EAF2;
     --surface: #FFFFFF;
-    --border: #E8E3ED;
-    --border-subtle: #F0ECF2;
-    --text: #14121A;
-    --text-secondary: #4A4453;
-    --text-muted: #746D80;
-    --text-disabled: #C4BFCC;
-    --toggle-off: #DAD5E0;
-    --tag-bg: #FDF0F2;
-    --tag-border: #F5C6D0;
-    --tag-text: #C23558;
+    --surface-raised: #FFFFFF;
+    --border: #DCE4EF;
+    --border-subtle: #EAF0F7;
+    --text: #0F2A47;
+    --text-secondary: #3A5A7A;
+    --text-muted: #7089A3;
+    --text-disabled: #B4C4D6;
+    --toggle-off: #CBD8E6;
+    /* blue gradient — used everywhere Instagram uses its rainbow */
+    --accent-start: #38BDF8;
+    --accent-end: #1565C0;
+    --accent-solid: #1976D2;
+    --on-accent: #FFFFFF;
+    --tag-bg: #E8F2FD;
+    --tag-border: #B8DCF5;
+    --tag-text: #1565C0;
   }
 `;
 
@@ -122,7 +137,7 @@ class ErrorBoundary extends React.Component {
           <button
             onClick={() => this.setState({ error: null })}
             className="text-xs px-4 py-2 rounded-full"
-            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
           >
             Try again
           </button>
@@ -184,6 +199,37 @@ function formatCount(n) {
   if (num >= 1000000) return (num / 1000000).toFixed(num % 1000000 === 0 ? 0 : 1) + "M";
   if (num >= 1000) return (num / 1000).toFixed(num % 1000 === 0 ? 0 : 1) + "K";
   return String(num);
+}
+
+// The Loop brand logo. Expects /logo.png in the app's public folder.
+// If the image is missing it falls back to a clean wordmark so nothing breaks.
+function LoopLogo({ size = 72 }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <span
+        style={{
+          fontFamily: "'Sora', sans-serif",
+          fontWeight: 800,
+          fontSize: size * 0.55,
+          background: ACCENT,
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+        }}
+      >
+        Loop
+      </span>
+    );
+  }
+  return (
+    <img
+      src="/logo.png"
+      alt="Loop"
+      onError={() => setFailed(true)}
+      style={{ height: size, width: "auto", objectFit: "contain" }}
+    />
+  );
 }
 
 // Shared avatar: shows the uploaded photo if present, else the first letter
@@ -506,7 +552,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
                 onClick={saveEdit}
                 disabled={savingEdit}
                 className="flex-1 rounded-xl py-2.5 text-sm"
-                style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: savingEdit ? 0.6 : 1 }}
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: savingEdit ? 0.6 : 1 }}
               >
                 {savingEdit ? "Saving..." : "Save"}
               </button>
@@ -549,19 +595,23 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
           )}
         </button>
       )}
-      <h1
-        className="text-xl tracking-tight"
-        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "var(--text)" }}
-      >
-        {title}
-      </h1>
+      {title === "Loop" ? (
+        <LoopLogo size={34} />
+      ) : (
+        <h1
+          className="text-xl tracking-tight"
+          style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "var(--text)" }}
+        >
+          {title}
+        </h1>
+      )}
       {showMessages && (
         <button onClick={onMessagesClick} className="absolute right-4 top-1/2 -translate-y-1/2">
           <SendHorizontal size={22} color="var(--text)" />
           {unreadCount > 0 && (
             <span
               className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center text-[9px]"
-              style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
+              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
             >
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
@@ -589,7 +639,7 @@ function StoriesBar() {
               {s.isSelf && (
                 <span
                   className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
-                  style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
+                  style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
                 >
                   +
                 </span>
@@ -2408,7 +2458,7 @@ function UploadScreen() {
           className="w-14 h-14 rounded-full flex items-center justify-center mb-3"
           style={{ background: ACCENT }}
         >
-          <PlusSquare size={24} color="var(--bg)" />
+          <PlusSquare size={24} color="var(--on-accent)" />
         </div>
         <p className="text-sm mb-4" style={{ color: "var(--text)", fontWeight: 600 }}>
           Posted!
@@ -2416,7 +2466,7 @@ function UploadScreen() {
         <button
           onClick={resetForm}
           className="rounded-xl px-5 py-2.5 text-sm"
-          style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
         >
           Create another post
         </button>
@@ -2609,7 +2659,7 @@ function UploadScreen() {
           onClick={handleShare}
           disabled={uploading}
           className="w-full rounded-xl py-3 text-sm"
-          style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: uploading ? 0.7 : 1 }}
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: uploading ? 0.7 : 1 }}
         >
           {uploading ? "Uploading..." : "Share"}
         </button>
@@ -2641,8 +2691,8 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState("");
 
-  const DEFAULT_ACCENT_START = "#FF5D73";
-  const DEFAULT_ACCENT_END = "#FFB84D";
+  const DEFAULT_ACCENT_START = "#F5D77E";
+  const DEFAULT_ACCENT_END = "#B8860B";
   const [pickerStart, setPickerStart] = useState(accentStart || DEFAULT_ACCENT_START);
   const [pickerEnd, setPickerEnd] = useState(accentEnd || DEFAULT_ACCENT_END);
 
@@ -2833,7 +2883,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
             onClick={saveProfile}
             disabled={savingProfile}
             className="w-full rounded-xl py-3 text-sm"
-            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: savingProfile ? 0.6 : 1 }}
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: savingProfile ? 0.6 : 1 }}
           >
             {savingProfile ? "Saving..." : "Save"}
           </button>
@@ -2863,7 +2913,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
             onClick={changeEmail}
             disabled={emailBusy}
             className="w-full rounded-xl py-3 text-sm"
-            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: emailBusy ? 0.6 : 1 }}
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: emailBusy ? 0.6 : 1 }}
           >
             {emailBusy ? "Sending..." : "Update Email"}
           </button>
@@ -2900,7 +2950,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
             onClick={changePassword}
             disabled={passwordBusy}
             className="w-full rounded-xl py-3 text-sm"
-            style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: passwordBusy ? 0.6 : 1 }}
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: passwordBusy ? 0.6 : 1 }}
           >
             {passwordBusy ? "Updating..." : "Update Password"}
           </button>
@@ -2934,7 +2984,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
                 color: "var(--text)",
               }}
             >
-              <div className="w-8 h-8 rounded-full" style={{ background: "#14121A", border: "1px solid #2A2632" }} />
+              <div className="w-8 h-8 rounded-full" style={{ background: "linear-gradient(135deg, #F5D77E 0%, #B8860B 100%)", border: "1px solid #2A2A2F" }} />
               Dark
             </button>
             <button
@@ -2946,7 +2996,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
                 color: "var(--text)",
               }}
             >
-              <div className="w-8 h-8 rounded-full" style={{ background: "#FAFAFA", border: "1px solid #E8E3ED" }} />
+              <div className="w-8 h-8 rounded-full" style={{ background: "linear-gradient(135deg, #38BDF8 0%, #1565C0 100%)", border: "1px solid #DCE4EF" }} />
               Light
             </button>
           </div>
@@ -2983,7 +3033,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
             <button
               onClick={applyAccent}
               className="flex-1 rounded-xl py-2.5 text-sm"
-              style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700 }}
+              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
             >
               Apply
             </button>
@@ -3880,7 +3930,7 @@ function MessagesScreen({ onBack }) {
                 {c.unread > 0 && (
                   <span
                     className="rounded-full flex items-center justify-center text-[9px]"
-                    style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, minWidth: 18, height: 18, padding: "0 5px" }}
+                    style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 18, height: 18, padding: "0 5px" }}
                   >
                     {c.unread > 99 ? "99+" : c.unread}
                   </span>
@@ -3964,7 +4014,7 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
           onClick={create}
           disabled={creating || selected.length < 2}
           className="rounded-full px-4 py-1.5 text-xs"
-          style={{ background: selected.length >= 2 ? ACCENT : "var(--surface)", color: selected.length >= 2 ? "var(--bg)" : "var(--text-muted)", fontWeight: 700 }}
+          style={{ background: selected.length >= 2 ? ACCENT : "var(--surface)", color: selected.length >= 2 ? "var(--on-accent)" : "var(--text-muted)", fontWeight: 700 }}
         >
           {creating ? "Creating..." : "Create"}
         </button>
@@ -4340,7 +4390,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       className="px-3.5 py-2 text-sm"
                       style={{
                         background: mine ? ACCENT : "var(--surface)",
-                        color: mine ? "var(--bg)" : "var(--text)",
+                        color: mine ? "var(--on-accent)" : "var(--text)",
                         borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-word",
@@ -4597,7 +4647,7 @@ function ReportScreen({ postId, onBack }) {
           className="w-14 h-14 rounded-full flex items-center justify-center mb-3"
           style={{ background: ACCENT }}
         >
-          <Ellipsis size={22} color="var(--bg)" />
+          <Ellipsis size={22} color="var(--on-accent)" />
         </div>
         <p className="text-sm mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>
           Reported
@@ -4779,7 +4829,7 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
           onClick={handlePost}
           disabled={posting || !newComment.trim()}
           className="rounded-xl px-4 py-2.5 text-sm"
-          style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: posting || !newComment.trim() ? 0.6 : 1 }}
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: posting || !newComment.trim() ? 0.6 : 1 }}
         >
           Send
         </button>
@@ -4837,15 +4887,12 @@ function LoginScreen({ onLogin, onGoSignup }) {
 
   return (
     <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "var(--bg)" }}>
-      <h1
-        className="text-3xl text-center mb-1"
-        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "var(--text)" }}
-      >
-        Loop
-      </h1>
-      <p className="text-center text-xs mb-8" style={{ color: "var(--text-muted)" }}>
-        Share your moments
-      </p>
+      <div className="flex flex-col items-center mb-8">
+        <LoopLogo size={132} />
+        <p className="text-center text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+          Share your moments
+        </p>
+      </div>
 
       <AuthInput icon={Mail} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <AuthInput
@@ -4860,7 +4907,7 @@ function LoginScreen({ onLogin, onGoSignup }) {
       />
 
       {error && (
-        <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>
+        <p className="text-xs mb-3" style={{ color: "var(--accent-solid)" }}>
           {error}
         </p>
       )}
@@ -4869,14 +4916,14 @@ function LoginScreen({ onLogin, onGoSignup }) {
         onClick={handleLogin}
         disabled={loading}
         className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
-        style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
+        style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
         {loading ? "Please wait..." : "Log In"}
       </button>
 
       <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
         Don't have an account?{" "}
-        <button onClick={onGoSignup} style={{ color: "var(--accent-start)", fontWeight: 600 }}>
+        <button onClick={onGoSignup} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
           Sign Up
         </button>
       </p>
@@ -4936,15 +4983,12 @@ function SignupScreen({ onSignup, onGoLogin }) {
 
   return (
     <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "var(--bg)" }}>
-      <h1
-        className="text-3xl text-center mb-1"
-        style={{ fontFamily: "'Sora', sans-serif", fontWeight: 800, color: "var(--text)" }}
-      >
-        New Account
-      </h1>
-      <p className="text-center text-xs mb-8" style={{ color: "var(--text-muted)" }}>
-        Get started in seconds
-      </p>
+      <div className="flex flex-col items-center mb-8">
+        <LoopLogo size={104} />
+        <p className="text-center text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+          Get started in seconds
+        </p>
+      </div>
 
       <AuthInput icon={CircleUserRound} type="text" placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} />
       <AuthInput icon={Mail} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -4960,7 +5004,7 @@ function SignupScreen({ onSignup, onGoLogin }) {
       />
 
       {error && (
-        <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>
+        <p className="text-xs mb-3" style={{ color: "var(--accent-solid)" }}>
           {error}
         </p>
       )}
@@ -4969,14 +5013,14 @@ function SignupScreen({ onSignup, onGoLogin }) {
         onClick={handleSignup}
         disabled={loading}
         className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
-        style={{ background: ACCENT, color: "var(--bg)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
+        style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
         {loading ? "Please wait..." : "Sign Up"}
       </button>
 
       <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
         Already have an account?{" "}
-        <button onClick={onGoLogin} style={{ color: "var(--accent-start)", fontWeight: 600 }}>
+        <button onClick={onGoLogin} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
           Log In
         </button>
       </p>
@@ -5282,7 +5326,10 @@ export default function App() {
     return (
       <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+        <div className="flex flex-col items-center gap-4">
+          <LoopLogo size={96} />
+          <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+        </div>
       </div>
     );
   }
@@ -5383,10 +5430,24 @@ export default function App() {
                 <button
                   key={tab.key}
                   onClick={() => setActive(tab.key)}
-                  className="flex flex-col items-center justify-center"
-                  style={{ width: 44, height: 32 }}
+                  className="flex flex-col items-center justify-center gap-1"
+                  style={{ width: 44, height: 36 }}
                 >
-                  <Icon size={22} color={isActive ? "var(--accent-start)" : "var(--text-muted)"} strokeWidth={2} />
+                  <Icon
+                    size={23}
+                    color={isActive ? "var(--accent-solid)" : "var(--text-muted)"}
+                    strokeWidth={isActive ? 2.4 : 2}
+                    fill={isActive && (tab.key === "feed" || tab.key === "profile") ? "var(--accent-solid)" : "none"}
+                  />
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 4,
+                      height: 4,
+                      background: isActive ? "var(--accent-solid)" : "transparent",
+                      transition: "background 0.2s",
+                    }}
+                  />
                 </button>
               );
             })}
