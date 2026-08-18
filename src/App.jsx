@@ -2980,7 +2980,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
               className="flex-1 rounded-xl py-3 text-sm flex flex-col items-center gap-1.5"
               style={{
                 background: theme === "dark" ? "var(--surface)" : "transparent",
-                border: theme === "dark" ? "1.5px solid var(--accent-start)" : "1px solid var(--border)",
+                border: theme === "dark" ? "1.5px solid var(--accent-solid)" : "1px solid var(--border)",
                 color: "var(--text)",
               }}
             >
@@ -2992,7 +2992,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
               className="flex-1 rounded-xl py-3 text-sm flex flex-col items-center gap-1.5"
               style={{
                 background: theme === "light" ? "var(--surface)" : "transparent",
-                border: theme === "light" ? "1.5px solid var(--accent-start)" : "1px solid var(--border)",
+                border: theme === "light" ? "1.5px solid var(--accent-solid)" : "1px solid var(--border)",
                 color: "var(--text)",
               }}
             >
@@ -3002,10 +3002,28 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
           </div>
 
           <div className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>Accent color</div>
+
+          {!isCustomized && (
+            <div
+              className="rounded-xl p-3 mb-3 flex items-center gap-3"
+              style={{ background: "var(--surface)", border: "1.5px solid var(--accent-solid)" }}
+            >
+              <div className="w-10 h-10 rounded-lg" style={{ background: ACCENT }} />
+              <div className="flex-1">
+                <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Follow theme</p>
+                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Gold in Dark, Blue in Light</p>
+              </div>
+              <Check size={18} color="var(--accent-solid)" />
+            </div>
+          )}
+
           <div
             className="rounded-xl p-3 mb-3"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+            style={{ background: "var(--surface)", border: isCustomized ? "1.5px solid var(--accent-solid)" : "1px solid var(--border)" }}
           >
+            <p className="text-xs mb-2.5" style={{ color: "var(--text)", fontWeight: 600 }}>
+              {isCustomized ? "Custom color (active)" : "Or pick your own"}
+            </p>
             <div className="w-full h-10 rounded-lg mb-3" style={{ background: `linear-gradient(135deg, ${pickerStart} 0%, ${pickerEnd} 100%)` }} />
             <div className="flex items-center gap-3 mb-2">
               <span className="text-xs flex-1" style={{ color: "var(--text)" }}>Start</span>
@@ -3033,22 +3051,22 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
             <button
               onClick={applyAccent}
               className="flex-1 rounded-xl py-2.5 text-sm"
-              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+              style={{ background: `linear-gradient(135deg, ${pickerStart} 0%, ${pickerEnd} 100%)`, color: "#fff", fontWeight: 700 }}
             >
-              Apply
+              Use custom color
             </button>
             {isCustomized && (
               <button
                 onClick={resetAccent}
                 className="flex-1 rounded-xl py-2.5 text-sm"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-muted)" }}
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
               >
-                Reset to default
+                Back to theme color
               </button>
             )}
           </div>
           <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-            The accent color is used for buttons, links, and highlights throughout the app, in both Dark and Light theme.
+            By default each theme uses its own accent — gold in Dark, blue in Light. Pick a custom color only if you want to override both.
           </p>
         </div>
       </div>
@@ -5305,6 +5323,9 @@ export default function App() {
   const rootVarOverrides = {};
   if (accentStart) rootVarOverrides["--accent-start"] = accentStart;
   if (accentEnd) rootVarOverrides["--accent-end"] = accentEnd;
+  // Keep the solid accent (used by nav, links, active states) in sync with a
+  // custom gradient so nothing is left showing the old theme accent.
+  if (accentEnd) rootVarOverrides["--accent-solid"] = accentEnd;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
   const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null;
