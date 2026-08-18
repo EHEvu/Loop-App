@@ -59,59 +59,97 @@ import {
 
 const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%)";
 
-// All theme colors live here as CSS custom properties. Dark is the default
-// (matches the app's original look exactly); light overrides swap the
-// surface/text scale while keeping brand accent colors consistent across
-// both themes. bg-sunken (Reels' video stage) and page-bg (the outer frame)
-// intentionally stay the same in both themes, matching how video players
-// conventionally stay dark regardless of app theme.
+// Instagram-exact color system. Three themes selectable in Settings:
+// dark (default), light, and "bangladesh" (flag green + red). Every component
+// reads these CSS custom properties, set via a data-theme attribute on the root.
+// --ring-* is the story-ring gradient, kept intentionally distinct from the
+// action accent: gold in dark, blue in light (per the user's brand direction).
 const THEME_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap');
   :root {
-    /* ---- DARK: premium gold on near-black ---- */
-    --bg: #0D0D0F;
+    /* ---- DARK (Instagram): pure black, blue accent ---- */
+    --bg: #000000;
     --bg-sunken: #000000;
     --page-bg: #000000;
-    --surface: #17171A;
-    --surface-raised: #1F1F23;
-    --border: #2A2A2F;
-    --border-subtle: #202024;
-    --text: #F5F3EE;
-    --text-secondary: #C7C3BA;
-    --text-muted: #8A867D;
-    --text-disabled: #4C4A46;
-    --toggle-off: #3A3A3F;
-    /* gold gradient — used everywhere Instagram uses its rainbow */
-    --accent-start: #F5D77E;
-    --accent-end: #B8860B;
-    --accent-solid: #D4AF37;
-    --on-accent: #1A1408;
-    --tag-bg: #2A2410;
-    --tag-border: #4A3E18;
-    --tag-text: #E8C766;
+    --surface: #121212;
+    --surface-raised: #1A1A1A;
+    --active-highlight: #363636;
+    --border: #262626;
+    --border-subtle: #1C1C1C;
+    --text: #FFFFFF;
+    --text-secondary: #A8A8A8;
+    --text-muted: #8E8E8E;
+    --text-disabled: #4A4A4A;
+    --toggle-off: #363636;
+    --accent-start: #0095F6;
+    --accent-end: #0095F6;
+    --accent-solid: #0095F6;
+    --on-accent: #FFFFFF;
+    --heart: #ED4956;
+    --wordmark: #FFFFFF;
+    /* story ring — gold in dark */
+    --ring-start: #FDDB92;
+    --ring-end: #EFBF04;
+    --tag-bg: #10222E;
+    --tag-border: #16394D;
+    --tag-text: #4DB8F5;
   }
   [data-theme="light"] {
-    /* ---- LIGHT: positive blue on white (from the Loop logo) ---- */
-    --bg: #F7F9FC;
-    --bg-sunken: #ECF1F8;
-    --page-bg: #E4EAF2;
+    /* ---- LIGHT (Instagram): white, blue accent ---- */
+    --bg: #FFFFFF;
+    --bg-sunken: #FAFAFA;
+    --page-bg: #FAFAFA;
     --surface: #FFFFFF;
     --surface-raised: #FFFFFF;
-    --border: #DCE4EF;
-    --border-subtle: #EAF0F7;
-    --text: #0F2A47;
-    --text-secondary: #3A5A7A;
-    --text-muted: #7089A3;
-    --text-disabled: #B4C4D6;
-    --toggle-off: #CBD8E6;
-    /* blue gradient — used everywhere Instagram uses its rainbow */
-    --accent-start: #38BDF8;
-    --accent-end: #1565C0;
-    --accent-solid: #1976D2;
+    --active-highlight: #F0F0F0;
+    --border: #DBDBDB;
+    --border-subtle: #EFEFEF;
+    --text: #262626;
+    --text-secondary: #737373;
+    --text-muted: #8E8E8E;
+    --text-disabled: #C7C7C7;
+    --toggle-off: #DBDBDB;
+    --accent-start: #0095F6;
+    --accent-end: #0095F6;
+    --accent-solid: #0095F6;
     --on-accent: #FFFFFF;
-    --tag-bg: #E8F2FD;
+    --heart: #ED4956;
+    --wordmark: #262626;
+    /* story ring — blue in light */
+    --ring-start: #38BDF8;
+    --ring-end: #0095F6;
+    --tag-bg: #E8F4FD;
     --tag-border: #B8DCF5;
-    --tag-text: #1565C0;
+    --tag-text: #0077C2;
+  }
+  [data-theme="bangladesh"] {
+    /* ---- BANGLADESH: flag green base, red accents ---- */
+    --bg: #F2F8F5;
+    --bg-sunken: #E6F0EA;
+    --page-bg: #E6F0EA;
+    --surface: #FFFFFF;
+    --surface-raised: #FFFFFF;
+    --active-highlight: #DCEDE3;
+    --border: #C6DDD0;
+    --border-subtle: #DCEDE3;
+    --text: #05402B;
+    --text-secondary: #2E6B4F;
+    --text-muted: #6B9781;
+    --text-disabled: #A9C7B8;
+    --toggle-off: #C6DDD0;
+    /* accent = flag red (buttons/links/highlights) */
+    --accent-start: #F42A41;
+    --accent-end: #DA291C;
+    --accent-solid: #DA291C;
+    --on-accent: #FFFFFF;
+    --heart: #DA291C;
+    --wordmark: #006747;
+    /* primary surfaces lean green; story ring is deep green */
+    --ring-start: #00875A;
+    --ring-end: #006747;
+    --tag-bg: #FDEBEC;
+    --tag-border: #F5C2C6;
+    --tag-text: #DA291C;
   }
 `;
 
@@ -237,11 +275,11 @@ function LoopLogo({ size = 72 }) {
 function Avatar({ username, avatarUrl, size = 40 }) {
   const letter = (username || "u")[0].toUpperCase();
   return (
-    <div className="rounded-full shrink-0 overflow-hidden flex items-center justify-center" style={{ width: size, height: size, background: ACCENT, padding: avatarUrl ? 0 : 2 }}>
+    <div className="rounded-full shrink-0 overflow-hidden flex items-center justify-center" style={{ width: size, height: size, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: avatarUrl ? 0 : 2 }}>
       {avatarUrl ? (
         <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
       ) : (
-        <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center" style={{ color: "var(--text)", fontSize: size * 0.4, fontWeight: 600 }}>
+        <div className="w-full h-full rounded-full bg-[var(--surface)] flex items-center justify-center" style={{ color: "var(--text)", fontSize: size * 0.4, fontWeight: 600 }}>
           {letter}
         </div>
       )}
@@ -596,7 +634,18 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
         </button>
       )}
       {title === "Loop" ? (
-        <LoopLogo size={34} />
+        <span
+          style={{
+            fontFamily: "'Sora', sans-serif",
+            fontWeight: 700,
+            fontSize: 26,
+            letterSpacing: "-0.5px",
+            color: "var(--wordmark)",
+            lineHeight: 1,
+          }}
+        >
+          Loop
+        </span>
       ) : (
         <h1
           className="text-xl tracking-tight"
@@ -629,7 +678,7 @@ function StoriesBar() {
         <div key={s.id} className="flex flex-col items-center gap-1 shrink-0" style={{ width: 56 }}>
           <div
             className="w-14 h-14 rounded-full flex items-center justify-center"
-            style={{ background: s.isSelf ? "var(--border)" : ACCENT, padding: s.isSelf ? 0 : 2 }}
+            style={{ background: s.isSelf ? "var(--border)" : "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: s.isSelf ? 0 : 2.5 }}
           >
             <div
               className="w-full h-full rounded-full flex items-center justify-center text-sm relative"
@@ -639,7 +688,7 @@ function StoriesBar() {
               {s.isSelf && (
                 <span
                   className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
-                  style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+                  style={{ background: "var(--accent-solid)", color: "var(--on-accent)", fontWeight: 700 }}
                 >
                   +
                 </span>
@@ -970,7 +1019,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   onTouchMove={() => clearTimeout(pressTimers.current[post.id])}
                   className="h-8 flex items-center justify-center"
                 >
-                  <Heart size={30} color={post.liked ? "var(--accent-start)" : "var(--text)"} fill={post.liked ? "var(--accent-start)" : "none"} />
+                  <Heart size={30} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} />
                 </button>
                 <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
                   {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
@@ -1615,7 +1664,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 onTouchEndCapture={(e) => clearTimeout(e.currentTarget._pressTimer)}
                 className="flex flex-col items-center gap-1"
               >
-                <Heart size={26} color={reel.liked ? "var(--accent-start)" : "var(--text)"} fill={reel.liked ? "var(--accent-start)" : "none"} />
+                <Heart size={26} color={reel.liked ? "var(--heart)" : "var(--text)"} fill={reel.liked ? "var(--heart)" : "none"} />
                 {countPrefs.likes && !reel.hide_likes && reel.likeCount > 0 && (
                   <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.likeCount)}</span>
                 )}
@@ -2136,7 +2185,7 @@ function CommentRow({
       </div>
       <div className="flex flex-col items-center gap-2 pt-0.5">
         <button onClick={() => onReact("like")}>
-          <Heart size={13} color={comment.myReaction === "like" ? "var(--accent-start)" : "var(--text-muted)"} fill={comment.myReaction === "like" ? "var(--accent-start)" : "none"} />
+          <Heart size={13} color={comment.myReaction === "like" ? "var(--heart)" : "var(--text-muted)"} fill={comment.myReaction === "like" ? "var(--heart)" : "none"} />
         </button>
         <button onClick={() => onReact("dislike")}>
           <ThumbsDown size={12} color={comment.myReaction === "dislike" ? "var(--accent-end)" : "var(--text-muted)"} fill={comment.myReaction === "dislike" ? "var(--accent-end)" : "none"} />
@@ -2691,8 +2740,8 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState("");
 
-  const DEFAULT_ACCENT_START = "#F5D77E";
-  const DEFAULT_ACCENT_END = "#B8860B";
+  const DEFAULT_ACCENT_START = "#FDDB92";
+  const DEFAULT_ACCENT_END = "#EFBF04";
   const [pickerStart, setPickerStart] = useState(accentStart || DEFAULT_ACCENT_START);
   const [pickerEnd, setPickerEnd] = useState(accentEnd || DEFAULT_ACCENT_END);
 
@@ -2968,105 +3017,118 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
     };
     const isCustomized = !!accentStart || !!accentEnd;
 
+    const ThemeCard = ({ id, label, swatch, ring }) => {
+      const selected = theme === id;
+      return (
+        <button
+          onClick={() => onThemeChange?.(id)}
+          className="flex-1 rounded-2xl py-4 flex flex-col items-center gap-2"
+          style={{
+            background: "var(--surface)",
+            border: selected ? "2px solid var(--accent-solid)" : "1px solid var(--border)",
+            boxShadow: selected ? "0 2px 12px rgba(0,0,0,0.12)" : "none",
+            transition: "all 0.15s",
+          }}
+        >
+          <div
+            className="w-9 h-9 rounded-full"
+            style={{ background: swatch, border: ring }}
+          />
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: selected ? 700 : 500 }}>{label}</span>
+        </button>
+      );
+    };
+
     return (
       <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
-        <Header title="Theme & Color" back={() => setView("menu")} />
+        <Header title="Theme & Colour" back={() => setView("menu")} />
 
         <div className="px-4 pt-4">
-          <div className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>Theme</div>
-          <div className="flex gap-2 mb-6">
-            <button
-              onClick={() => onThemeChange?.("dark")}
-              className="flex-1 rounded-xl py-3 text-sm flex flex-col items-center gap-1.5"
-              style={{
-                background: theme === "dark" ? "var(--surface)" : "transparent",
-                border: theme === "dark" ? "1.5px solid var(--accent-solid)" : "1px solid var(--border)",
-                color: "var(--text)",
-              }}
-            >
-              <div className="w-8 h-8 rounded-full" style={{ background: "linear-gradient(135deg, #F5D77E 0%, #B8860B 100%)", border: "1px solid #2A2A2F" }} />
-              Dark
-            </button>
-            <button
-              onClick={() => onThemeChange?.("light")}
-              className="flex-1 rounded-xl py-3 text-sm flex flex-col items-center gap-1.5"
-              style={{
-                background: theme === "light" ? "var(--surface)" : "transparent",
-                border: theme === "light" ? "1.5px solid var(--accent-solid)" : "1px solid var(--border)",
-                color: "var(--text)",
-              }}
-            >
-              <div className="w-8 h-8 rounded-full" style={{ background: "linear-gradient(135deg, #38BDF8 0%, #1565C0 100%)", border: "1px solid #DCE4EF" }} />
-              Light
-            </button>
+          <div className="text-[11px] mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Theme</div>
+          <div className="flex gap-3 mb-3">
+            <ThemeCard id="light" label="Light" swatch="#FFFFFF" ring="1px solid #DBDBDB" />
+            <ThemeCard id="dark" label="Dark" swatch="#000000" ring="1px solid #363636" />
+          </div>
+          <div className="flex mb-6">
+            <ThemeCard
+              id="bangladesh"
+              label="Bangladesh"
+              swatch="linear-gradient(135deg, #006747 0%, #006747 60%, #DA291C 60%, #DA291C 100%)"
+              ring="1px solid var(--border)"
+            />
           </div>
 
-          <div className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>Accent color</div>
-
-          {!isCustomized && (
-            <div
-              className="rounded-xl p-3 mb-3 flex items-center gap-3"
-              style={{ background: "var(--surface)", border: "1.5px solid var(--accent-solid)" }}
-            >
-              <div className="w-10 h-10 rounded-lg" style={{ background: ACCENT }} />
-              <div className="flex-1">
-                <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Follow theme</p>
-                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Gold in Dark, Blue in Light</p>
-              </div>
-              <Check size={18} color="var(--accent-solid)" />
-            </div>
-          )}
+          <div className="text-[11px] mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Accent colour</div>
 
           <div
-            className="rounded-xl p-3 mb-3"
-            style={{ background: "var(--surface)", border: isCustomized ? "1.5px solid var(--accent-solid)" : "1px solid var(--border)" }}
+            className="rounded-2xl overflow-hidden mb-3"
+            style={{ background: "var(--surface)", border: isCustomized ? "2px solid var(--accent-solid)" : "1px solid var(--border)" }}
           >
-            <p className="text-xs mb-2.5" style={{ color: "var(--text)", fontWeight: 600 }}>
-              {isCustomized ? "Custom color (active)" : "Or pick your own"}
-            </p>
-            <div className="w-full h-10 rounded-lg mb-3" style={{ background: `linear-gradient(135deg, ${pickerStart} 0%, ${pickerEnd} 100%)` }} />
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-xs flex-1" style={{ color: "var(--text)" }}>Start</span>
-              <input
-                type="color"
-                value={pickerStart}
-                onChange={(e) => setPickerStart(e.target.value)}
-                className="w-10 h-8 rounded"
-                style={{ background: "transparent", border: "1px solid var(--border)" }}
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs flex-1" style={{ color: "var(--text)" }}>End</span>
-              <input
-                type="color"
-                value={pickerEnd}
-                onChange={(e) => setPickerEnd(e.target.value)}
-                className="w-10 h-8 rounded"
-                style={{ background: "transparent", border: "1px solid var(--border)" }}
-              />
+            <div className="h-16 w-full" style={{ background: `linear-gradient(135deg, ${pickerStart} 0%, ${pickerEnd} 100%)` }} />
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-6 h-6 rounded-full" style={{ background: pickerStart, border: "2px solid var(--border)" }} />
+                  <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Start</span>
+                </div>
+                <label className="relative cursor-pointer">
+                  <span
+                    className="text-xs px-3 py-1.5 rounded-lg inline-block"
+                    style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 600, border: "1px solid var(--border)" }}
+                  >
+                    {pickerStart.toUpperCase()}
+                  </span>
+                  <input
+                    type="color"
+                    value={pickerStart}
+                    onChange={(e) => setPickerStart(e.target.value)}
+                    className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                  />
+                </label>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-6 h-6 rounded-full" style={{ background: pickerEnd, border: "2px solid var(--border)" }} />
+                  <span className="text-xs" style={{ color: "var(--text-secondary)" }}>End</span>
+                </div>
+                <label className="relative cursor-pointer">
+                  <span
+                    className="text-xs px-3 py-1.5 rounded-lg inline-block"
+                    style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 600, border: "1px solid var(--border)" }}
+                  >
+                    {pickerEnd.toUpperCase()}
+                  </span>
+                  <input
+                    type="color"
+                    value={pickerEnd}
+                    onChange={(e) => setPickerEnd(e.target.value)}
+                    className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+                  />
+                </label>
+              </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2 mb-4">
             <button
               onClick={applyAccent}
-              className="flex-1 rounded-xl py-2.5 text-sm"
-              style={{ background: `linear-gradient(135deg, ${pickerStart} 0%, ${pickerEnd} 100%)`, color: "#fff", fontWeight: 700 }}
+              className="flex-1 rounded-xl py-3 text-sm"
+              style={{ background: `linear-gradient(135deg, ${pickerStart} 0%, ${pickerEnd} 100%)`, color: "#fff", fontWeight: 700, boxShadow: "0 2px 10px rgba(0,0,0,0.15)" }}
             >
-              Use custom color
+              Use custom colour
             </button>
             {isCustomized && (
               <button
                 onClick={resetAccent}
-                className="flex-1 rounded-xl py-2.5 text-sm"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                className="rounded-xl py-3 px-4 text-sm"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
               >
-                Back to theme color
+                Reset
               </button>
             )}
           </div>
-          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-            By default each theme uses its own accent — gold in Dark, blue in Light. Pick a custom color only if you want to override both.
+          <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            The accent colour is used for buttons, links, and active icons throughout the app. Pick a custom colour to override the current theme's default.
           </p>
         </div>
       </div>
@@ -3081,8 +3143,8 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
         <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Appearance</div>
         <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <button onClick={() => setView("appearance")} className="w-full flex items-center justify-between px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
-            <span>Theme & Color</span>
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>{theme === "light" ? "Light" : "Dark"}</span>
+            <span>Theme & Colour</span>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>{theme === "light" ? "Light" : theme === "bangladesh" ? "Bangladesh" : "Dark"}</span>
           </button>
         </div>
 
@@ -3281,7 +3343,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             onTouchMove={() => clearTimeout(pressTimer.current)}
             className="h-8 flex items-center justify-center"
           >
-            <Heart size={30} color={post.liked ? "var(--accent-start)" : "var(--text)"} fill={post.liked ? "var(--accent-start)" : "none"} />
+            <Heart size={30} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} />
           </button>
           <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
             {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
