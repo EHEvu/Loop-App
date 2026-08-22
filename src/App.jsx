@@ -65,7 +65,7 @@ const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end
 // --ring-* is the story-ring gradient, kept intentionally distinct from the
 // action accent: gold in dark, blue in light (per the user's brand direction).
 const THEME_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Fredoka:wght@500;600;700&display=swap');
   :root {
     /* ---- DARK (Instagram): pure black, blue accent ---- */
     --bg: #000000;
@@ -123,33 +123,33 @@ const THEME_CSS = `
     --tag-text: #0077C2;
   }
   [data-theme="bangladesh"] {
-    /* ---- BANGLADESH: flag green base, red accents ---- */
-    --bg: #F2F8F5;
-    --bg-sunken: #E6F0EA;
-    --page-bg: #E6F0EA;
-    --surface: #FFFFFF;
-    --surface-raised: #FFFFFF;
-    --active-highlight: #DCEDE3;
-    --border: #C6DDD0;
-    --border-subtle: #DCEDE3;
-    --text: #05402B;
-    --text-secondary: #2E6B4F;
-    --text-muted: #6B9781;
-    --text-disabled: #A9C7B8;
-    --toggle-off: #C6DDD0;
-    /* accent = flag red (buttons/links/highlights) */
+    /* ---- BANGLADESH: deep-green background, flag-red accents ---- */
+    --bg: #006747;
+    --bg-sunken: #00543A;
+    --page-bg: #00543A;
+    --surface: #0A7551;
+    --surface-raised: #0E815B;
+    --active-highlight: #12946B;
+    --border: #1C8A66;
+    --border-subtle: #0F7D57;
+    --text: #FFFFFF;
+    --text-secondary: #C4E4D6;
+    --text-muted: #8FBFA9;
+    --text-disabled: #5A9B80;
+    --toggle-off: #1C8A66;
+    /* accent = flag red (buttons/links/highlights/active icons) */
     --accent-start: #F42A41;
     --accent-end: #DA291C;
-    --accent-solid: #DA291C;
+    --accent-solid: #F42A41;
     --on-accent: #FFFFFF;
-    --heart: #DA291C;
-    --wordmark: #006747;
-    /* primary surfaces lean green; story ring is deep green */
-    --ring-start: #00875A;
-    --ring-end: #006747;
-    --tag-bg: #FDEBEC;
-    --tag-border: #F5C2C6;
-    --tag-text: #DA291C;
+    --heart: #F42A41;
+    --wordmark: #FFFFFF;
+    /* story ring — flag red */
+    --ring-start: #F42A41;
+    --ring-end: #DA291C;
+    --tag-bg: #7A1520;
+    --tag-border: #A0202E;
+    --tag-text: #FFD0D4;
   }
 `;
 
@@ -282,6 +282,74 @@ function Avatar({ username, avatarUrl, size = 40 }) {
         <div className="w-full h-full rounded-full bg-[var(--surface)] flex items-center justify-center" style={{ color: "var(--text)", fontSize: size * 0.4, fontWeight: 600 }}>
           {letter}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Caption with a real 2-line clamp and an Instagram-style more/less toggle.
+// "more" only appears when the text actually overflows two lines (measured).
+// `light` renders the toggle in a light colour for dark video overlays (Reels).
+function CaptionText({ username, caption, onOpenProfile, light = false }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const ref = React.useRef(null);
+
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Compare full scroll height to the 2-line clamped height.
+    const clampedHeight = el.clientHeight;
+    const fullHeight = el.scrollHeight;
+    setOverflows(fullHeight - clampedHeight > 2);
+  }, [caption]);
+
+  if (!caption) return null;
+
+  const nameColor = light ? "#FFFFFF" : "var(--text)";
+  const bodyColor = light ? "rgba(255,255,255,0.92)" : "var(--text)";
+  const toggleColor = light ? "rgba(255,255,255,0.7)" : "var(--text-muted)";
+
+  return (
+    <div>
+      <p
+        ref={ref}
+        className="text-sm"
+        style={{
+          color: bodyColor,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          display: expanded ? "block" : "-webkit-box",
+          WebkitLineClamp: expanded ? "unset" : 2,
+          WebkitBoxOrient: "vertical",
+          overflow: expanded ? "visible" : "hidden",
+          lineHeight: 1.4,
+        }}
+      >
+        {username && (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenProfile?.();
+            }}
+            style={{ color: nameColor, fontWeight: 600, marginRight: 5 }}
+          >
+            {username}
+          </span>
+        )}
+        {caption}
+      </p>
+      {(overflows || expanded) && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          className="text-xs mt-0.5"
+          style={{ color: toggleColor, fontWeight: 600 }}
+        >
+          {expanded ? "less" : "more"}
+        </button>
       )}
     </div>
   );
@@ -627,8 +695,8 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
           <Bell size={21} color="var(--text)" />
           {hasNotifications && (
             <span
-              className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
-              style={{ background: "var(--accent-start)" }}
+              className="absolute -top-0.5 -right-0.5 rounded-full"
+              style={{ width: 9, height: 9, background: "#FF3040", border: "1.5px solid var(--bg)" }}
             />
           )}
         </button>
@@ -636,10 +704,10 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
       {title === "Loop" ? (
         <span
           style={{
-            fontFamily: "'Sora', sans-serif",
-            fontWeight: 700,
-            fontSize: 26,
-            letterSpacing: "-0.5px",
+            fontFamily: "'Fredoka', 'Sora', sans-serif",
+            fontWeight: 600,
+            fontSize: 27,
+            letterSpacing: "0.3px",
             color: "var(--wordmark)",
             lineHeight: 1,
           }}
@@ -1056,12 +1124,11 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
             <div className="px-4 pt-1">
               <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
-              {post.caption && (
-                <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
-                  <span style={{ color: "var(--text)", fontWeight: 600 }}>{post.username} </span>
-                  {post.caption}
-                </p>
-              )}
+              <CaptionText
+                username={post.username}
+                caption={post.caption}
+                onOpenProfile={() => onOpenProfile?.(post.user_id)}
+              />
             </div>
           </div>
         ))
@@ -1443,7 +1510,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       {toast && (
         <div
           className="absolute top-24 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-xs z-30"
-          style={{ background: "rgba(0,0,0,0.75)", color: "var(--text)" }}
+          style={{ background: "rgba(0,0,0,0.75)", color: "#FFFFFF" }}
         >
           {toast}
         </div>
@@ -1455,12 +1522,12 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
-        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
+        <span className="text-base" style={{ color: "#FFFFFF", fontWeight: 700, fontFamily: "'Sora', sans-serif", filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
           Reels
         </span>
-        <div className="absolute right-3">
+        <div className="absolute right-3" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
           <button onClick={() => setMenuOpen((v) => !v)}>
-            <Ellipsis size={20} color="var(--text)" />
+            <Ellipsis size={20} color="#FFFFFF" />
           </button>
           {menuOpen && (
             <>
@@ -1585,23 +1652,23 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
           <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-              <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[10px]" style={{ color: "var(--text)" }}>
+            <div className="w-8 h-8 rounded-full shrink-0" style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 1.5 }}>
+              <div className="w-full h-full rounded-full flex items-center justify-center text-[10px]" style={{ background: "#333", color: "#FFFFFF" }}>
                 {reel.username[0].toUpperCase()}
               </div>
             </div>
-            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{reel.username}</span>
+            <span className="text-sm" style={{ color: "#FFFFFF", fontWeight: 600 }}>{reel.username}</span>
           </button>
           {reel.user_id !== userId && (
             <button
               onClick={toggleFollow}
               className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs"
               style={{
-                background: isFollowing ? "transparent" : ACCENT,
-                border: isFollowing ? "1px solid var(--text-muted)" : "none",
-                color: isFollowing ? "var(--text)" : "var(--bg)",
+                background: isFollowing ? "rgba(0,0,0,0.3)" : "#FFFFFF",
+                border: isFollowing ? "1px solid rgba(255,255,255,0.7)" : "none",
+                color: isFollowing ? "#FFFFFF" : "#000000",
                 fontWeight: 700,
               }}
             >
@@ -1611,37 +1678,12 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           )}
         </div>
         {reel.location && (
-          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "var(--text-secondary)" }}>
+          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "rgba(255,255,255,0.9)", filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
             <MapPin size={11} /> {reel.location}
           </span>
         )}
         <TaggedPeopleLine tags={reel.tags} onOpenProfile={onOpenProfile} />
-        {reel.caption && (
-          <div>
-            <p
-              onClick={() => setCommentSheetOpen(true)}
-              className="text-xs"
-              style={{
-                color: "var(--text-secondary)",
-                whiteSpace: "pre-wrap",
-                ...(captionExpanded
-                  ? {}
-                  : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }),
-              }}
-            >
-              {reel.caption}
-            </p>
-            {reel.caption.length > 70 && (
-              <button
-                onClick={() => setCaptionExpanded((v) => !v)}
-                className="text-xs mt-0.5"
-                style={{ color: "var(--text-muted)", fontWeight: 600 }}
-              >
-                {captionExpanded ? "less" : "...more"}
-              </button>
-            )}
-          </div>
-        )}
+        <CaptionText caption={reel.caption} light />
       </div>
 
       {/* Quick Actions — the only action control; expands to full-size icons */}
@@ -1654,7 +1696,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           {expanded && (
             <div
               className="absolute bottom-24 flex flex-col items-center gap-5 py-3 px-2 rounded-full"
-              style={{ background: "rgba(30,27,38,0.92)", border: "1px solid var(--border)" }}
+              style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(2px)" }}
             >
               <button
                 onClick={toggleLike}
@@ -1663,35 +1705,36 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 }}
                 onTouchEndCapture={(e) => clearTimeout(e.currentTarget._pressTimer)}
                 className="flex flex-col items-center gap-1"
+                style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
               >
-                <Heart size={26} color={reel.liked ? "var(--heart)" : "var(--text)"} fill={reel.liked ? "var(--heart)" : "none"} />
+                <Heart size={28} color={reel.liked ? "#ED4956" : "#FFFFFF"} fill={reel.liked ? "#ED4956" : "none"} strokeWidth={2} />
                 {countPrefs.likes && !reel.hide_likes && reel.likeCount > 0 && (
-                  <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.likeCount)}</span>
+                  <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.likeCount)}</span>
                 )}
               </button>
               {!reel.comments_disabled ? (
-                <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1">
-                  <MessageCircle size={25} color="var(--text)" />
+                <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+                  <MessageCircle size={27} color="#FFFFFF" strokeWidth={2} />
                   {countPrefs.comments && !reel.hide_comments && reel.commentCount > 0 && (
-                    <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.commentCount)}</span>
+                    <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.commentCount)}</span>
                   )}
                 </button>
               ) : (
-                <MessageCircle size={25} color="var(--text-disabled)" />
+                <MessageCircle size={27} color="rgba(255,255,255,0.35)" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }} />
               )}
-              <button onClick={toggleRepost} className="flex flex-col items-center gap-1">
-                <Repeat2 size={26} color={reel.reposted ? "var(--accent-end)" : "var(--text)"} strokeWidth={reel.reposted ? 2.4 : 2} />
+              <button onClick={toggleRepost} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+                <Repeat2 size={28} color="#FFFFFF" strokeWidth={reel.reposted ? 2.8 : 2} />
                 {countPrefs.reposts && !reel.hide_reposts && reel.repostCount > 0 && (
-                  <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.repostCount)}</span>
+                  <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.repostCount)}</span>
                 )}
               </button>
-              <button className="flex flex-col items-center gap-1">
-                <SendHorizontal size={24} color="var(--text)" />
+              <button className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+                <SendHorizontal size={26} color="#FFFFFF" strokeWidth={2} />
               </button>
-              <button onClick={toggleSave} className="flex flex-col items-center gap-1">
-                <Bookmark size={24} color="var(--text)" fill={reel.saved ? "var(--text)" : "none"} />
+              <button onClick={toggleSave} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+                <Bookmark size={26} color="#FFFFFF" fill={reel.saved ? "#FFFFFF" : "none"} strokeWidth={2} />
                 {countPrefs.saves && !reel.hide_saves && reel.saveCount > 0 && (
-                  <span className="text-[10px]" style={{ color: "var(--text)" }}>{formatCount(reel.saveCount)}</span>
+                  <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.saveCount)}</span>
                 )}
               </button>
             </div>
@@ -2740,8 +2783,14 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMsg, setPasswordMsg] = useState("");
 
-  const DEFAULT_ACCENT_START = "#FDDB92";
-  const DEFAULT_ACCENT_END = "#EFBF04";
+  // Picker preview defaults follow the current theme when nothing is customised.
+  const THEME_ACCENT_DEFAULTS = {
+    dark: ["#38BDF8", "#0095F6"],
+    light: ["#38BDF8", "#0095F6"],
+    bangladesh: ["#F42A41", "#DA291C"],
+  };
+  const DEFAULT_ACCENT_START = (THEME_ACCENT_DEFAULTS[theme] || THEME_ACCENT_DEFAULTS.dark)[0];
+  const DEFAULT_ACCENT_END = (THEME_ACCENT_DEFAULTS[theme] || THEME_ACCENT_DEFAULTS.dark)[1];
   const [pickerStart, setPickerStart] = useState(accentStart || DEFAULT_ACCENT_START);
   const [pickerEnd, setPickerEnd] = useState(accentEnd || DEFAULT_ACCENT_END);
 
@@ -3060,6 +3109,52 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
 
           <div className="text-[11px] mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Accent colour</div>
 
+          {/* Rainbow presets — tap one to apply instantly to buttons, icons & rings */}
+          <div
+            className="rounded-2xl p-3 mb-3"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <span
+                className="flex-1 h-2.5 rounded-full"
+                style={{ background: "linear-gradient(90deg, #0095F6, #A855F7, #DB2777, #DC2626, #EA580C, #EFBF04, #059669, #0D9488)" }}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2.5">
+              {[
+                ["#38BDF8", "#0095F6"],
+                ["#A855F7", "#6D28D9"],
+                ["#F472B6", "#DB2777"],
+                ["#F87171", "#DC2626"],
+                ["#FB923C", "#EA580C"],
+                ["#FDDB92", "#EFBF04"],
+                ["#34D399", "#059669"],
+                ["#2DD4BF", "#0D9488"],
+              ].map(([s, e]) => {
+                const active = isCustomized && accentStart === s && accentEnd === e;
+                return (
+                  <button
+                    key={s + e}
+                    onClick={() => {
+                      setPickerStart(s);
+                      setPickerEnd(e);
+                      onAccentChange?.(s, e);
+                    }}
+                    className="rounded-full"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      background: `linear-gradient(135deg, ${s} 0%, ${e} 100%)`,
+                      border: active ? "2.5px solid var(--text)" : "2px solid var(--border)",
+                      boxShadow: active ? "0 0 0 2px var(--surface) inset" : "none",
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="text-[11px] mb-2" style={{ color: "var(--text-muted)" }}>Or make your own</div>
           <div
             className="rounded-2xl overflow-hidden mb-3"
             style={{ background: "var(--surface)", border: isCustomized ? "2px solid var(--accent-solid)" : "1px solid var(--border)" }}
@@ -5350,16 +5445,20 @@ export default function App() {
       return "dark";
     }
   });
+  // v2 keys: a one-time reset that wipes any accidentally-saved accent from an
+  // earlier build (old picker defaults could get saved and pollute every theme).
   const [accentStart, setAccentStartState] = useState(() => {
     try {
-      return localStorage.getItem("loop_accent_start") || "";
+      localStorage.removeItem("loop_accent_start");
+      localStorage.removeItem("loop_accent_end");
+      return localStorage.getItem("loop_accent_start_v2") || "";
     } catch {
       return "";
     }
   });
   const [accentEnd, setAccentEndState] = useState(() => {
     try {
-      return localStorage.getItem("loop_accent_end") || "";
+      return localStorage.getItem("loop_accent_end_v2") || "";
     } catch {
       return "";
     }
@@ -5375,19 +5474,26 @@ export default function App() {
     setAccentStartState(start);
     setAccentEndState(end);
     try {
-      if (start) localStorage.setItem("loop_accent_start", start);
-      else localStorage.removeItem("loop_accent_start");
-      if (end) localStorage.setItem("loop_accent_end", end);
-      else localStorage.removeItem("loop_accent_end");
+      if (start) localStorage.setItem("loop_accent_start_v2", start);
+      else localStorage.removeItem("loop_accent_start_v2");
+      if (end) localStorage.setItem("loop_accent_end_v2", end);
+      else localStorage.removeItem("loop_accent_end_v2");
     } catch {}
   };
 
+  // A custom accent overrides the action accent AND the story/avatar ring, so
+  // the chosen colour shows consistently on every button, icon, and ring.
   const rootVarOverrides = {};
-  if (accentStart) rootVarOverrides["--accent-start"] = accentStart;
-  if (accentEnd) rootVarOverrides["--accent-end"] = accentEnd;
-  // Keep the solid accent (used by nav, links, active states) in sync with a
-  // custom gradient so nothing is left showing the old theme accent.
-  if (accentEnd) rootVarOverrides["--accent-solid"] = accentEnd;
+  if (accentStart) {
+    rootVarOverrides["--accent-start"] = accentStart;
+    rootVarOverrides["--ring-start"] = accentStart;
+  }
+  if (accentEnd) {
+    rootVarOverrides["--accent-end"] = accentEnd;
+    rootVarOverrides["--accent-solid"] = accentEnd;
+    rootVarOverrides["--ring-end"] = accentEnd;
+  }
+  if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
   const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null;
