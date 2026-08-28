@@ -65,9 +65,9 @@ const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end
 // --ring-* is the story-ring gradient, kept intentionally distinct from the
 // action accent: gold in dark, blue in light (per the user's brand direction).
 const THEME_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Fredoka:wght@500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Cinzel+Decorative:wght@400;700;900&display=swap');
   :root {
-    /* ---- DARK (Instagram): pure black, blue accent ---- */
+    /* ---- DARK: pure black, gold accent (premium) ---- */
     --bg: #000000;
     --bg-sunken: #000000;
     --page-bg: #000000;
@@ -81,18 +81,18 @@ const THEME_CSS = `
     --text-muted: #8E8E8E;
     --text-disabled: #4A4A4A;
     --toggle-off: #363636;
-    --accent-start: #0095F6;
-    --accent-end: #0095F6;
-    --accent-solid: #0095F6;
-    --on-accent: #FFFFFF;
+    --accent-start: #FDDB92;
+    --accent-end: #EFBF04;
+    --accent-solid: #EFBF04;
+    --on-accent: #1A1408;
     --heart: #ED4956;
     --wordmark: #FFFFFF;
     /* story ring — gold in dark */
     --ring-start: #FDDB92;
     --ring-end: #EFBF04;
-    --tag-bg: #10222E;
-    --tag-border: #16394D;
-    --tag-text: #4DB8F5;
+    --tag-bg: #2A2410;
+    --tag-border: #4A3E18;
+    --tag-text: #E8C766;
   }
   [data-theme="light"] {
     /* ---- LIGHT (Instagram): white, blue accent ---- */
@@ -704,10 +704,10 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
       {title === "Loop" ? (
         <span
           style={{
-            fontFamily: "'Fredoka', 'Sora', sans-serif",
-            fontWeight: 600,
-            fontSize: 27,
-            letterSpacing: "0.3px",
+            fontFamily: "'Cinzel Decorative', 'Sora', serif",
+            fontWeight: 700,
+            fontSize: 24,
+            letterSpacing: "0.5px",
             color: "var(--wordmark)",
             lineHeight: 1,
           }}
@@ -2785,7 +2785,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
 
   // Picker preview defaults follow the current theme when nothing is customised.
   const THEME_ACCENT_DEFAULTS = {
-    dark: ["#38BDF8", "#0095F6"],
+    dark: ["#FDDB92", "#EFBF04"],
     light: ["#38BDF8", "#0095F6"],
     bangladesh: ["#F42A41", "#DA291C"],
   };
