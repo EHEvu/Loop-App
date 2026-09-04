@@ -1556,11 +1556,6 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
                     strokeWidth={1.9}
                   />
                 </button>
-                {canReply && (
-                  <button onClick={() => setReplyFocused(true)} className="p-1.5 shrink-0 transition-transform active:scale-90">
-                    <MessageCircle size={25} color="#FFFFFF" strokeWidth={1.9} style={{ transform: "scaleX(-1)" }} />
-                  </button>
-                )}
                 <button onClick={() => setSheet("send")} className="p-1.5 shrink-0 transition-transform active:scale-90">
                   <SendHorizontal size={25} color="#FFFFFF" strokeWidth={1.9} />
                 </button>
