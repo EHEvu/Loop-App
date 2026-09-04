@@ -671,20 +671,339 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
   );
 }
 
-const mockPosts = [
-  { id: 1, user: "nilufar.k", place: "Cox's Bazar", likes: 482, caption: "The sunset was unreal today 🌅" },
-  { id: 2, user: "rafiq.tech", place: "Dhaka", likes: 219, caption: "New desk setup, finally done ✨" },
-  { id: 3, user: "meherun.a", place: "Sylhet", likes: 967, caption: "Morning at the tea garden ☕🍃" },
-];
+// ---- Stories ----
+// Backed by the `stories` + `story_views` tables and the `stories`
+// storage bucket (see stories-setup.sql). A story lives 24 hours;
+// expired ones are filtered out by RLS, so the client never has to
+// think about it. Stories are grouped per user: one ring per person.
 
-const mockStories = [
-  { id: 0, user: "You", isSelf: true },
-  { id: 1, user: "nilufar.k" },
-  { id: 2, user: "rafiq.tech" },
-  { id: 3, user: "meherun.a" },
-  { id: 4, user: "tanvir.v" },
-  { id: 5, user: "priya.dances" },
-];
+const STORY_PHOTO_MS = 5000;   // how long a photo is shown
+const STORY_VIDEO_CAP_MS = 30000; // longest a video story can run
+
+// Composer: preview the picked file, optionally add a caption, publish.
+function StoryComposer({ file, onCancel, onPublished }) {
+  const [caption, setCaption] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const isVideo = file.type.startsWith("video");
+  const previewUrl = React.useMemo(() => URL.createObjectURL(file), [file]);
+
+  useEffect(() => () => URL.revokeObjectURL(previewUrl), [previewUrl]);
+
+  const publish = async () => {
+    setBusy(true);
+    setError("");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setBusy(false);
+      setError("Not logged in");
+      return;
+    }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${user.id}/${Date.now()}-${safeName}`;
+    const { error: upErr } = await supabase.storage.from("stories").upload(path, file);
+    if (upErr) {
+      setBusy(false);
+      setError(upErr.message);
+      return;
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("stories").getPublicUrl(path);
+    const { error: insErr } = await supabase.from("stories").insert({
+      user_id: user.id,
+      media_url: publicUrl,
+      media_type: isVideo ? "video" : "photo",
+      caption: caption.trim() || null,
+    });
+    setBusy(false);
+    if (insErr) {
+      setError(insErr.message);
+      return;
+    }
+    onPublished();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "#000000" }}>
+      <div className="flex items-center justify-between px-4 pt-4 pb-3">
+        <button onClick={onCancel} className="p-1 -ml-1 transition-transform active:scale-90">
+          <X size={24} color="#FFFFFF" />
+        </button>
+        <span className="text-sm" style={{ color: "#FFFFFF", fontWeight: 700 }}>Your story</span>
+        <span style={{ width: 24 }} />
+      </div>
+
+      <div className="flex-1 flex items-center justify-center overflow-hidden px-3">
+        {isVideo ? (
+          <video src={previewUrl} className="max-w-full max-h-full rounded-2xl" controls playsInline />
+        ) : (
+          <img src={previewUrl} alt="" className="max-w-full max-h-full object-contain rounded-2xl" />
+        )}
+      </div>
+
+      <div className="px-4 pt-3 pb-6">
+        {error && (
+          <p className="text-xs mb-2" style={{ color: "var(--heart)" }}>{error}</p>
+        )}
+        <input
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+          placeholder="Add a caption..."
+          maxLength={200}
+          className="w-full rounded-full px-4 h-11 text-sm outline-none mb-3"
+          style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "#FFFFFF" }}
+        />
+        <button
+          onClick={publish}
+          disabled={busy}
+          className="w-full rounded-full h-12 text-sm transition-transform active:scale-95"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? "Sharing..." : "Share to story"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Full-screen viewer: segmented progress bars, tap left/right to move,
+// press-and-hold to pause, swipe-free and keyboard-free by design (mobile).
+function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenProfile, onChanged }) {
+  const [gIndex, setGIndex] = useState(startGroupIndex);
+  const [sIndex, setSIndex] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [duration, setDuration] = useState(STORY_PHOTO_MS);
+  const [paused, setPaused] = useState(false);
+  const [viewCount, setViewCount] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const videoRef = React.useRef(null);
+  const pressRef = React.useRef({ t: 0 });
+
+  const group = groups[gIndex];
+  const story = group?.items?.[sIndex];
+
+  // Reset the clock whenever the visible story changes.
+  useEffect(() => {
+    setElapsed(0);
+    setDuration(story?.media_type === "video" ? STORY_VIDEO_CAP_MS : STORY_PHOTO_MS);
+    setViewCount(null);
+  }, [story?.id]);
+
+  // Tick while playing.
+  useEffect(() => {
+    if (paused || !story) return;
+    const t = setInterval(() => setElapsed((e) => e + 50), 50);
+    return () => clearInterval(t);
+  }, [paused, story?.id]);
+
+  // Advance when the current story runs out.
+  useEffect(() => {
+    if (elapsed >= duration) advance(1);
+  }, [elapsed, duration]);
+
+  // Keep the <video> in sync with the paused state.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (paused) v.pause();
+    else v.play().catch(() => {});
+  }, [paused, story?.id]);
+
+  // Record the view (skips your own stories).
+  useEffect(() => {
+    if (!story || !currentUserId || story.user_id === currentUserId) return;
+    supabase
+      .from("story_views")
+      .upsert({ story_id: story.id, viewer_id: currentUserId }, { onConflict: "story_id,viewer_id" })
+      .then(() => {});
+  }, [story?.id, currentUserId]);
+
+  // For your own story, show how many people watched it.
+  useEffect(() => {
+    if (!story || story.user_id !== currentUserId) return;
+    let cancelled = false;
+    supabase
+      .from("story_views")
+      .select("viewer_id", { count: "exact", head: true })
+      .eq("story_id", story.id)
+      .then(({ count }) => {
+        if (!cancelled) setViewCount(count || 0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [story?.id, currentUserId]);
+
+  const advance = (dir) => {
+    const g = groups[gIndex];
+    if (!g) {
+      onClose();
+      return;
+    }
+    const nextS = sIndex + dir;
+    if (nextS >= 0 && nextS < g.items.length) {
+      setElapsed(0);
+      setSIndex(nextS);
+      return;
+    }
+    const nextG = gIndex + dir;
+    if (nextG < 0) {
+      setElapsed(0);
+      setSIndex(0);
+      return;
+    }
+    if (nextG >= groups.length) {
+      onClose();
+      return;
+    }
+    setElapsed(0);
+    setGIndex(nextG);
+    setSIndex(dir > 0 ? 0 : Math.max(0, groups[nextG].items.length - 1));
+  };
+
+  const handleDelete = async () => {
+    if (!story || deleting) return;
+    if (!window.confirm("Delete this story?")) return;
+    setDeleting(true);
+    const { error } = await supabase.from("stories").delete().eq("id", story.id);
+    setDeleting(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    onChanged?.();
+    onClose();
+  };
+
+  if (!group || !story) return null;
+
+  const isOwner = story.user_id === currentUserId;
+  const pct = Math.min(100, (elapsed / duration) * 100);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "#000000" }}>
+      {/* media */}
+      <div
+        className="absolute inset-0"
+        onPointerDown={() => {
+          pressRef.current = { t: Date.now() };
+          setPaused(true);
+        }}
+        onPointerUp={(e) => {
+          setPaused(false);
+          const held = Date.now() - pressRef.current.t;
+          if (held < 250) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const rel = (e.clientX - rect.left) / rect.width;
+            advance(rel < 0.32 ? -1 : 1);
+          }
+        }}
+        onPointerLeave={() => setPaused(false)}
+      >
+        {story.media_type === "video" ? (
+          <video
+            key={story.id}
+            ref={videoRef}
+            src={story.media_url}
+            className="w-full h-full object-contain"
+            playsInline
+            autoPlay
+            onLoadedMetadata={(e) => {
+              const ms = (e.currentTarget.duration || 15) * 1000;
+              setDuration(Math.min(ms, STORY_VIDEO_CAP_MS));
+            }}
+          />
+        ) : (
+          <img key={story.id} src={story.media_url} alt="" className="w-full h-full object-contain" />
+        )}
+        <div
+          className="absolute top-0 left-0 right-0 pointer-events-none"
+          style={{ height: 160, background: "linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)" }}
+        />
+        {story.caption && (
+          <div
+            className="absolute bottom-0 left-0 right-0 pointer-events-none"
+            style={{ height: 200, background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)" }}
+          />
+        )}
+      </div>
+
+      {/* segmented progress */}
+      <div className="relative flex gap-1 px-2.5 pt-3">
+        {group.items.map((_, i) => (
+          <div key={i} className="flex-1 rounded-full overflow-hidden" style={{ height: 2.5, background: "rgba(255,255,255,0.3)" }}>
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: i < sIndex ? "100%" : i === sIndex ? `${pct}%` : "0%",
+                background: "#FFFFFF",
+                transition: i === sIndex ? "width 50ms linear" : "none",
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* header */}
+      <div className="relative flex items-center gap-2.5 px-3.5 pt-3">
+        <button
+          onClick={() => {
+            onClose();
+            onOpenProfile?.(group.userId);
+          }}
+          className="flex items-center gap-2.5 min-w-0"
+        >
+          <Avatar username={group.username} avatarUrl={group.avatarUrl} size={34} />
+          <span className="text-[13px] truncate" style={{ color: "#FFFFFF", fontWeight: 600 }}>
+            {isOwner ? "Your story" : group.username}
+          </span>
+          <span className="text-[11px] shrink-0" style={{ color: "rgba(255,255,255,0.7)" }}>
+            {timeAgo(story.created_at)}
+          </span>
+        </button>
+
+        <div className="flex-1" />
+
+        {isOwner && viewCount !== null && (
+          <span className="flex items-center gap-1 text-[11px] shrink-0" style={{ color: "rgba(255,255,255,0.85)" }}>
+            <Eye size={13} /> {formatCount(viewCount)}
+          </span>
+        )}
+        {isOwner && (
+          <button onClick={handleDelete} className="p-1 shrink-0 transition-transform active:scale-90">
+            <Trash2 size={18} color="#FFFFFF" />
+          </button>
+        )}
+        <button onClick={onClose} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
+          <X size={22} color="#FFFFFF" />
+        </button>
+      </div>
+
+      {/* caption sits above the bottom edge, over its own scrim */}
+      {story.caption && (
+        <div className="absolute left-0 right-0 bottom-0 px-5 pb-8 pointer-events-none">
+          <p className="text-sm" style={{ color: "#FFFFFF", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+            {story.caption}
+          </p>
+        </div>
+      )}
+
+      {paused && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-none">
+          <span
+            className="px-3 py-1.5 rounded-full text-[11px]"
+            style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", color: "#FFFFFF", fontWeight: 600 }}
+          >
+            Paused
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNotificationsClick, unreadCount = 0, hasNotifications = false }) {
   return (
@@ -738,37 +1057,220 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
   );
 }
 
-function StoriesBar() {
+// Story ring + face are defined at module scope on purpose: nesting them
+// inside StoriesBar would remount the <img> on every re-render and make
+// avatars visibly flicker.
+function StoryRing({ seen, children }) {
+  return (
+    <div
+      className="rounded-full flex items-center justify-center"
+      style={{
+        width: 62,
+        height: 62,
+        background: seen
+          ? "var(--toggle-off)"
+          : "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)",
+        padding: 2.5,
+      }}
+    >
+      <div
+        className="w-full h-full rounded-full overflow-hidden flex items-center justify-center"
+        style={{ background: "var(--surface)", border: "2.5px solid var(--bg)" }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function StoryFace({ username, avatarUrl }) {
+  if (avatarUrl) return <img src={avatarUrl} alt="" className="w-full h-full object-cover" />;
+  return (
+    <span className="text-base" style={{ color: "var(--text)", fontWeight: 600 }}>
+      {(username || "u")[0].toUpperCase()}
+    </span>
+  );
+}
+
+function StoriesBar({ onOpenProfile }) {
+  const [groups, setGroups] = useState([]);
+  const [me, setMe] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [viewerAt, setViewerAt] = useState(null); // index into groups, or null
+  const [pickedFile, setPickedFile] = useState(null);
+  const fileRef = React.useRef(null);
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const load = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    const { data: myProfile } = await supabase
+      .from("profiles")
+      .select("id, username, avatar_url")
+      .eq("id", user.id)
+      .maybeSingle();
+    setMe(myProfile || { id: user.id, username: "you", avatar_url: null });
+
+    // RLS already hides expired stories; filtering here too keeps the bar
+    // honest if one expires while the app is left open.
+    const { data: rows, error } = await supabase
+      .from("stories")
+      .select("id, user_id, media_url, media_type, caption, created_at")
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: true });
+
+    if (error || !rows) {
+      setGroups([]);
+      setLoading(false);
+      return;
+    }
+
+    const userIds = [...new Set(rows.map((r) => r.user_id))];
+    let profiles = [];
+    if (userIds.length > 0) {
+      const { data } = await supabase.from("profiles").select("id, username, avatar_url").in("id", userIds);
+      profiles = data || [];
+    }
+
+    const { data: views } = await supabase.from("story_views").select("story_id").eq("viewer_id", user.id);
+    const seen = new Set((views || []).map((v) => v.story_id));
+
+    const byUser = new Map();
+    for (const r of rows) {
+      if (!byUser.has(r.user_id)) byUser.set(r.user_id, []);
+      byUser.get(r.user_id).push(r);
+    }
+
+    const list = [...byUser.entries()].map(([uid, items]) => {
+      const p = profiles.find((x) => x.id === uid);
+      return {
+        userId: uid,
+        username: p?.username || "unknown",
+        avatarUrl: p?.avatar_url || null,
+        items,
+        allSeen: items.every((st) => seen.has(st.id)),
+        isSelf: uid === user.id,
+      };
+    });
+
+    // You first, then anyone with something unwatched, then the rest.
+    list.sort((a, b) => {
+      if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+      if (a.allSeen !== b.allSeen) return a.allSeen ? 1 : -1;
+      return 0;
+    });
+
+    setGroups(list);
+    setLoading(false);
+  };
+
+  const pickFile = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (f) setPickedFile(f);
+  };
+
+  const myGroup = groups.find((g) => g.isSelf);
+  const others = groups.filter((g) => !g.isSelf);
+
   return (
     <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-      <div className="flex gap-4 px-4 pt-1 pb-3 overflow-x-auto">
-        {mockStories.map((s) => (
-          <div key={s.id} className="flex flex-col items-center gap-1.5 shrink-0" style={{ width: 62 }}>
-            <div
-              className="rounded-full flex items-center justify-center"
-              style={{ width: 62, height: 62, background: s.isSelf ? "transparent" : "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: s.isSelf ? 0 : 2.5, border: s.isSelf ? "1.5px solid var(--border)" : "none" }}
+      <input ref={fileRef} type="file" accept="image/*,video/*" onChange={pickFile} className="hidden" />
+
+      <div className="flex gap-4 px-4 pt-1 pb-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        {/* Your story — the ring opens yours, the + adds another */}
+        <div className="flex flex-col items-center gap-1.5 shrink-0" style={{ width: 62 }}>
+          <div className="relative">
+            <button
+              onClick={() => {
+                if (myGroup) setViewerAt(groups.indexOf(myGroup));
+                else fileRef.current?.click();
+              }}
+              className="block transition-transform active:scale-95"
             >
-              <div
-                className="w-full h-full rounded-full flex items-center justify-center text-base relative"
-                style={{ background: "var(--surface)", color: "var(--text)", border: s.isSelf ? "none" : "2.5px solid var(--bg)", fontWeight: 600 }}
-              >
-                {s.user[0].toUpperCase()}
-                {s.isSelf && (
-                  <span
-                    className="absolute -bottom-0.5 -right-0.5 rounded-full flex items-center justify-center text-[11px]"
-                    style={{ width: 19, height: 19, background: "var(--accent-solid)", color: "var(--on-accent)", fontWeight: 700, border: "2px solid var(--bg)" }}
-                  >
-                    +
-                  </span>
-                )}
-              </div>
-            </div>
-            <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>
-              {s.user}
-            </span>
+              {myGroup ? (
+                <StoryRing seen={myGroup.allSeen}>
+                  <StoryFace username={me?.username} avatarUrl={me?.avatar_url} />
+                </StoryRing>
+              ) : (
+                <div
+                  className="rounded-full flex items-center justify-center overflow-hidden"
+                  style={{ width: 62, height: 62, background: "var(--surface)", border: "1.5px solid var(--border)" }}
+                >
+                  <StoryFace username={me?.username} avatarUrl={me?.avatar_url} />
+                </div>
+              )}
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="absolute -bottom-0.5 -right-0.5 rounded-full flex items-center justify-center transition-transform active:scale-90"
+              style={{ width: 19, height: 19, background: "var(--accent-solid)", border: "2px solid var(--bg)" }}
+            >
+              <Plus size={11} color="var(--on-accent)" strokeWidth={3.5} />
+            </button>
           </div>
-        ))}
+          <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>
+            Your story
+          </span>
+        </div>
+
+        {loading
+          ? Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="flex flex-col items-center gap-1.5 shrink-0" style={{ width: 62 }}>
+                <div className="rounded-full" style={{ width: 62, height: 62, background: "var(--border-subtle)" }} />
+                <div className="rounded-full" style={{ width: 40, height: 9, background: "var(--border-subtle)" }} />
+              </div>
+            ))
+          : others.map((g) => (
+              <button
+                key={g.userId}
+                onClick={() => setViewerAt(groups.indexOf(g))}
+                className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95"
+                style={{ width: 62 }}
+              >
+                <StoryRing seen={g.allSeen}>
+                  <StoryFace username={g.username} avatarUrl={g.avatarUrl} />
+                </StoryRing>
+                <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>
+                  {g.username}
+                </span>
+              </button>
+            ))}
       </div>
+
+      {pickedFile && (
+        <StoryComposer
+          file={pickedFile}
+          onCancel={() => setPickedFile(null)}
+          onPublished={() => {
+            setPickedFile(null);
+            load();
+          }}
+        />
+      )}
+
+      {viewerAt !== null && groups[viewerAt] && (
+        <StoryViewer
+          groups={groups}
+          startGroupIndex={viewerAt}
+          currentUserId={me?.id}
+          onOpenProfile={onOpenProfile}
+          onClose={() => {
+            setViewerAt(null);
+            load(); // refresh the seen/unseen rings
+          }}
+          onChanged={load}
+        />
+      )}
     </div>
   );
 }
@@ -970,7 +1472,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         unreadCount={unreadCount}
         hasNotifications={hasNotifications}
       />
-      <StoriesBar />
+      <StoriesBar onOpenProfile={onOpenProfile} />
 
       {loading ? (
         <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
