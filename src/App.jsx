@@ -51,6 +51,8 @@ import {
   Copy,
   Pencil,
   ChevronLeft,
+  Star,
+  Share2,
 } from "lucide-react";
 
 // ---- Design tokens ----
@@ -712,11 +714,13 @@ function StoryComposer({ file, onCancel, onPublished }) {
     const {
       data: { publicUrl },
     } = supabase.storage.from("stories").getPublicUrl(path);
+    const prefs = getStoryPrefs();
     const { error: insErr } = await supabase.from("stories").insert({
       user_id: user.id,
       media_url: publicUrl,
       media_type: isVideo ? "video" : "photo",
       caption: caption.trim() || null,
+      comments_disabled: !prefs.allowReplies,
     });
     setBusy(false);
     if (insErr) {
@@ -771,74 +775,495 @@ function StoryComposer({ file, onCancel, onPublished }) {
 
 // Full-screen viewer: segmented progress bars, tap left/right to move,
 // press-and-hold to pause, swipe-free and keyboard-free by design (mobile).
-function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenProfile, onChanged }) {
+// ---- Story option sheets ----
+// All of these sit above the viewer (z-70) and freeze its timer while open.
+
+function StorySheetShell({ title, onClose, children }) {
+  return (
+    <>
+      <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.6)" }} onClick={onClose} />
+      <div
+        className="fixed left-0 right-0 bottom-0 z-[71] rounded-t-3xl"
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", maxHeight: "80vh", overflowY: "auto" }}
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        <div className="flex items-center justify-between px-4 pb-2">
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{title}</span>
+          <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
+        </div>
+        {children}
+      </div>
+    </>
+  );
+}
+
+function StoryMenuRow({ icon, label, onClick, danger, busy, trailing }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-left transition-colors active:bg-[var(--active-highlight)]"
+      style={{ color: danger ? "var(--heart)" : "var(--text)", opacity: busy ? 0.5 : 1 }}
+    >
+      {icon}
+      <span className="flex-1">{label}</span>
+      {trailing}
+    </button>
+  );
+}
+
+// Send this story into a DM. Reuses the existing messaging tables:
+// the media lands as an image_url message, plus a short caption line.
+function StorySendSheet({ story, currentUserId, onClose }) {
+  const [people, setPeople] = useState([]);
+  const [query, setQuery] = useState("");
+  const [sentTo, setSentTo] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, avatar_url")
+        .neq("id", currentUserId || "")
+        .limit(50);
+      if (!cancelled) {
+        setPeople(data || []);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
+
+  const sendTo = async (person) => {
+    setBusyId(person.id);
+    setError("");
+    const { data: convoId, error: convoErr } = await supabase.rpc("get_or_create_conversation", {
+      other_user: person.id,
+    });
+    if (convoErr) {
+      setBusyId(null);
+      setError(convoErr.message);
+      return;
+    }
+    const { error: msgErr } = await supabase.from("messages").insert({
+      conversation_id: convoId,
+      sender_id: currentUserId,
+      image_url: story.media_url,
+      content: story.caption ? `Shared a story · ${story.caption}` : "Shared a story",
+    });
+    setBusyId(null);
+    if (msgErr) {
+      setError(msgErr.message);
+      return;
+    }
+    setSentTo((prev) => [...prev, person.id]);
+  };
+
+  const filtered = people.filter((p) => p.username.toLowerCase().includes(query.trim().toLowerCase()));
+
+  return (
+    <StorySheetShell title="Send story to" onClose={onClose}>
+      <div className="px-4 pb-2">
+        <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <Search size={16} color="var(--text-muted)" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search people"
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "var(--text)" }}
+          />
+        </div>
+      </div>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+      <div className="pb-6">
+        {loading ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : filtered.length === 0 ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No one to send to yet</p>
+        ) : (
+          filtered.map((p) => {
+            const done = sentTo.includes(p.id);
+            return (
+              <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
+                <Avatar username={p.username} avatarUrl={p.avatar_url} size={44} />
+                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
+                <button
+                  onClick={() => !done && sendTo(p)}
+                  disabled={done || busyId === p.id}
+                  className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+                  style={{
+                    background: done ? "var(--bg-sunken)" : ACCENT,
+                    border: done ? "1px solid var(--border)" : "none",
+                    color: done ? "var(--text-muted)" : "var(--on-accent)",
+                    fontWeight: 700,
+                    opacity: busyId === p.id ? 0.6 : 1,
+                  }}
+                >
+                  {done ? "Sent" : busyId === p.id ? "..." : "Send"}
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// Add the story to a highlight — pick an existing one or name a new one.
+// Highlighted stories survive the 24-hour expiry (see stories-v2-setup.sql).
+function StoryHighlightSheet({ story, currentUserId, onClose, onDone }) {
+  const [highlights, setHighlights] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newTitle, setNewTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [addedTo, setAddedTo] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("story_highlights")
+        .select("id, title, cover_url")
+        .eq("user_id", currentUserId || "")
+        .order("created_at", { ascending: false });
+      if (!cancelled) {
+        setHighlights(data || []);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
+
+  const addTo = async (highlightId) => {
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase
+      .from("story_highlight_items")
+      .upsert({ highlight_id: highlightId, story_id: story.id }, { onConflict: "highlight_id,story_id" });
+    setBusy(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setAddedTo((prev) => [...prev, highlightId]);
+    onDone?.();
+  };
+
+  const createAndAdd = async () => {
+    const title = newTitle.trim();
+    if (!title) return;
+    setBusy(true);
+    setError("");
+    const { data: created, error: err } = await supabase
+      .from("story_highlights")
+      .insert({ user_id: currentUserId, title, cover_url: story.media_type === "photo" ? story.media_url : null })
+      .select("id, title, cover_url")
+      .single();
+    if (err) {
+      setBusy(false);
+      setError(err.message);
+      return;
+    }
+    const { error: itemErr } = await supabase
+      .from("story_highlight_items")
+      .insert({ highlight_id: created.id, story_id: story.id });
+    setBusy(false);
+    if (itemErr) {
+      setError(itemErr.message);
+      return;
+    }
+    setHighlights((prev) => [created, ...prev]);
+    setAddedTo((prev) => [...prev, created.id]);
+    setNewTitle("");
+    onDone?.();
+  };
+
+  return (
+    <StorySheetShell title="Add to highlight" onClose={onClose}>
+      <div className="px-4 pb-3">
+        <div className="flex items-center gap-2">
+          <input
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="New highlight name"
+            maxLength={40}
+            className="flex-1 rounded-full px-4 h-11 text-sm outline-none"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+          />
+          <button
+            onClick={createAndAdd}
+            disabled={busy || !newTitle.trim()}
+            className="rounded-full px-4 h-11 text-xs shrink-0 transition-transform active:scale-95"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy || !newTitle.trim() ? 0.5 : 1 }}
+          >
+            Create
+          </button>
+        </div>
+      </div>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+      <div className="pb-6">
+        {loading ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : highlights.length === 0 ? (
+          <p className="text-xs text-center py-6 px-8" style={{ color: "var(--text-muted)" }}>
+            No highlights yet. Name one above to make your first.
+          </p>
+        ) : (
+          highlights.map((h) => {
+            const done = addedTo.includes(h.id);
+            return (
+              <button
+                key={h.id}
+                onClick={() => !done && addTo(h.id)}
+                disabled={done || busy}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors active:bg-[var(--active-highlight)]"
+              >
+                <div
+                  className="w-11 h-11 rounded-full shrink-0 overflow-hidden flex items-center justify-center"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                >
+                  {h.cover_url ? (
+                    <img src={h.cover_url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Star size={17} color="var(--text-muted)" />
+                  )}
+                </div>
+                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{h.title}</span>
+                {done && <Check size={17} color="var(--accent-solid)" />}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// Device-level defaults applied to every NEW story you post.
+function getStoryPrefs() {
+  try {
+    const raw = localStorage.getItem("loop_story_prefs");
+    return raw ? JSON.parse(raw) : { allowReplies: true, autoHighlight: false, allowSharing: true };
+  } catch {
+    return { allowReplies: true, autoHighlight: false, allowSharing: true };
+  }
+}
+function saveStoryPrefs(prefs) {
+  try {
+    localStorage.setItem("loop_story_prefs", JSON.stringify(prefs));
+  } catch {}
+}
+
+function StorySettingsSheet({ onClose }) {
+  const [prefs, setPrefs] = useState(getStoryPrefs());
+
+  const toggle = (key) => {
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefs(next);
+    saveStoryPrefs(next);
+  };
+
+  const Row = ({ label, hint, k }) => (
+    <button onClick={() => toggle(k)} className="w-full flex items-start justify-between gap-3 px-4 py-3.5 text-left">
+      <span className="flex-1">
+        <span className="text-sm block" style={{ color: "var(--text)" }}>{label}</span>
+        <span className="text-[11px] block mt-0.5" style={{ color: "var(--text-muted)" }}>{hint}</span>
+      </span>
+      <span className="rounded-full shrink-0 mt-0.5" style={{ width: 38, height: 21, background: prefs[k] ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+        <span className="rounded-full bg-white absolute" style={{ width: 17, height: 17, top: 2, left: prefs[k] ? 19 : 2, transition: "left 0.15s" }} />
+      </span>
+    </button>
+  );
+
+  return (
+    <StorySheetShell title="Story settings" onClose={onClose}>
+      <div className="pb-6">
+        <Row k="allowReplies" label="Allow replies" hint="New stories you post will accept replies. You can still turn them off per story." />
+        <Row k="allowSharing" label="Allow sharing to messages" hint="Lets people send your story to someone in a DM." />
+        <Row k="autoHighlight" label="Save to archive" hint="Keep your stories after 24 hours so you can highlight them later." />
+        <p className="text-[11px] px-4 pt-3" style={{ color: "var(--text-muted)" }}>
+          These are defaults for stories you post from this device.
+        </p>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// Who replied to your story.
+function StoryRepliesSheet({ story, onClose }) {
+  const [replies, setReplies] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: rows } = await supabase
+        .from("story_replies")
+        .select("id, user_id, body, created_at")
+        .eq("story_id", story.id)
+        .order("created_at", { ascending: false });
+      const ids = [...new Set((rows || []).map((r) => r.user_id))];
+      let profiles = [];
+      if (ids.length > 0) {
+        const { data } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+        profiles = data || [];
+      }
+      if (!cancelled) {
+        setReplies(
+          (rows || []).map((r) => ({
+            ...r,
+            username: profiles.find((p) => p.id === r.user_id)?.username || "unknown",
+            avatarUrl: profiles.find((p) => p.id === r.user_id)?.avatar_url || null,
+          }))
+        );
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [story.id]);
+
+  return (
+    <StorySheetShell title="Replies" onClose={onClose}>
+      <div className="pb-6">
+        {loading ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : replies.length === 0 ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No replies yet</p>
+        ) : (
+          replies.map((r) => (
+            <div key={r.id} className="flex items-start gap-3 px-4 py-2.5">
+              <Avatar username={r.username} avatarUrl={r.avatarUrl} size={36} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>
+                  {r.username}
+                  <span className="ml-2 text-[11px]" style={{ color: "var(--text-muted)", fontWeight: 400 }}>{timeAgo(r.created_at)}</span>
+                </p>
+                <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", wordBreak: "break-word" }}>{r.body}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- The viewer ----
+function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenProfile, onChanged, onAddStory }) {
   const [gIndex, setGIndex] = useState(startGroupIndex);
   const [sIndex, setSIndex] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(STORY_PHOTO_MS);
-  const [paused, setPaused] = useState(false);
-  const [viewCount, setViewCount] = useState(null);
-  const [deleting, setDeleting] = useState(false);
+  const [held, setHeld] = useState(false);
+  const [sheet, setSheet] = useState(null); // options | send | highlight | settings | replies
+  const [replyFocused, setReplyFocused] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [replySending, setReplySending] = useState(false);
+  const [flash, setFlash] = useState("");
+
+  // per-story live state
+  const [meta, setMeta] = useState({ views: 0, likes: 0, replies: 0, liked: false });
+  const [local, setLocal] = useState({}); // storyId -> { archived, comments_disabled }
+  const [busyAction, setBusyAction] = useState(null);
+
   const videoRef = React.useRef(null);
   const pressRef = React.useRef({ t: 0 });
 
-  const group = groups[gIndex];
-  const story = group?.items?.[sIndex];
+  // Snapshot the list for this viewing session. Archiving a story refreshes
+  // the bar behind us; without this freeze the indices would shift mid-view.
+  const sessionRef = React.useRef(groups);
+  const groupList = sessionRef.current;
 
-  // Reset the clock whenever the visible story changes.
+  const group = groupList[gIndex];
+  const rawStory = group?.items?.[sIndex];
+  const story = rawStory ? { ...rawStory, ...(local[rawStory.id] || {}) } : null;
+  const isOwner = story ? story.user_id === currentUserId : false;
+
+  // The timer is frozen while pressing, while a sheet is open, and
+  // while the reply box has focus — otherwise the story would slide
+  // out from under whatever you are doing.
+  const frozen = held || sheet !== null || replyFocused;
+
+  const showFlash = (msg) => {
+    setFlash(msg);
+    setTimeout(() => setFlash(""), 1800);
+  };
+
   useEffect(() => {
     setElapsed(0);
-    setDuration(story?.media_type === "video" ? STORY_VIDEO_CAP_MS : STORY_PHOTO_MS);
-    setViewCount(null);
-  }, [story?.id]);
+    setDuration(rawStory?.media_type === "video" ? STORY_VIDEO_CAP_MS : STORY_PHOTO_MS);
+    setReplyText("");
+  }, [rawStory?.id]);
 
-  // Tick while playing.
   useEffect(() => {
-    if (paused || !story) return;
+    if (frozen || !rawStory) return;
     const t = setInterval(() => setElapsed((e) => e + 50), 50);
     return () => clearInterval(t);
-  }, [paused, story?.id]);
+  }, [frozen, rawStory?.id]);
 
-  // Advance when the current story runs out.
   useEffect(() => {
     if (elapsed >= duration) advance(1);
   }, [elapsed, duration]);
 
-  // Keep the <video> in sync with the paused state.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (paused) v.pause();
+    if (frozen) v.pause();
     else v.play().catch(() => {});
-  }, [paused, story?.id]);
+  }, [frozen, rawStory?.id]);
 
-  // Record the view (skips your own stories).
+  // Record the view, then pull likes / replies / views for this story.
   useEffect(() => {
-    if (!story || !currentUserId || story.user_id === currentUserId) return;
-    supabase
-      .from("story_views")
-      .upsert({ story_id: story.id, viewer_id: currentUserId }, { onConflict: "story_id,viewer_id" })
-      .then(() => {});
-  }, [story?.id, currentUserId]);
-
-  // For your own story, show how many people watched it.
-  useEffect(() => {
-    if (!story || story.user_id !== currentUserId) return;
+    if (!rawStory || !currentUserId) return;
     let cancelled = false;
-    supabase
-      .from("story_views")
-      .select("viewer_id", { count: "exact", head: true })
-      .eq("story_id", story.id)
-      .then(({ count }) => {
-        if (!cancelled) setViewCount(count || 0);
+
+    (async () => {
+      if (rawStory.user_id !== currentUserId) {
+        await supabase
+          .from("story_views")
+          .upsert({ story_id: rawStory.id, viewer_id: currentUserId }, { onConflict: "story_id,viewer_id" });
+      }
+
+      // RLS narrows these automatically: the owner sees every row,
+      // a visitor sees only their own — so one query serves both.
+      const [likesRes, viewsRes, repliesRes] = await Promise.all([
+        supabase.from("story_likes").select("user_id").eq("story_id", rawStory.id),
+        supabase.from("story_views").select("viewer_id", { count: "exact", head: true }).eq("story_id", rawStory.id),
+        supabase.from("story_replies").select("id", { count: "exact", head: true }).eq("story_id", rawStory.id),
+      ]);
+
+      if (cancelled) return;
+      const likeRows = likesRes.data || [];
+      setMeta({
+        views: viewsRes.count || 0,
+        likes: likeRows.length,
+        replies: repliesRes.count || 0,
+        liked: likeRows.some((l) => l.user_id === currentUserId),
       });
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [story?.id, currentUserId]);
+  }, [rawStory?.id, currentUserId]);
 
   const advance = (dir) => {
-    const g = groups[gIndex];
+    const g = groupList[gIndex];
     if (!g) {
       onClose();
       return;
@@ -855,53 +1280,118 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
       setSIndex(0);
       return;
     }
-    if (nextG >= groups.length) {
+    if (nextG >= groupList.length) {
       onClose();
       return;
     }
     setElapsed(0);
     setGIndex(nextG);
-    setSIndex(dir > 0 ? 0 : Math.max(0, groups[nextG].items.length - 1));
+    setSIndex(dir > 0 ? 0 : Math.max(0, groupList[nextG].items.length - 1));
+  };
+
+  const toggleLike = async () => {
+    if (!story || !currentUserId) return;
+    const wasLiked = meta.liked;
+    setMeta((m) => ({ ...m, liked: !wasLiked, likes: m.likes + (wasLiked ? -1 : 1) }));
+    if (wasLiked) {
+      await supabase.from("story_likes").delete().eq("story_id", story.id).eq("user_id", currentUserId);
+    } else {
+      await supabase.from("story_likes").upsert(
+        { story_id: story.id, user_id: currentUserId },
+        { onConflict: "story_id,user_id" }
+      );
+    }
+  };
+
+  const sendReply = async () => {
+    const body = replyText.trim();
+    if (!body || !story || !currentUserId || replySending) return;
+    setReplySending(true);
+    const { error } = await supabase
+      .from("story_replies")
+      .insert({ story_id: story.id, user_id: currentUserId, body });
+    setReplySending(false);
+    if (error) {
+      showFlash(error.message);
+      return;
+    }
+    setReplyText("");
+    setReplyFocused(false);
+    setMeta((m) => ({ ...m, replies: m.replies + 1 }));
+    showFlash("Reply sent");
+  };
+
+  const patchStory = async (patch, successMsg) => {
+    if (!story) return;
+    const field = Object.keys(patch)[0];
+    setBusyAction(field);
+    const { error } = await supabase.from("stories").update(patch).eq("id", story.id);
+    setBusyAction(null);
+    if (error) {
+      showFlash(error.message);
+      return;
+    }
+    setLocal((prev) => ({ ...prev, [story.id]: { ...(prev[story.id] || {}), ...patch } }));
+    onChanged?.();
+    if (successMsg) showFlash(successMsg);
   };
 
   const handleDelete = async () => {
-    if (!story || deleting) return;
-    if (!window.confirm("Delete this story?")) return;
-    setDeleting(true);
+    if (!story) return;
+    if (!window.confirm("Delete this story? This cannot be undone.")) return;
+    setBusyAction("delete");
     const { error } = await supabase.from("stories").delete().eq("id", story.id);
-    setDeleting(false);
+    setBusyAction(null);
     if (error) {
-      alert(error.message);
+      showFlash(error.message);
       return;
     }
     onChanged?.();
     onClose();
   };
 
+  const handleShare = async () => {
+    if (!story) return;
+    const url = story.media_url;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "Story on Loop", text: story.caption || "", url });
+        setSheet(null);
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setSheet(null);
+      showFlash("Link copied");
+    } catch {
+      setSheet(null);
+      showFlash("Couldn't share on this device");
+    }
+  };
+
   if (!group || !story) return null;
 
-  const isOwner = story.user_id === currentUserId;
   const pct = Math.min(100, (elapsed / duration) * 100);
+  const canReply = !isOwner && !story.comments_disabled;
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "#000000" }}>
-      {/* media */}
+      {/* media + tap zones */}
       <div
         className="absolute inset-0"
         onPointerDown={() => {
           pressRef.current = { t: Date.now() };
-          setPaused(true);
+          setHeld(true);
         }}
         onPointerUp={(e) => {
-          setPaused(false);
-          const held = Date.now() - pressRef.current.t;
-          if (held < 250) {
+          setHeld(false);
+          const heldFor = Date.now() - pressRef.current.t;
+          if (heldFor < 250) {
             const rect = e.currentTarget.getBoundingClientRect();
             const rel = (e.clientX - rect.left) / rect.width;
             advance(rel < 0.32 ? -1 : 1);
           }
         }}
-        onPointerLeave={() => setPaused(false)}
+        onPointerLeave={() => setHeld(false)}
       >
         {story.media_type === "video" ? (
           <video
@@ -921,14 +1411,12 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         )}
         <div
           className="absolute top-0 left-0 right-0 pointer-events-none"
-          style={{ height: 160, background: "linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)" }}
+          style={{ height: 170, background: "linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)" }}
         />
-        {story.caption && (
-          <div
-            className="absolute bottom-0 left-0 right-0 pointer-events-none"
-            style={{ height: 200, background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)" }}
-          />
-        )}
+        <div
+          className="absolute bottom-0 left-0 right-0 pointer-events-none"
+          style={{ height: 240, background: "linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%)" }}
+        />
       </div>
 
       {/* segmented progress */}
@@ -964,34 +1452,125 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
             {timeAgo(story.created_at)}
           </span>
         </button>
-
         <div className="flex-1" />
-
-        {isOwner && viewCount !== null && (
-          <span className="flex items-center gap-1 text-[11px] shrink-0" style={{ color: "rgba(255,255,255,0.85)" }}>
-            <Eye size={13} /> {formatCount(viewCount)}
+        {story.comments_disabled && isOwner && (
+          <span className="text-[10px] px-2 py-1 rounded-full shrink-0" style={{ background: "rgba(255,255,255,0.15)", color: "#FFFFFF" }}>
+            Replies off
           </span>
-        )}
-        {isOwner && (
-          <button onClick={handleDelete} className="p-1 shrink-0 transition-transform active:scale-90">
-            <Trash2 size={18} color="#FFFFFF" />
-          </button>
         )}
         <button onClick={onClose} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
           <X size={22} color="#FFFFFF" />
         </button>
       </div>
 
-      {/* caption sits above the bottom edge, over its own scrim */}
+      {/* caption */}
       {story.caption && (
-        <div className="absolute left-0 right-0 bottom-0 px-5 pb-8 pointer-events-none">
+        <div className="absolute left-0 right-0 px-5 pointer-events-none" style={{ bottom: 92 }}>
           <p className="text-sm" style={{ color: "#FFFFFF", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
             {story.caption}
           </p>
         </div>
       )}
 
-      {paused && (
+      {/* ---- bottom bar ---- */}
+      <div className="absolute left-0 right-0 bottom-0 px-3.5 pb-5 pt-3">
+        {isOwner ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSheet("replies")}
+              className="flex items-center gap-4 rounded-full px-4 h-11 transition-transform active:scale-95"
+              style={{ background: "rgba(255,255,255,0.14)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.2)" }}
+            >
+              <span className="flex items-center gap-1.5 text-xs" style={{ color: "#FFFFFF", fontWeight: 600 }}>
+                <Eye size={15} /> {formatCount(meta.views)}
+              </span>
+              <span className="flex items-center gap-1.5 text-xs" style={{ color: "#FFFFFF", fontWeight: 600 }}>
+                <Heart size={15} /> {formatCount(meta.likes)}
+              </span>
+              <span className="flex items-center gap-1.5 text-xs" style={{ color: "#FFFFFF", fontWeight: 600 }}>
+                <MessageCircle size={15} style={{ transform: "scaleX(-1)" }} /> {formatCount(meta.replies)}
+              </span>
+            </button>
+
+            <div className="flex-1" />
+
+            {/* add another story */}
+            <button
+              onClick={() => {
+                onClose();
+                onAddStory?.();
+              }}
+              className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+              style={{ background: ACCENT }}
+            >
+              <Plus size={20} color="var(--on-accent)" strokeWidth={3} />
+            </button>
+
+            {/* options */}
+            <button
+              onClick={() => setSheet("options")}
+              className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+              style={{ background: "rgba(255,255,255,0.14)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.2)" }}
+            >
+              <Ellipsis size={20} color="#FFFFFF" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5">
+            {canReply ? (
+              <input
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onFocus={() => setReplyFocused(true)}
+                onBlur={() => setReplyFocused(false)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendReply();
+                }}
+                placeholder={`Reply to ${group.username}...`}
+                maxLength={500}
+                className="flex-1 rounded-full px-4 h-11 text-sm outline-none min-w-0"
+                style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.35)", color: "#FFFFFF" }}
+              />
+            ) : (
+              <span className="flex-1 text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>
+                Replies are turned off
+              </span>
+            )}
+
+            {canReply && replyText.trim() ? (
+              <button
+                onClick={sendReply}
+                disabled={replySending}
+                className="rounded-full px-4 h-11 text-xs shrink-0 transition-transform active:scale-95"
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: replySending ? 0.6 : 1 }}
+              >
+                {replySending ? "..." : "Send"}
+              </button>
+            ) : (
+              <>
+                <button onClick={toggleLike} className="p-1.5 shrink-0 transition-transform active:scale-90">
+                  <Heart
+                    size={26}
+                    color={meta.liked ? "var(--heart)" : "#FFFFFF"}
+                    fill={meta.liked ? "var(--heart)" : "none"}
+                    strokeWidth={1.9}
+                  />
+                </button>
+                {canReply && (
+                  <button onClick={() => setReplyFocused(true)} className="p-1.5 shrink-0 transition-transform active:scale-90">
+                    <MessageCircle size={25} color="#FFFFFF" strokeWidth={1.9} style={{ transform: "scaleX(-1)" }} />
+                  </button>
+                )}
+                <button onClick={() => setSheet("send")} className="p-1.5 shrink-0 transition-transform active:scale-90">
+                  <SendHorizontal size={25} color="#FFFFFF" strokeWidth={1.9} />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {held && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-none">
           <span
             className="px-3 py-1.5 rounded-full text-[11px]"
@@ -1000,6 +1579,98 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
             Paused
           </span>
         </div>
+      )}
+
+      {flash && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[72] pointer-events-none">
+          <span
+            className="px-4 py-2 rounded-full text-xs block"
+            style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(10px)", color: "#FFFFFF", fontWeight: 600, maxWidth: 300 }}
+          >
+            {flash}
+          </span>
+        </div>
+      )}
+
+      {/* ---- sheets ---- */}
+      {sheet === "options" && (
+        <StorySheetShell title="Story options" onClose={() => setSheet(null)}>
+          <div className="pb-6">
+            <StoryMenuRow
+              icon={<Archive size={17} color="var(--text)" />}
+              label={story.archived ? "Unarchive" : "Archive"}
+              busy={busyAction === "archived"}
+              onClick={() =>
+                patchStory({ archived: !story.archived }, story.archived ? "Unarchived" : "Moved to archive")
+              }
+            />
+            <StoryMenuRow
+              icon={<SendHorizontal size={17} color="var(--text)" />}
+              label="Send"
+              onClick={() => setSheet("send")}
+            />
+            <StoryMenuRow
+              icon={<Star size={17} color="var(--text)" />}
+              label="Highlight"
+              onClick={() => setSheet("highlight")}
+            />
+            <StoryMenuRow
+              icon={<Share2 size={17} color="var(--text)" />}
+              label="Share"
+              onClick={handleShare}
+            />
+            <StoryMenuRow
+              icon={<MessageCircle size={17} color="var(--text)" style={{ transform: "scaleX(-1)" }} />}
+              label={story.comments_disabled ? "Turn on comments" : "Turn off comments"}
+              busy={busyAction === "comments_disabled"}
+              onClick={() =>
+                patchStory(
+                  { comments_disabled: !story.comments_disabled },
+                  story.comments_disabled ? "Replies turned on" : "Replies turned off"
+                )
+              }
+              trailing={
+                <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: story.comments_disabled ? "var(--toggle-off)" : ACCENT, position: "relative" }}>
+                  <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: story.comments_disabled ? 2 : 17, transition: "left 0.15s" }} />
+                </span>
+              }
+            />
+            <StoryMenuRow
+              icon={<Settings size={17} color="var(--text)" />}
+              label="Go to story settings"
+              onClick={() => setSheet("settings")}
+            />
+
+            <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+
+            <StoryMenuRow
+              icon={<Trash2 size={17} color="var(--heart)" />}
+              label="Delete"
+              danger
+              busy={busyAction === "delete"}
+              onClick={handleDelete}
+            />
+          </div>
+        </StorySheetShell>
+      )}
+
+      {sheet === "send" && (
+        <StorySendSheet story={story} currentUserId={currentUserId} onClose={() => setSheet(null)} />
+      )}
+
+      {sheet === "highlight" && (
+        <StoryHighlightSheet
+          story={story}
+          currentUserId={currentUserId}
+          onClose={() => setSheet(null)}
+          onDone={() => showFlash("Added to highlight")}
+        />
+      )}
+
+      {sheet === "settings" && <StorySettingsSheet onClose={() => setSheet(null)} />}
+
+      {sheet === "replies" && isOwner && (
+        <StoryRepliesSheet story={story} onClose={() => setSheet(null)} />
       )}
     </div>
   );
@@ -1124,7 +1795,8 @@ function StoriesBar({ onOpenProfile }) {
     // honest if one expires while the app is left open.
     const { data: rows, error } = await supabase
       .from("stories")
-      .select("id, user_id, media_url, media_type, caption, created_at")
+      .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled")
+      .eq("archived", false)
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: true });
 
@@ -1269,6 +1941,7 @@ function StoriesBar({ onOpenProfile }) {
             load(); // refresh the seen/unseen rings
           }}
           onChanged={load}
+          onAddStory={() => fileRef.current?.click()}
         />
       )}
     </div>
