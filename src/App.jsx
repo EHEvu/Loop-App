@@ -50,6 +50,7 @@ import {
   Check,
   Copy,
   Pencil,
+  ChevronLeft,
 } from "lucide-react";
 
 // ---- Design tokens ----
@@ -675,8 +676,6 @@ const mockPosts = [
   { id: 2, user: "rafiq.tech", place: "Dhaka", likes: 219, caption: "New desk setup, finally done ✨" },
   { id: 3, user: "meherun.a", place: "Sylhet", likes: 967, caption: "Morning at the tea garden ☕🍃" },
 ];
-
-const mockGrid = Array.from({ length: 9 }, (_, i) => i);
 
 const mockStories = [
   { id: 0, user: "You", isSelf: true },
@@ -1503,11 +1502,23 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         />
         {!playing && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }}>
-              <Play size={28} color="#fff" fill="#fff" />
+            <div
+              className="w-[72px] h-[72px] rounded-full flex items-center justify-center"
+              style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
+            >
+              <Play size={30} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
             </div>
           </div>
         )}
+        {/* readability scrims — keeps white text legible over any video */}
+        <div
+          className="absolute top-0 left-0 right-0 pointer-events-none"
+          style={{ height: 120, background: "linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)" }}
+        />
+        <div
+          className="absolute bottom-0 left-0 right-0 pointer-events-none"
+          style={{ height: 260, background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0) 100%)" }}
+        />
       </div>
 
       {/* mute toggle — only shown while paused, per request */}
@@ -1516,17 +1527,24 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           onClick={() => setMuted((m) => !m)}
           onTouchStart={(e) => e.stopPropagation()}
           onTouchEnd={(e) => e.stopPropagation()}
-          className="absolute top-14 right-3 w-11 h-11 rounded-full flex items-center justify-center"
-          style={{ background: "rgba(0,0,0,0.45)" }}
+          className="absolute top-14 right-3 w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-90"
+          style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.12)" }}
         >
-          {muted ? <VolumeX size={20} color="#fff" /> : <Volume2 size={20} color="#fff" />}
+          {muted ? <VolumeX size={19} color="#fff" /> : <Volume2 size={19} color="#fff" />}
         </button>
       )}
 
       {toast && (
         <div
-          className="absolute top-24 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full text-xs z-30"
-          style={{ background: "rgba(0,0,0,0.75)", color: "#FFFFFF" }}
+          className="absolute top-24 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-xs z-30"
+          style={{
+            background: "rgba(0,0,0,0.7)",
+            backdropFilter: "blur(10px)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            color: "#FFFFFF",
+            fontWeight: 600,
+            boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
+          }}
         >
           {toast}
         </div>
@@ -1549,8 +1567,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
               <div
-                className="absolute right-0 top-7 z-20 rounded-xl overflow-hidden py-1"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 190 }}
+                className="absolute right-0 top-8 z-20 rounded-2xl overflow-hidden py-1"
+                style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 200, boxShadow: "0 8px 28px rgba(0,0,0,0.4)" }}
               >
                 <button
                   onClick={() => {
@@ -1668,24 +1686,25 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 mb-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
-          <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full shrink-0" style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 1.5 }}>
-              <div className="w-full h-full rounded-full flex items-center justify-center text-[10px]" style={{ background: "#333", color: "#FFFFFF" }}>
+        <div className="flex items-center gap-2.5 mb-2.5">
+          <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-full shrink-0" style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}>
+              <div className="w-full h-full rounded-full flex items-center justify-center text-[11px]" style={{ background: "rgba(20,20,20,0.9)", color: "#FFFFFF", fontWeight: 600 }}>
                 {reel.username[0].toUpperCase()}
               </div>
             </div>
-            <span className="text-sm" style={{ color: "#FFFFFF", fontWeight: 600 }}>{reel.username}</span>
+            <span className="text-[13px] truncate" style={{ color: "#FFFFFF", fontWeight: 600 }}>{reel.username}</span>
           </button>
           {reel.user_id !== userId && (
             <button
               onClick={toggleFollow}
-              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs"
+              className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] shrink-0 transition-transform active:scale-95"
               style={{
-                background: isFollowing ? "rgba(0,0,0,0.3)" : "#FFFFFF",
-                border: isFollowing ? "1px solid rgba(255,255,255,0.7)" : "none",
+                background: isFollowing ? "rgba(255,255,255,0.14)" : "#FFFFFF",
+                border: isFollowing ? "1px solid rgba(255,255,255,0.55)" : "none",
                 color: isFollowing ? "#FFFFFF" : "#000000",
                 fontWeight: 700,
+                backdropFilter: isFollowing ? "blur(8px)" : "none",
               }}
             >
               {isFollowing ? <UserCheck size={12} /> : <UserPlus size={12} />}
@@ -1694,7 +1713,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           )}
         </div>
         {reel.location && (
-          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "rgba(255,255,255,0.9)", filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "rgba(255,255,255,0.85)" }}>
             <MapPin size={11} /> {reel.location}
           </span>
         )}
@@ -1711,8 +1730,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         <div className="relative flex flex-col items-center">
           {expanded && (
             <div
-              className="absolute bottom-24 flex flex-col items-center gap-5 py-3 px-2 rounded-full"
-              style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(2px)" }}
+              className="absolute bottom-24 flex flex-col items-center gap-5 py-4 px-2.5 rounded-full"
+              style={{
+                background: "rgba(0,0,0,0.42)",
+                backdropFilter: "blur(12px)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                boxShadow: "0 8px 28px rgba(0,0,0,0.4)",
+              }}
             >
               <button
                 onClick={toggleLike}
@@ -1763,41 +1787,61 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           {/* audio / sound-source shortcut, sits just above the main heart button */}
           <button
             onClick={() => showToast("Reels using this audio — coming soon")}
-            className="w-8 h-8 rounded-lg mb-3 flex items-center justify-center"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+            className="w-9 h-9 rounded-xl mb-3 flex items-center justify-center transition-transform active:scale-90"
+            style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.18)" }}
           >
-            <Music2 size={15} color="var(--text)" />
+            <Music2 size={15} color="#FFFFFF" />
           </button>
 
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="w-9 h-9 rounded-full flex items-center justify-center"
-            style={{ background: reel.liked ? ACCENT : "var(--surface)", border: reel.liked ? "none" : "1px solid var(--border)" }}
+            className="w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90"
+            style={{
+              background: reel.liked ? ACCENT : "rgba(0,0,0,0.4)",
+              backdropFilter: reel.liked ? "none" : "blur(8px)",
+              border: reel.liked ? "none" : "1px solid rgba(255,255,255,0.18)",
+              boxShadow: reel.liked ? "0 4px 16px rgba(0,0,0,0.35)" : "none",
+            }}
           >
             {expanded ? (
-              <Ellipsis size={19} color={reel.liked ? "var(--bg)" : "var(--text)"} />
+              <Ellipsis size={20} color={reel.liked ? "var(--on-accent)" : "#FFFFFF"} />
             ) : (
-              <Heart size={19} color={reel.liked ? "var(--bg)" : "var(--text)"} fill={reel.liked ? "var(--bg)" : "none"} />
+              <Heart size={20} color={reel.liked ? "var(--on-accent)" : "#FFFFFF"} fill={reel.liked ? "var(--on-accent)" : "none"} />
             )}
           </button>
         </div>
       </div>
 
-      {/* swipe progress dots */}
-      <div className="absolute top-11 right-3 flex flex-col gap-1">
-        {reels.map((_, i) => (
-          <div
-            key={i}
-            className="rounded-full"
-            style={{
-              width: 3,
-              height: i === index ? 14 : 6,
-              background: i === index ? "var(--text)" : "var(--toggle-off)",
-              transition: "height 0.2s",
-            }}
-          />
-        ))}
-      </div>
+      {/* swipe progress — a slim windowed indicator on the right edge.
+          Only ~7 dots are ever drawn so a long reel list can't run off screen,
+          and it sits mid-height so it never collides with the mute button. */}
+      {reels.length > 1 && (
+        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1 pointer-events-none">
+          {(() => {
+            const WINDOW = 7;
+            const half = Math.floor(WINDOW / 2);
+            let start = Math.max(0, Math.min(index - half, reels.length - WINDOW));
+            if (start < 0) start = 0;
+            const end = Math.min(reels.length, start + WINDOW);
+            return reels.slice(start, end).map((_, k) => {
+              const i = start + k;
+              const active = i === index;
+              return (
+                <div
+                  key={i}
+                  className="rounded-full"
+                  style={{
+                    width: 3,
+                    height: active ? 16 : 5,
+                    background: active ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.35)",
+                    transition: "height 0.22s ease, background 0.22s ease",
+                  }}
+                />
+              );
+            });
+          })()}
+        </div>
+      )}
 
       {commentSheetOpen && (
         <ReelCommentsSheet
@@ -2302,10 +2346,29 @@ const mockAccounts = [
   { id: 6, user: "shuvo.eats", name: "Shuvo Rahman", followers: "23K" },
 ];
 
-function SearchScreen({ onOpenInterests, onOpenProfile }) {
+function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  // Explore grid — real posts, no longer placeholder squares.
+  const [explore, setExplore] = useState([]);
+  const [exploreLoading, setExploreLoading] = useState(true);
+
+  useEffect(() => {
+    loadExplore();
+  }, []);
+
+  const loadExplore = async () => {
+    setExploreLoading(true);
+    const { data } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, caption")
+      .eq("archived", false)
+      .order("created_at", { ascending: false })
+      .limit(48);
+    setExplore(data || []);
+    setExploreLoading(false);
+  };
 
   useEffect(() => {
     if (!query.trim()) {
@@ -2322,7 +2385,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile }) {
     setSearching(true);
     const { data } = await supabase
       .from("profiles")
-      .select("id, username, full_name")
+      .select("id, username, full_name, avatar_url")
       .or(`username.ilike.%${q}%,full_name.ilike.%${q}%`)
       .limit(20);
     setResults(data || []);
@@ -2333,24 +2396,29 @@ function SearchScreen({ onOpenInterests, onOpenProfile }) {
     <div className="flex-1 overflow-y-auto pb-4">
       <TopBar title="Search" />
       <div className="px-4">
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-3">
           <div
-            className="flex-1 flex items-center gap-2 rounded-xl px-3 py-2.5"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+            className="flex-1 flex items-center gap-2.5 rounded-full px-4 h-11"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
           >
-            <Search size={16} color="var(--text-muted)" />
+            <Search size={17} color="var(--text-muted)" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search"
+              placeholder="Search accounts"
               className="flex-1 bg-transparent outline-none text-sm"
               style={{ color: "var(--text)" }}
             />
+            {query && (
+              <button onClick={() => setQuery("")} className="shrink-0">
+                <X size={15} color="var(--text-muted)" />
+              </button>
+            )}
           </div>
           <button
             onClick={onOpenInterests}
-            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+            className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
           >
             <SlidersHorizontal size={17} color="var(--text)" />
           </button>
@@ -2374,31 +2442,49 @@ function SearchScreen({ onOpenInterests, onOpenProfile }) {
                 onClick={() => onOpenProfile(a.id)}
                 className="flex items-center gap-3 py-2.5 w-full text-left"
               >
-                <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
-                  <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-xs" style={{ color: "var(--text)" }}>
-                    {a.username[0].toUpperCase()}
-                  </div>
-                </div>
+                <Avatar username={a.username} avatarUrl={a.avatar_url} size={46} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</p>
+                  <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</p>
                   {a.full_name && (
-                    <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{a.full_name}</p>
+                    <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{a.full_name}</p>
                   )}
                 </div>
               </button>
             ))
           )}
         </div>
+      ) : exploreLoading ? (
+        <div className="grid grid-cols-3 gap-0.5">
+          {Array.from({ length: 12 }, (_, i) => (
+            <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
+          ))}
+        </div>
+      ) : explore.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center">
+          <ImageIcon size={30} color="var(--toggle-off)" />
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>Nothing to explore yet</p>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>New posts from everyone will show up here.</p>
+        </div>
       ) : (
-        <div className="grid grid-cols-3 gap-0.5 px-0.5">
-          {mockGrid.map((i) => (
-            <div
-              key={i}
-              className="aspect-square flex items-center justify-center"
-              style={{ background: i % 4 === 0 ? "var(--surface)" : "var(--border-subtle)" }}
+        <div className="grid grid-cols-3 gap-0.5">
+          {explore.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onOpenPost?.(p.id)}
+              className="aspect-square relative overflow-hidden"
+              style={{ background: "var(--bg-sunken)" }}
             >
-              <ImageIcon size={18} color="var(--toggle-off)" />
-            </div>
+              {p.media_type === "photo" ? (
+                <img src={p.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+              ) : (
+                <video src={p.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+              )}
+              {p.media_type !== "photo" && (
+                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                  <Video size={13} color="#FFFFFF" />
+                </span>
+              )}
+            </button>
           ))}
         </div>
       )}
@@ -2920,7 +3006,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
 
   const Header = ({ title, back }) => (
     <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-      <button onClick={back} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+      <button onClick={back} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
       <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{title}</h1>
     </div>
   );
@@ -3308,7 +3394,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
     const { data: p, error } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, location, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count")
+      .select("id, media_url, media_type, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count")
       .eq("id", postId)
       .single();
 
@@ -3397,26 +3483,38 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
   return (
     <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
-      <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
-          <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-              <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
+      <div className="flex items-center justify-between px-4 pt-3 pb-2.5">
+        <div className="flex items-center gap-2 min-w-0">
+          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+            <ChevronLeft size={24} color="var(--text)" />
+          </button>
+          <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2.5 min-w-0">
+            <div
+              className="shrink-0"
+              style={{ width: 36, height: 36, borderRadius: "9999px", background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
+            >
+              <div className="w-full h-full rounded-full flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
                 {post.username[0].toUpperCase()}
               </div>
             </div>
-            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{post.username}</span>
+            <div className="flex flex-col leading-tight min-w-0 text-left">
+              <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
+              {post.location && (
+                <span className="flex items-center gap-0.5 text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
+                  <MapPin size={9} /> {post.location}
+                </span>
+              )}
+            </div>
           </button>
         </div>
-        <button onClick={() => (isOwner ? setOptionsOpen(true) : onOpenReport?.(post.id))}>
-          <Ellipsis size={20} color="var(--text)" />
+        <button onClick={() => (isOwner ? setOptionsOpen(true) : onOpenReport?.(post.id))} className="p-1 -mr-1 shrink-0">
+          <Ellipsis size={19} color="var(--text)" />
         </button>
       </div>
 
       <div
         className="w-full flex items-center justify-center"
-        style={{ background: "var(--surface)", aspectRatio: "4/5" }}
+        style={{ background: "var(--bg-sunken)", aspectRatio: "4/5" }}
         onDoubleClick={toggleLike}
       >
         {post.media_type === "photo" ? (
@@ -3426,19 +3524,19 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
         )}
       </div>
 
-      <div className="flex items-center justify-between px-4 pt-3">
+      <div className="flex items-center justify-between px-4 pt-2.5">
         <div className="flex items-center gap-5">
-          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
-            <div className="h-8 flex items-center justify-center">
-              <Send size={22} color="var(--text)" />
+          <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+            <div className="h-7 flex items-center justify-center">
+              <Send size={23} color="var(--text)" strokeWidth={1.9} />
             </div>
-            <span className="text-[10px] leading-none h-3 mt-0.5">&nbsp;</span>
+            <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
           </div>
-          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
-            <button onClick={toggleSave} className="h-8 flex items-center justify-center">
-              <Bookmark size={22} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} />
+          <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+            <button onClick={toggleSave} className="h-7 flex items-center justify-center transition-transform active:scale-90">
+              <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
             </button>
-            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+            <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
               {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
             </span>
           </div>
@@ -3452,33 +3550,33 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             }}
             onTouchEnd={() => clearTimeout(pressTimer.current)}
             onTouchMove={() => clearTimeout(pressTimer.current)}
-            className="h-8 flex items-center justify-center"
+            className="h-8 flex items-center justify-center transition-transform active:scale-90"
           >
-            <Heart size={30} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} />
+            <Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} />
           </button>
-          <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+          <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
             {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
           </span>
         </div>
 
         <div className="flex items-center gap-5">
-          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+          <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
             <button
               onClick={() => !post.comments_disabled && setCommentSheetOpen(true)}
               disabled={post.comments_disabled}
-              className="h-8 flex items-center justify-center"
+              className="h-7 flex items-center justify-center transition-transform active:scale-90"
             >
-              <MessageCircle size={22} color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"} />
+              <MessageCircle size={23} color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"} strokeWidth={1.9} style={{ transform: "scaleX(-1)" }} />
             </button>
-            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+            <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
               {countPrefs.comments && !post.hide_comments && post.commentCount > 0 ? formatCount(post.commentCount) : "\u00A0"}
             </span>
           </div>
-          <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
-            <button onClick={toggleRepost} className="h-8 flex items-center justify-center">
-              <Repeat2 size={24} color={post.reposted ? "var(--accent-end)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 2} />
+          <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+            <button onClick={toggleRepost} className="h-7 flex items-center justify-center transition-transform active:scale-90">
+              <Repeat2 size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 1.9} />
             </button>
-            <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+            <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
               {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
             </span>
           </div>
@@ -3489,19 +3587,25 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
         <LikesViewsPopup post={post} isOwner={isOwner} onClose={() => setLikesPopupOpen(false)} />
       )}
 
-      <div className="px-4 pt-1 pb-6">
-        {post.location && (
-          <span className="flex items-center gap-1 text-[11px] mb-1" style={{ color: "var(--text-muted)" }}>
-            <MapPin size={11} /> {post.location}
-          </span>
-        )}
+      <div className="px-4 pt-1.5 pb-8">
         <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
-        {post.caption && (
-          <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
-            <span style={{ color: "var(--text)", fontWeight: 600 }}>{post.username} </span>
-            {post.caption}
-          </p>
+        <CaptionText
+          username={post.username}
+          caption={post.caption}
+          onOpenProfile={() => onOpenProfile?.(post.user_id)}
+        />
+        {!post.comments_disabled && !post.hide_comments && post.commentCount > 0 && (
+          <button
+            onClick={() => setCommentSheetOpen(true)}
+            className="text-[13px] mt-1 block"
+            style={{ color: "var(--text-muted)" }}
+          >
+            View all {formatCount(post.commentCount)} comment{post.commentCount === 1 ? "" : "s"}
+          </button>
         )}
+        <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
+          {timeAgo(post.created_at)} ago
+        </span>
       </div>
 
       {commentSheetOpen && (
@@ -3678,7 +3782,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div className="flex items-center gap-2">
           {onBack && (
-            <button onClick={onBack} className="text-sm mr-1" style={{ color: "var(--text)" }}>←</button>
+            <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
           )}
           <span className="text-base" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
             {profile.username}
@@ -4060,24 +4164,26 @@ function MessagesScreen({ onBack }) {
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
-      <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)" }}>
+      <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
-            <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <button onClick={onBack} className="-ml-1.5 p-1 transition-transform active:scale-90">
+              <ChevronLeft size={24} color="var(--text)" />
+            </button>
+            <h1 className="text-xl truncate" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
               Messages
             </h1>
           </div>
           <button
             onClick={() => setCreatingGroup(true)}
-            className="flex items-center gap-1 rounded-full px-3 py-1.5 text-xs"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+            className="flex items-center gap-1.5 rounded-full px-3.5 h-9 text-xs shrink-0 transition-transform active:scale-95"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
           >
             <Users size={14} /> New group
           </button>
         </div>
-        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <Search size={15} color="var(--text-muted)" />
+        <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <Search size={16} color="var(--text-muted)" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -4085,6 +4191,11 @@ function MessagesScreen({ onBack }) {
             className="flex-1 bg-transparent outline-none text-sm"
             style={{ color: "var(--text)" }}
           />
+          {query && (
+            <button onClick={() => setQuery("")} className="shrink-0">
+              <X size={15} color="var(--text-muted)" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -4096,9 +4207,13 @@ function MessagesScreen({ onBack }) {
             <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>No accounts found</p>
           ) : (
             searchResults.map((p) => (
-              <button key={p.id} onClick={() => startChat(p)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left">
-                <Avatar username={p.username} avatarUrl={p.avatar_url} size={44} />
-                <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
+              <button
+                key={p.id}
+                onClick={() => startChat(p)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+              >
+                <Avatar username={p.username} avatarUrl={p.avatar_url} size={52} />
+                <span className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
               </button>
             ))
           )
@@ -4115,27 +4230,32 @@ function MessagesScreen({ onBack }) {
             <button
               key={c.conversationId}
               onClick={() => setOpenChat(c)}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
+              className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
             >
               {c.isGroup ? (
-                <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center" style={{ background: "var(--border)" }}>
-                  <Users size={20} color="var(--text)" />
+                <div
+                  className="w-[52px] h-[52px] rounded-full shrink-0 flex items-center justify-center"
+                  style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
+                >
+                  <div className="w-full h-full rounded-full flex items-center justify-center" style={{ background: "var(--surface)" }}>
+                    <Users size={21} color="var(--text)" />
+                  </div>
                 </div>
               ) : (
-                <Avatar username={c.displayName} avatarUrl={c.avatarUrl} size={44} />
+                <Avatar username={c.displayName} avatarUrl={c.avatarUrl} size={52} />
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: c.unread > 0 ? 700 : 600 }}>{c.displayName}</p>
-                <p className="text-xs truncate" style={{ color: c.unread > 0 ? "var(--text)" : "var(--text-muted)", fontWeight: c.unread > 0 ? 600 : 400 }}>
+                <p className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: c.unread > 0 ? 700 : 600 }}>{c.displayName}</p>
+                <p className="text-[13px] truncate mt-0.5" style={{ color: c.unread > 0 ? "var(--text)" : "var(--text-muted)", fontWeight: c.unread > 0 ? 600 : 400 }}>
                   {c.lastMessage || "Say hi 👋"}
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{timeShort(c.lastMessageAt)}</span>
+              <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{timeShort(c.lastMessageAt)}</span>
                 {c.unread > 0 && (
                   <span
-                    className="rounded-full flex items-center justify-center text-[9px]"
-                    style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 18, height: 18, padding: "0 5px" }}
+                    className="rounded-full flex items-center justify-center text-[10px]"
+                    style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 20, height: 20, padding: "0 6px" }}
                   >
                     {c.unread > 99 ? "99+" : c.unread}
                   </span>
@@ -4212,7 +4332,7 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
           <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>New group</h1>
         </div>
         <button
@@ -4512,7 +4632,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
         {isGroup ? (
           <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "var(--border)" }}>
             <Users size={16} color="var(--text)" />
@@ -4772,7 +4892,7 @@ function NotificationsScreen({ onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Notifications
         </h1>
@@ -4873,7 +4993,7 @@ function ReportScreen({ postId, onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Report
         </h1>
@@ -4983,7 +5103,7 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Comments
         </h1>
@@ -5300,7 +5420,7 @@ function InterestsScreen({ onBack }) {
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm" style={{ color: "var(--text)" }}>←</button>
+          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
           <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
             Interests
           </h1>
@@ -5628,7 +5748,11 @@ export default function App() {
               onOpenProfile={(userId) => setViewProfileId(userId)}
             />
           ) : active === "search" ? (
-            <SearchScreen onOpenInterests={() => setInterestsOpen(true)} onOpenProfile={(userId) => setViewProfileId(userId)} />
+            <SearchScreen
+              onOpenInterests={() => setInterestsOpen(true)}
+              onOpenProfile={(userId) => setViewProfileId(userId)}
+              onOpenPost={(postId) => setViewPostId(postId)}
+            />
           ) : active === "profile" ? (
             <ProfileScreen onOpenSettings={() => setSettingsOpen(true)} onOpenPost={(postId) => setViewPostId(postId)} />
           ) : (
