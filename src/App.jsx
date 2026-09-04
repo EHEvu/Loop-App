@@ -53,6 +53,13 @@ import {
   ChevronLeft,
   Star,
   Share2,
+  Smile,
+  CornerUpLeft,
+  Forward,
+  Mic,
+  UserMinus,
+  LogOut,
+  Shield,
 } from "lucide-react";
 
 // ---- Design tokens ----
@@ -1310,15 +1317,36 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
     const { error } = await supabase
       .from("story_replies")
       .insert({ story_id: story.id, user_id: currentUserId, body });
-    setReplySending(false);
     if (error) {
+      setReplySending(false);
       showFlash(error.message);
       return;
     }
+
+    // Mirror the reply into a DM with the story owner, the way Instagram
+    // does. Best-effort: if the DM fails the reply itself still stands.
+    try {
+      const { data: convoId } = await supabase.rpc("get_or_create_conversation", { other_user: story.user_id });
+      if (convoId) {
+        await supabase.from("messages").insert({
+          conversation_id: convoId,
+          sender_id: currentUserId,
+          content: body,
+          image_url: story.media_type === "photo" ? story.media_url : null,
+        });
+        await supabase
+          .from("conversations")
+          .update({ last_message: `Replied to your story · ${body}`, last_message_at: new Date().toISOString() })
+          .eq("id", convoId);
+        await supabase.from("notifications").insert({ user_id: story.user_id, actor_id: currentUserId, type: "message" });
+      }
+    } catch {}
+
+    setReplySending(false);
     setReplyText("");
     setReplyFocused(false);
     setMeta((m) => ({ ...m, replies: m.replies + 1 }));
-    showFlash("Reply sent");
+    showFlash("Reply sent")
   };
 
   const patchStory = async (patch, successMsg) => {
@@ -5576,23 +5604,559 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
   );
 }
 
+// ---- Messaging helpers ----
+
+const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🔥", "👍"];
+
+function secsToClock(total) {
+  const s = Math.max(0, Math.round(total || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// Voice note bubble. The duration is stored at record time because a
+// freshly-recorded webm blob often reports Infinity for .duration until
+// it has been fully seeked, which would show "0:00" on the sender's side.
+function AudioBubble({ src, duration, mine }) {
+  const audioRef = React.useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (playing) {
+      a.pause();
+    } else {
+      a.play().catch(() => {});
+    }
+  };
+
+  const fg = mine ? "var(--on-accent)" : "var(--text)";
+  const track = mine ? "rgba(255,255,255,0.35)" : "var(--toggle-off)";
+
+  return (
+    <div
+      className="flex items-center gap-3 px-3 py-2.5"
+      style={{
+        background: mine ? ACCENT : "var(--surface)",
+        border: mine ? "none" : "1px solid var(--border)",
+        borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+        minWidth: 190,
+      }}
+    >
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setProgress(0);
+        }}
+        onTimeUpdate={(e) => {
+          const a = e.currentTarget;
+          const total = Number.isFinite(a.duration) ? a.duration : duration || 0;
+          if (total > 0) setProgress((a.currentTime / total) * 100);
+        }}
+      />
+      <button onClick={toggle} className="shrink-0 transition-transform active:scale-90">
+        {playing ? (
+          <span className="flex items-center justify-center rounded-full" style={{ width: 30, height: 30, background: mine ? "rgba(255,255,255,0.22)" : "var(--bg-sunken)" }}>
+            <span style={{ display: "flex", gap: 3 }}>
+              <span style={{ width: 3, height: 12, background: fg, borderRadius: 1 }} />
+              <span style={{ width: 3, height: 12, background: fg, borderRadius: 1 }} />
+            </span>
+          </span>
+        ) : (
+          <span className="flex items-center justify-center rounded-full" style={{ width: 30, height: 30, background: mine ? "rgba(255,255,255,0.22)" : "var(--bg-sunken)" }}>
+            <Play size={14} color={fg} fill={fg} style={{ marginLeft: 2 }} />
+          </span>
+        )}
+      </button>
+
+      <div className="flex-1 min-w-0">
+        <div className="rounded-full overflow-hidden" style={{ height: 4, background: track }}>
+          <div className="h-full rounded-full" style={{ width: `${progress}%`, background: fg, transition: "width 0.1s linear" }} />
+        </div>
+      </div>
+
+      <span className="text-[11px] shrink-0 tabular-nums" style={{ color: mine ? "rgba(255,255,255,0.85)" : "var(--text-muted)" }}>
+        {secsToClock(duration)}
+      </span>
+    </div>
+  );
+}
+
+// Pick a chat to forward a message into. Shows your groups plus anyone
+// you can start a 1:1 with.
+function ForwardSheet({ message, currentUserId, onClose, onDone }) {
+  const [groups, setGroups] = useState([]);
+  const [people, setPeople] = useState([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [sentTo, setSentTo] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: memberRows } = await supabase
+        .from("conversation_members")
+        .select("conversation_id")
+        .eq("user_id", currentUserId || "");
+      const ids = (memberRows || []).map((r) => r.conversation_id);
+      let groupRows = [];
+      if (ids.length > 0) {
+        const { data } = await supabase
+          .from("conversations")
+          .select("id, title")
+          .in("id", ids)
+          .eq("is_group", true);
+        groupRows = data || [];
+      }
+      const { data: profileRows } = await supabase
+        .from("profiles")
+        .select("id, username, avatar_url")
+        .neq("id", currentUserId || "")
+        .limit(50);
+      if (!cancelled) {
+        setGroups(groupRows);
+        setPeople(profileRows || []);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
+
+  const copyInto = async (conversationId) => {
+    const { error: err } = await supabase.from("messages").insert({
+      conversation_id: conversationId,
+      sender_id: currentUserId,
+      content: message.content,
+      image_url: message.image_url,
+      audio_url: message.audio_url,
+      audio_duration: message.audio_duration,
+      forwarded: true,
+    });
+    if (err) throw err;
+    await supabase
+      .from("conversations")
+      .update({
+        last_message: message.content || (message.audio_url ? "🎤 Voice message" : "📷 Photo"),
+        last_message_at: new Date().toISOString(),
+      })
+      .eq("id", conversationId);
+  };
+
+  const forwardToGroup = async (g) => {
+    setBusyId(g.id);
+    setError("");
+    try {
+      await copyInto(g.id);
+      setSentTo((prev) => [...prev, g.id]);
+      onDone?.();
+    } catch (e) {
+      setError(e.message);
+    }
+    setBusyId(null);
+  };
+
+  const forwardToPerson = async (p) => {
+    setBusyId(p.id);
+    setError("");
+    const { data: convoId, error: convoErr } = await supabase.rpc("get_or_create_conversation", { other_user: p.id });
+    if (convoErr) {
+      setBusyId(null);
+      setError(convoErr.message);
+      return;
+    }
+    try {
+      await copyInto(convoId);
+      setSentTo((prev) => [...prev, p.id]);
+      onDone?.();
+    } catch (e) {
+      setError(e.message);
+    }
+    setBusyId(null);
+  };
+
+  const q = query.trim().toLowerCase();
+  const shownGroups = groups.filter((g) => (g.title || "Group").toLowerCase().includes(q));
+  const shownPeople = people.filter((p) => p.username.toLowerCase().includes(q));
+
+  const Btn = ({ id, onClick }) => {
+    const done = sentTo.includes(id);
+    return (
+      <button
+        onClick={() => !done && onClick()}
+        disabled={done || busyId === id}
+        className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+        style={{
+          background: done ? "var(--bg-sunken)" : ACCENT,
+          border: done ? "1px solid var(--border)" : "none",
+          color: done ? "var(--text-muted)" : "var(--on-accent)",
+          fontWeight: 700,
+          opacity: busyId === id ? 0.6 : 1,
+        }}
+      >
+        {done ? "Sent" : busyId === id ? "..." : "Send"}
+      </button>
+    );
+  };
+
+  return (
+    <StorySheetShell title="Forward to" onClose={onClose}>
+      <div className="px-4 pb-2">
+        <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <Search size={16} color="var(--text-muted)" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search chats and people"
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "var(--text)" }}
+          />
+        </div>
+      </div>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+      <div className="pb-6">
+        {loading ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : (
+          <>
+            {shownGroups.length > 0 && (
+              <p className="text-[11px] px-4 pt-1 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>Groups</p>
+            )}
+            {shownGroups.map((g) => (
+              <div key={g.id} className="flex items-center gap-3 px-4 py-2.5">
+                <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                  <Users size={18} color="var(--text)" />
+                </div>
+                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{g.title || "Group"}</span>
+                <Btn id={g.id} onClick={() => forwardToGroup(g)} />
+              </div>
+            ))}
+
+            {shownPeople.length > 0 && (
+              <p className="text-[11px] px-4 pt-3 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>People</p>
+            )}
+            {shownPeople.map((p) => (
+              <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
+                <Avatar username={p.username} avatarUrl={p.avatar_url} size={44} />
+                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
+                <Btn id={p.id} onClick={() => forwardToPerson(p)} />
+              </div>
+            ))}
+
+            {shownGroups.length === 0 && shownPeople.length === 0 && (
+              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Nothing matches that</p>
+            )}
+          </>
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// Group members: rename, add, remove, promote, leave.
+function GroupManageSheet({ conversationId, title, currentUserId, onClose, onRenamed, onLeft }) {
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState(title || "");
+  const [savingName, setSavingName] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [candidates, setCandidates] = useState([]);
+  const [query, setQuery] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    loadMembers();
+  }, [conversationId]);
+
+  const loadMembers = async () => {
+    setLoading(true);
+    const { data: rows } = await supabase
+      .from("conversation_members")
+      .select("user_id, is_admin")
+      .eq("conversation_id", conversationId);
+    const ids = (rows || []).map((r) => r.user_id);
+    let profiles = [];
+    if (ids.length > 0) {
+      const { data } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+      profiles = data || [];
+    }
+    setMembers(
+      (rows || []).map((r) => ({
+        ...r,
+        username: profiles.find((p) => p.id === r.user_id)?.username || "unknown",
+        avatarUrl: profiles.find((p) => p.id === r.user_id)?.avatar_url || null,
+      }))
+    );
+    setLoading(false);
+  };
+
+  const openAdd = async () => {
+    setAdding(true);
+    const { data } = await supabase.from("profiles").select("id, username, avatar_url").limit(60);
+    setCandidates(data || []);
+  };
+
+  const iAmAdmin = members.find((m) => m.user_id === currentUserId)?.is_admin === true;
+
+  const saveName = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === title) return;
+    setSavingName(true);
+    const { error: err } = await supabase.from("conversations").update({ title: trimmed }).eq("id", conversationId);
+    setSavingName(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    onRenamed?.(trimmed);
+  };
+
+  const addMember = async (p) => {
+    setBusyId(p.id);
+    setError("");
+    const { error: err } = await supabase
+      .from("conversation_members")
+      .insert({ conversation_id: conversationId, user_id: p.id });
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    await loadMembers();
+  };
+
+  const removeMember = async (m) => {
+    if (!window.confirm(`Remove ${m.username} from the group?`)) return;
+    setBusyId(m.user_id);
+    setError("");
+    const { error: err } = await supabase
+      .from("conversation_members")
+      .delete()
+      .eq("conversation_id", conversationId)
+      .eq("user_id", m.user_id);
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    await loadMembers();
+  };
+
+  const toggleAdmin = async (m) => {
+    setBusyId(m.user_id);
+    setError("");
+    const { error: err } = await supabase
+      .from("conversation_members")
+      .update({ is_admin: !m.is_admin })
+      .eq("conversation_id", conversationId)
+      .eq("user_id", m.user_id);
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    await loadMembers();
+  };
+
+  const leave = async () => {
+    if (!window.confirm("Leave this group? You'll stop receiving its messages.")) return;
+    const { error: err } = await supabase
+      .from("conversation_members")
+      .delete()
+      .eq("conversation_id", conversationId)
+      .eq("user_id", currentUserId);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    onLeft?.();
+  };
+
+  const memberIds = members.map((m) => m.user_id);
+  const shownCandidates = candidates
+    .filter((c) => !memberIds.includes(c.id))
+    .filter((c) => c.username.toLowerCase().includes(query.trim().toLowerCase()));
+
+  return (
+    <StorySheetShell title="Group info" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      <div className="px-4 pb-3">
+        <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Group name</label>
+        <div className="flex items-center gap-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={60}
+            className="flex-1 rounded-full px-4 h-11 text-sm outline-none"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+          />
+          <button
+            onClick={saveName}
+            disabled={savingName || !name.trim() || name.trim() === title}
+            className="rounded-full px-4 h-11 text-xs shrink-0 transition-transform active:scale-95"
+            style={{
+              background: ACCENT,
+              color: "var(--on-accent)",
+              fontWeight: 700,
+              opacity: savingName || !name.trim() || name.trim() === title ? 0.5 : 1,
+            }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between px-4 pt-1 pb-1.5">
+        <span className="text-[11px] uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>
+          {members.length} member{members.length === 1 ? "" : "s"}
+        </span>
+        {!adding && (
+          <button onClick={openAdd} className="flex items-center gap-1 text-xs" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
+            <UserPlus size={13} /> Add
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
+      ) : (
+        members.map((m) => (
+          <div key={m.user_id} className="flex items-center gap-3 px-4 py-2.5">
+            <Avatar username={m.username} avatarUrl={m.avatarUrl} size={40} />
+            <div className="flex-1 min-w-0">
+              <span className="text-sm truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>
+                {m.username}
+                {m.user_id === currentUserId ? " (you)" : ""}
+              </span>
+              {m.is_admin && (
+                <span className="flex items-center gap-1 text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  <Shield size={10} /> Admin
+                </span>
+              )}
+            </div>
+            {iAmAdmin && m.user_id !== currentUserId && (
+              <>
+                <button
+                  onClick={() => toggleAdmin(m)}
+                  disabled={busyId === m.user_id}
+                  className="text-[11px] shrink-0 px-2"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {m.is_admin ? "Demote" : "Make admin"}
+                </button>
+                <button
+                  onClick={() => removeMember(m)}
+                  disabled={busyId === m.user_id}
+                  className="p-1 shrink-0 transition-transform active:scale-90"
+                >
+                  <UserMinus size={17} color="var(--heart)" />
+                </button>
+              </>
+            )}
+          </div>
+        ))
+      )}
+
+      {adding && (
+        <div className="pt-2">
+          <div className="px-4 pb-2">
+            <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+              <Search size={16} color="var(--text-muted)" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search people to add"
+                className="flex-1 bg-transparent outline-none text-sm"
+                style={{ color: "var(--text)" }}
+                autoFocus
+              />
+              <button onClick={() => setAdding(false)}><X size={15} color="var(--text-muted)" /></button>
+            </div>
+          </div>
+          {shownCandidates.slice(0, 20).map((c) => (
+            <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+              <Avatar username={c.username} avatarUrl={c.avatar_url} size={40} />
+              <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{c.username}</span>
+              <button
+                onClick={() => addMember(c)}
+                disabled={busyId === c.id}
+                className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busyId === c.id ? 0.6 : 1 }}
+              >
+                Add
+              </button>
+            </div>
+          ))}
+          {shownCandidates.length === 0 && (
+            <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>Everyone is already in</p>
+          )}
+        </div>
+      )}
+
+      <div className="h-px my-2 mx-4" style={{ background: "var(--border)" }} />
+      <button
+        onClick={leave}
+        className="w-full flex items-center gap-3 px-4 py-3.5 text-sm mb-5 transition-colors active:bg-[var(--active-highlight)]"
+        style={{ color: "var(--heart)" }}
+      >
+        <LogOut size={17} /> Leave group
+      </button>
+    </StorySheetShell>
+  );
+}
+
+const MSG_COLS =
+  "id, sender_id, content, image_url, audio_url, audio_duration, reply_to_id, forwarded, created_at, edited_at, deleted";
+
 function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [otherLastRead, setOtherLastRead] = useState(null);
-  const [typingUsers, setTypingUsers] = useState([]); // usernames currently typing
+  const [typingUsers, setTypingUsers] = useState([]);
   const [menuFor, setMenuFor] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
-  const [memberNames, setMemberNames] = useState({}); // id -> username, for group sender labels
+  const [memberNames, setMemberNames] = useState({});
   const [imageUploading, setImageUploading] = useState(false);
+
+  // new in v3
+  const [reactions, setReactions] = useState({});        // messageId -> [{user_id, emoji}]
+  const [pickerFor, setPickerFor] = useState(null);      // message id showing the emoji row
+  const [replyTo, setReplyTo] = useState(null);          // message being replied to
+  const [forwardMsg, setForwardMsg] = useState(null);
+  const [groupSheet, setGroupSheet] = useState(false);
+  const [title, setTitle] = useState(chatTitle);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [recordSecs, setRecordSecs] = useState(0);
+  const [audioUploading, setAudioUploading] = useState(false);
+  const [micError, setMicError] = useState("");
+
   const scrollRef = React.useRef(null);
   const channelRef = React.useRef(null);
   const typingTimeoutRef = React.useRef(null);
   const openedAtRef = React.useRef(0);
   const pressTimerRef = React.useRef(null);
+  const recorderRef = React.useRef(null);
+  const chunksRef = React.useRef([]);
+  const recordTimerRef = React.useRef(null);
+  const cancelRecordRef = React.useRef(false);
+  const recordSecsRef = React.useRef(0);
+  const inputRef = React.useRef(null);
 
   useEffect(() => {
     loadMessages();
@@ -5626,6 +6190,12 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           if (payload.new.user_id !== currentUserId) setOtherLastRead(payload.new.last_read_at);
         }
       )
+      // Reactions live on their own table, which can't be filtered by
+      // conversation — so we take everything RLS lets through and keep
+      // only the rows belonging to messages in this chat.
+      .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => {
+        loadReactions();
+      })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         if (payload.userId === currentUserId) return;
         setTypingUsers((prev) => (prev.includes(payload.username) ? prev : [...prev, payload.username]));
@@ -5640,22 +6210,44 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
 
     return () => {
       supabase.removeChannel(channel);
+      stopRecordTimer();
     };
   }, [conversationId]);
 
   useEffect(() => {
+    if (searchOpen) return; // don't yank the view while searching
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, typingUsers]);
+  }, [messages, typingUsers, searchOpen]);
 
   const loadMessages = async () => {
     setLoading(true);
     const { data } = await supabase
       .from("messages")
-      .select("id, sender_id, content, image_url, created_at, edited_at, deleted")
+      .select(MSG_COLS)
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
     setMessages(data || []);
     setLoading(false);
+    loadReactions(data || []);
+  };
+
+  const loadReactions = async (list) => {
+    const source = list || messages;
+    const ids = source.map((m) => m.id);
+    if (ids.length === 0) {
+      setReactions({});
+      return;
+    }
+    const { data } = await supabase
+      .from("message_reactions")
+      .select("message_id, user_id, emoji")
+      .in("message_id", ids);
+    const map = {};
+    (data || []).forEach((r) => {
+      if (!map[r.message_id]) map[r.message_id] = [];
+      map[r.message_id].push(r);
+    });
+    setReactions(map);
   };
 
   const loadMemberNames = async () => {
@@ -5667,7 +6259,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     if (ids.length === 0) return;
     const { data: profiles } = await supabase.from("profiles").select("id, username").in("id", ids);
     const map = {};
-    (profiles || []).forEach((p) => (map[p.id] = p.username));
+    (profiles || []).forEach((pr) => (map[pr.id] = pr.username));
     setMemberNames(map);
   };
 
@@ -5718,26 +6310,31 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     }
   };
 
+  const insertMessage = async (payload, summary) => {
+    const { data: inserted, error } = await supabase
+      .from("messages")
+      .insert({ conversation_id: conversationId, sender_id: currentUserId, reply_to_id: replyTo?.id || null, ...payload })
+      .select(MSG_COLS)
+      .single();
+    if (error) throw error;
+    setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
+    setReplyTo(null);
+    afterSend(summary);
+    return inserted;
+  };
+
   const send = async () => {
     const trimmed = text.trim();
     if (!trimmed || !currentUserId || sending) return;
     setSending(true);
     setText("");
-
-    const { data: inserted, error } = await supabase
-      .from("messages")
-      .insert({ conversation_id: conversationId, sender_id: currentUserId, content: trimmed })
-      .select("id, sender_id, content, image_url, created_at, edited_at, deleted")
-      .single();
-
-    setSending(false);
-    if (error) {
+    try {
+      await insertMessage({ content: trimmed }, trimmed);
+    } catch (e) {
       setText(trimmed);
-      alert(error.message);
-      return;
+      alert(e.message);
     }
-    setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
-    afterSend(trimmed);
+    setSending(false);
   };
 
   const sendImage = async (file) => {
@@ -5753,27 +6350,147 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     const {
       data: { publicUrl },
     } = supabase.storage.from("messages").getPublicUrl(path);
-
-    const { data: inserted, error } = await supabase
-      .from("messages")
-      .insert({ conversation_id: conversationId, sender_id: currentUserId, image_url: publicUrl })
-      .select("id, sender_id, content, image_url, created_at, edited_at, deleted")
-      .single();
-
+    try {
+      await insertMessage({ image_url: publicUrl }, "📷 Photo");
+    } catch (e) {
+      alert(e.message);
+    }
     setImageUploading(false);
-    if (error) {
-      alert(error.message);
+  };
+
+  // ---- voice messages ----
+  // Chrome/Android records webm/opus. Safari only offers mp4/aac, so we
+  // probe instead of hard-coding, and store the extension the browser
+  // actually gave us. (iOS still needs its own pass later.)
+  const pickAudioMime = () => {
+    if (typeof MediaRecorder === "undefined") return null;
+    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus", "audio/ogg"];
+    for (const c of candidates) {
+      try {
+        if (MediaRecorder.isTypeSupported(c)) return c;
+      } catch {}
+    }
+    return "";
+  };
+
+  const stopRecordTimer = () => {
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+  };
+
+  const startRecording = async () => {
+    setMicError("");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setMicError("This browser can't record audio");
       return;
     }
-    setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
-    afterSend("📷 Photo");
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setMicError("Microphone permission denied");
+      return;
+    }
+    const mime = pickAudioMime();
+    let recorder;
+    try {
+      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch {
+      recorder = new MediaRecorder(stream);
+    }
+
+    chunksRef.current = [];
+    cancelRecordRef.current = false;
+
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      stopRecordTimer();
+      const secs = recordSecsRef.current;
+      setRecording(false);
+      setRecordSecs(0);
+      if (cancelRecordRef.current || chunksRef.current.length === 0 || secs < 1) return;
+      const type = recorder.mimeType || mime || "audio/webm";
+      const blob = new Blob(chunksRef.current, { type });
+      await uploadVoice(blob, type, secs);
+    };
+
+    recorderRef.current = recorder;
+    recorder.start();
+    setRecording(true);
+    setRecordSecs(0);
+    recordSecsRef.current = 0;
+    recordTimerRef.current = setInterval(() => {
+      recordSecsRef.current += 1;
+      setRecordSecs(recordSecsRef.current);
+      if (recordSecsRef.current >= 120) stopRecording(); // hard cap at 2 minutes
+    }, 1000);
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
+  };
+
+  const cancelRecording = () => {
+    cancelRecordRef.current = true;
+    stopRecording();
+  };
+
+  const uploadVoice = async (blob, type, secs) => {
+    setAudioUploading(true);
+    const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+    const path = `${currentUserId}/${conversationId}/${Date.now()}-voice.${ext}`;
+    const { error: upErr } = await supabase.storage.from("messages").upload(path, blob, { contentType: type });
+    if (upErr) {
+      setAudioUploading(false);
+      setMicError(upErr.message);
+      return;
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("messages").getPublicUrl(path);
+    try {
+      await insertMessage({ audio_url: publicUrl, audio_duration: secs }, "🎤 Voice message");
+    } catch (e) {
+      setMicError(e.message);
+    }
+    setAudioUploading(false);
+  };
+
+  // ---- reactions ----
+  const react = async (m, emoji) => {
+    setPickerFor(null);
+    setMenuFor(null);
+    const mine = (reactions[m.id] || []).find((r) => r.user_id === currentUserId);
+    if (mine && mine.emoji === emoji) {
+      setReactions((prev) => ({
+        ...prev,
+        [m.id]: (prev[m.id] || []).filter((r) => r.user_id !== currentUserId),
+      }));
+      await supabase.from("message_reactions").delete().eq("message_id", m.id).eq("user_id", currentUserId);
+      return;
+    }
+    setReactions((prev) => ({
+      ...prev,
+      [m.id]: [...(prev[m.id] || []).filter((r) => r.user_id !== currentUserId), { message_id: m.id, user_id: currentUserId, emoji }],
+    }));
+    await supabase
+      .from("message_reactions")
+      .upsert({ message_id: m.id, user_id: currentUserId, emoji }, { onConflict: "message_id,user_id" });
   };
 
   const deleteMessage = async (m) => {
     setMenuFor(null);
     if (!window.confirm("Delete this message?")) return;
-    setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, deleted: true, content: null, image_url: null } : x)));
-    await supabase.from("messages").update({ deleted: true, content: null, image_url: null }).eq("id", m.id);
+    setMessages((prev) =>
+      prev.map((x) => (x.id === m.id ? { ...x, deleted: true, content: null, image_url: null, audio_url: null } : x))
+    );
+    await supabase
+      .from("messages")
+      .update({ deleted: true, content: null, image_url: null, audio_url: null })
+      .eq("id", m.id);
   };
 
   const startEdit = (m) => {
@@ -5795,33 +6512,112 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     navigator.clipboard?.writeText(m.content || "").catch(() => {});
   };
 
-  // read receipt: my last non-deleted message seen if other's last_read >= its time
+  const startReply = (m) => {
+    setMenuFor(null);
+    setReplyTo(m);
+    inputRef.current?.focus();
+  };
+
+  const previewOf = (m) => {
+    if (!m) return "";
+    if (m.deleted) return "Deleted message";
+    if (m.content) return m.content;
+    if (m.audio_url) return "🎤 Voice message";
+    if (m.image_url) return "📷 Photo";
+    return "";
+  };
+
+  const nameOf = (userId) =>
+    userId === currentUserId ? "You" : isGroup ? memberNames[userId] || "unknown" : title;
+
   const myLastMessage = [...messages].reverse().find((m) => m.sender_id === currentUserId && !m.deleted);
   const seen = !isGroup && myLastMessage && otherLastRead && new Date(otherLastRead) >= new Date(myLastMessage.created_at);
 
+  const q = searchQuery.trim().toLowerCase();
+  const visibleMessages = q
+    ? messages.filter((m) => !m.deleted && (m.content || "").toLowerCase().includes(q))
+    : messages;
+
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
+      {/* header */}
       <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
-        {isGroup ? (
-          <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "var(--border)" }}>
-            <Users size={16} color="var(--text)" />
-          </div>
-        ) : (
-          <Avatar username={chatTitle} avatarUrl={chatAvatarUrl} size={32} />
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <button
+          onClick={() => isGroup && setGroupSheet(true)}
+          disabled={!isGroup}
+          className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+        >
+          {isGroup ? (
+            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--border)" }}>
+              <Users size={16} color="var(--text)" />
+            </div>
+          ) : (
+            <Avatar username={title} avatarUrl={chatAvatarUrl} size={32} />
+          )}
+          <span className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{title}</span>
+        </button>
+        <button
+          onClick={() => {
+            setSearchOpen((v) => !v);
+            setSearchQuery("");
+          }}
+          className="p-1 shrink-0 transition-transform active:scale-90"
+        >
+          <Search size={19} color={searchOpen ? "var(--accent-solid)" : "var(--text)"} />
+        </button>
+        {isGroup && (
+          <button onClick={() => setGroupSheet(true)} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
+            <Ellipsis size={19} color="var(--text)" />
+          </button>
         )}
-        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{chatTitle}</span>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3" onClick={() => setMenuFor(null)}>
+      {searchOpen && (
+        <div className="px-3 py-2.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+          <div className="flex items-center gap-2.5 rounded-full px-4 h-10" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <Search size={15} color="var(--text-muted)" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search in this chat"
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "var(--text)" }}
+              autoFocus
+            />
+            {searchQuery && (
+              <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
+                {visibleMessages.length}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* messages */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-3 py-3"
+        onClick={() => {
+          setMenuFor(null);
+          setPickerFor(null);
+        }}
+      >
         {loading ? (
           <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>Loading...</p>
-        ) : messages.length === 0 ? (
-          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>No messages yet — say hi 👋</p>
+        ) : visibleMessages.length === 0 ? (
+          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>
+            {q ? "No messages match that" : "No messages yet — say hi 👋"}
+          </p>
         ) : (
-          messages.map((m) => {
+          visibleMessages.map((m) => {
             const mine = m.sender_id === currentUserId;
             const isLast = myLastMessage && m.id === myLastMessage.id;
+            const parent = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : null;
+            const rx = reactions[m.id] || [];
+            const myRx = rx.find((r) => r.user_id === currentUserId);
 
             if (editingId === m.id) {
               return (
@@ -5846,15 +6642,25 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
             return (
               <div key={m.id} className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}`}>
                 {isGroup && !mine && (
-                  <span className="text-[10px] mb-0.5 ml-1" style={{ color: "var(--text-muted)" }}>{memberNames[m.sender_id] || "unknown"}</span>
+                  <span className="text-[10px] mb-0.5 ml-1" style={{ color: "var(--text-muted)" }}>
+                    {memberNames[m.sender_id] || "unknown"}
+                  </span>
                 )}
+
+                {m.forwarded && !m.deleted && (
+                  <span className="flex items-center gap-1 text-[10px] mb-0.5 mx-1" style={{ color: "var(--text-muted)" }}>
+                    <Forward size={10} /> Forwarded
+                  </span>
+                )}
+
                 <div
                   onTouchStart={() => {
                     if (m.deleted) return;
                     pressTimerRef.current = setTimeout(() => {
                       openedAtRef.current = Date.now();
                       setMenuFor(m.id);
-                    }, 500);
+                      setPickerFor(m.id);
+                    }, 450);
                   }}
                   onTouchEnd={() => clearTimeout(pressTimerRef.current)}
                   onTouchMove={() => clearTimeout(pressTimerRef.current)}
@@ -5863,9 +6669,30 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     if (m.deleted) return;
                     openedAtRef.current = Date.now();
                     setMenuFor(m.id);
+                    setPickerFor(m.id);
                   }}
-                  className="relative max-w-[75%]"
+                  className="relative max-w-[78%]"
                 >
+                  {/* quoted parent */}
+                  {parent && !m.deleted && (
+                    <div
+                      className="px-3 py-1.5 mb-0.5"
+                      style={{
+                        background: "var(--bg-sunken)",
+                        borderLeft: "3px solid var(--accent-solid)",
+                        borderRadius: "12px 12px 4px 4px",
+                        opacity: 0.95,
+                      }}
+                    >
+                      <span className="text-[10px] block" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
+                        {nameOf(parent.sender_id)}
+                      </span>
+                      <span className="text-[11px] block truncate" style={{ color: "var(--text-muted)", maxWidth: 200 }}>
+                        {previewOf(parent)}
+                      </span>
+                    </div>
+                  )}
+
                   {m.deleted ? (
                     <div
                       className="px-3.5 py-2 text-sm italic"
@@ -5873,28 +6700,37 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     >
                       This message was deleted
                     </div>
-                  ) : m.image_url ? (
-                    <img
-                      src={m.image_url}
-                      alt=""
-                      className="rounded-2xl max-w-full"
-                      style={{ maxHeight: 260, border: mine ? "none" : "1px solid var(--border)" }}
-                    />
+                  ) : m.audio_url ? (
+                    <AudioBubble src={m.audio_url} duration={m.audio_duration} mine={mine} />
                   ) : (
-                    <div
-                      className="px-3.5 py-2 text-sm"
-                      style={{
-                        background: mine ? ACCENT : "var(--surface)",
-                        color: mine ? "var(--on-accent)" : "var(--text)",
-                        borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {m.content}
-                    </div>
+                    <>
+                      {m.image_url && (
+                        <img
+                          src={m.image_url}
+                          alt=""
+                          className="rounded-2xl max-w-full"
+                          style={{ maxHeight: 260, border: mine ? "none" : "1px solid var(--border)", display: "block" }}
+                        />
+                      )}
+                      {m.content && (
+                        <div
+                          className="px-3.5 py-2 text-sm"
+                          style={{
+                            background: mine ? ACCENT : "var(--surface)",
+                            color: mine ? "var(--on-accent)" : "var(--text)",
+                            borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                            marginTop: m.image_url ? 4 : 0,
+                          }}
+                        >
+                          {m.content}
+                        </div>
+                      )}
+                    </>
                   )}
 
+                  {/* emoji row + action menu */}
                   {menuFor === m.id && !m.deleted && (
                     <>
                       <div
@@ -5903,12 +6739,52 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                           e.stopPropagation();
                           if (Date.now() - openedAtRef.current < 400) return;
                           setMenuFor(null);
+                          setPickerFor(null);
                         }}
                       />
+                      {pickerFor === m.id && (
+                        <div
+                          className={`absolute z-50 flex items-center gap-1 px-2 py-1.5 rounded-full ${mine ? "right-0" : "left-0"}`}
+                          style={{
+                            background: "var(--surface-raised)",
+                            border: "1px solid var(--border)",
+                            bottom: "100%",
+                            marginBottom: 6,
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                          }}
+                        >
+                          {REACTION_EMOJIS.map((e) => (
+                            <button
+                              key={e}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                react(m, e);
+                              }}
+                              className="text-lg leading-none px-1 transition-transform active:scale-125"
+                              style={{ opacity: myRx?.emoji === e ? 1 : 0.85 }}
+                            >
+                              {e}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <div
                         className={`absolute z-50 rounded-xl overflow-hidden py-1 ${mine ? "right-0" : "left-0"}`}
-                        style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 130, top: "100%", marginTop: 4 }}
+                        style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 150, top: "100%", marginTop: 4, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}
                       >
+                        <button onClick={() => startReply(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
+                          <CornerUpLeft size={13} /> Reply
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMenuFor(null);
+                            setForwardMsg(m);
+                          }}
+                          className="w-full flex items-center gap-2 px-4 py-2 text-xs"
+                          style={{ color: "var(--text)" }}
+                        >
+                          <Forward size={13} /> Forward
+                        </button>
                         {m.content && (
                           <button onClick={() => copyMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
                             <Copy size={13} /> Copy
@@ -5920,7 +6796,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                           </button>
                         )}
                         {mine && (
-                          <button onClick={() => deleteMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--accent-start)" }}>
+                          <button onClick={() => deleteMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--heart)" }}>
                             <Trash2 size={13} /> Delete
                           </button>
                         )}
@@ -5928,6 +6804,27 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     </>
                   )}
                 </div>
+
+                {/* reaction chips */}
+                {rx.length > 0 && !m.deleted && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuFor(m.id);
+                      setPickerFor(m.id);
+                      openedAtRef.current = Date.now();
+                    }}
+                    className="flex items-center gap-0.5 px-2 py-0.5 rounded-full -mt-1.5 mx-1 relative z-10"
+                    style={{ background: "var(--surface-raised)", border: "1px solid var(--border)" }}
+                  >
+                    {[...new Set(rx.map((r) => r.emoji))].slice(0, 3).map((e) => (
+                      <span key={e} className="text-[12px] leading-none">{e}</span>
+                    ))}
+                    {rx.length > 1 && (
+                      <span className="text-[10px] ml-0.5" style={{ color: "var(--text-muted)" }}>{rx.length}</span>
+                    )}
+                  </button>
+                )}
 
                 {!m.deleted && (
                   <span className="text-[9px] mt-0.5 mx-1" style={{ color: "var(--text-muted)" }}>
@@ -5941,7 +6838,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           })
         )}
 
-        {typingUsers.length > 0 && (
+        {typingUsers.length > 0 && !q && (
           <div className="flex items-center gap-1 ml-1 mb-1">
             <div className="px-3 py-2 rounded-2xl" style={{ background: "var(--surface)" }}>
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>
@@ -5952,40 +6849,120 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         )}
       </div>
 
-      <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
-        <label className="pb-2 cursor-pointer shrink-0">
-          {imageUploading ? (
-            <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>...</span>
-          ) : (
-            <ImagePlus size={22} color="var(--text-muted)" />
-          )}
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files[0]) sendImage(e.target.files[0]);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        <textarea
-          value={text}
-          onChange={(e) => onChangeText(e.target.value)}
-          placeholder="Message..."
-          rows={1}
-          className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
-        />
-        <button
-          onClick={send}
-          disabled={sending || !text.trim()}
-          className="rounded-full w-10 h-10 flex items-center justify-center shrink-0"
-          style={{ background: text.trim() ? ACCENT : "var(--surface)", border: text.trim() ? "none" : "1px solid var(--border)" }}
+      {/* reply preview */}
+      {replyTo && (
+        <div
+          className="flex items-center gap-2.5 px-3.5 py-2"
+          style={{ background: "var(--bg-sunken)", borderTop: "1px solid var(--border-subtle)" }}
         >
-          <SendHorizontal size={18} color={text.trim() ? "var(--bg)" : "var(--text-muted)"} />
-        </button>
+          <div style={{ width: 3, alignSelf: "stretch", background: "var(--accent-solid)", borderRadius: 2 }} />
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] block" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
+              Replying to {nameOf(replyTo.sender_id)}
+            </span>
+            <span className="text-[11px] block truncate" style={{ color: "var(--text-muted)" }}>{previewOf(replyTo)}</span>
+          </div>
+          <button onClick={() => setReplyTo(null)} className="p-1 shrink-0"><X size={16} color="var(--text-muted)" /></button>
+        </div>
+      )}
+
+      {micError && (
+        <p className="text-[11px] px-4 py-1.5" style={{ color: "var(--heart)", background: "var(--bg-sunken)" }}>{micError}</p>
+      )}
+
+      {/* composer */}
+      <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+        {recording ? (
+          <div className="flex-1 flex items-center gap-3 rounded-2xl px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <span className="rounded-full animate-pulse" style={{ width: 9, height: 9, background: "var(--heart)" }} />
+            <span className="text-sm tabular-nums" style={{ color: "var(--text)", fontWeight: 600 }}>{secsToClock(recordSecs)}</span>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Recording...</span>
+            <div className="flex-1" />
+            <button onClick={cancelRecording} className="text-xs" style={{ color: "var(--text-muted)" }}>Cancel</button>
+          </div>
+        ) : (
+          <>
+            <label className="pb-2 cursor-pointer shrink-0">
+              {imageUploading ? (
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>...</span>
+              ) : (
+                <ImagePlus size={22} color="var(--text-muted)" />
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files[0]) sendImage(e.target.files[0]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <textarea
+              ref={inputRef}
+              value={text}
+              onChange={(e) => onChangeText(e.target.value)}
+              placeholder={replyTo ? "Write a reply..." : "Message..."}
+              rows={1}
+              className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
+            />
+          </>
+        )}
+
+        {recording ? (
+          <button
+            onClick={stopRecording}
+            className="rounded-full w-10 h-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
+            style={{ background: ACCENT }}
+          >
+            <SendHorizontal size={18} color="var(--on-accent)" />
+          </button>
+        ) : text.trim() ? (
+          <button
+            onClick={send}
+            disabled={sending}
+            className="rounded-full w-10 h-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
+            style={{ background: ACCENT }}
+          >
+            <SendHorizontal size={18} color="var(--on-accent)" />
+          </button>
+        ) : (
+          <button
+            onClick={startRecording}
+            disabled={audioUploading}
+            className="rounded-full w-10 h-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", opacity: audioUploading ? 0.5 : 1 }}
+          >
+            <Mic size={18} color="var(--text-muted)" />
+          </button>
+        )}
       </div>
+
+      {forwardMsg && (
+        <ForwardSheet
+          message={forwardMsg}
+          currentUserId={currentUserId}
+          onClose={() => setForwardMsg(null)}
+        />
+      )}
+
+      {groupSheet && (
+        <GroupManageSheet
+          conversationId={conversationId}
+          title={title}
+          currentUserId={currentUserId}
+          onClose={() => setGroupSheet(false)}
+          onRenamed={(t) => {
+            setTitle(t);
+            setGroupSheet(false);
+          }}
+          onLeft={() => {
+            setGroupSheet(false);
+            onBack();
+          }}
+        />
+      )}
     </div>
   );
 }
