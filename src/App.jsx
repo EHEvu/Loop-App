@@ -741,33 +741,35 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
 
 function StoriesBar() {
   return (
-    <div className="flex gap-3 px-4 pb-3 overflow-x-auto">
-      {mockStories.map((s) => (
-        <div key={s.id} className="flex flex-col items-center gap-1 shrink-0" style={{ width: 56 }}>
-          <div
-            className="w-14 h-14 rounded-full flex items-center justify-center"
-            style={{ background: s.isSelf ? "var(--border)" : "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: s.isSelf ? 0 : 2.5 }}
-          >
+    <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+      <div className="flex gap-4 px-4 pt-1 pb-3 overflow-x-auto">
+        {mockStories.map((s) => (
+          <div key={s.id} className="flex flex-col items-center gap-1.5 shrink-0" style={{ width: 62 }}>
             <div
-              className="w-full h-full rounded-full flex items-center justify-center text-sm relative"
-              style={{ background: "var(--surface)", color: "var(--text)", border: "2px solid var(--bg)" }}
+              className="rounded-full flex items-center justify-center"
+              style={{ width: 62, height: 62, background: s.isSelf ? "transparent" : "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: s.isSelf ? 0 : 2.5, border: s.isSelf ? "1.5px solid var(--border)" : "none" }}
             >
-              {s.user[0].toUpperCase()}
-              {s.isSelf && (
-                <span
-                  className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
-                  style={{ background: "var(--accent-solid)", color: "var(--on-accent)", fontWeight: 700 }}
-                >
-                  +
-                </span>
-              )}
+              <div
+                className="w-full h-full rounded-full flex items-center justify-center text-base relative"
+                style={{ background: "var(--surface)", color: "var(--text)", border: s.isSelf ? "none" : "2.5px solid var(--bg)", fontWeight: 600 }}
+              >
+                {s.user[0].toUpperCase()}
+                {s.isSelf && (
+                  <span
+                    className="absolute -bottom-0.5 -right-0.5 rounded-full flex items-center justify-center text-[11px]"
+                    style={{ width: 19, height: 19, background: "var(--accent-solid)", color: "var(--on-accent)", fontWeight: 700, border: "2px solid var(--bg)" }}
+                  >
+                    +
+                  </span>
+                )}
+              </div>
             </div>
+            <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>
+              {s.user}
+            </span>
           </div>
-          <span className="text-[10px] truncate w-full text-center" style={{ color: "var(--text-secondary)" }}>
-            {s.user}
-          </span>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -985,29 +987,29 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         </p>
       ) : (
         posts.map((post) => (
-          <div key={post.id} className="mb-5">
-            <div className="flex items-center gap-2 px-4 py-2">
+          <div key={post.id} className="mb-1">
+            <div className="flex items-center gap-2.5 px-4 py-2.5">
               <button
                 onClick={() => onOpenProfile(post.user_id)}
-                className="w-9 h-9 rounded-full shrink-0"
-                style={{ background: ACCENT, padding: 2 }}
+                className="shrink-0"
+                style={{ width: 36, height: 36, borderRadius: "9999px", background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
               >
-                <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[10px]" style={{ color: "var(--text)" }}>
+                <div className="w-full h-full rounded-full flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
                   {post.username[0].toUpperCase()}
                 </div>
               </button>
-              <div className="flex flex-col leading-tight flex-1">
-                <button onClick={() => onOpenProfile(post.user_id)} className="text-sm text-left" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</button>
+              <div className="flex flex-col leading-tight flex-1 min-w-0">
+                <button onClick={() => onOpenProfile(post.user_id)} className="text-[13px] text-left truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</button>
                 {post.location && (
-                  <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    <MapPin size={10} /> {post.location}
+                  <span className="flex items-center gap-0.5 text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
+                    <MapPin size={9} /> {post.location}
                   </span>
                 )}
               </div>
 
               <div className="relative">
-                <button onClick={() => setMenuOpenFor(menuOpenFor === post.id ? null : post.id)}>
-                  <Ellipsis size={18} color="var(--text-muted)" />
+                <button onClick={() => setMenuOpenFor(menuOpenFor === post.id ? null : post.id)} className="p-1 -mr-1">
+                  <Ellipsis size={19} color="var(--text)" />
                 </button>
                 {menuOpenFor === post.id && (
                   <>
@@ -1016,16 +1018,16 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                       onClick={() => setMenuOpenFor(null)}
                     />
                     <div
-                      className="absolute right-0 top-6 z-20 rounded-xl overflow-hidden py-1"
-                      style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 190 }}
+                      className="absolute right-0 top-8 z-20 rounded-2xl overflow-hidden py-1"
+                      style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 190, boxShadow: "0 8px 28px rgba(0,0,0,0.35)" }}
                     >
                       {post.user_id === userId ? (
                         <button
                           onClick={() => deletePost(post)}
-                          className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                          style={{ color: "var(--accent-start)" }}
+                          className="w-full flex items-center gap-2 px-4 py-3 text-sm"
+                          style={{ color: "var(--heart)", fontWeight: 600 }}
                         >
-                          <Trash2 size={15} /> Delete
+                          <Trash2 size={16} /> Delete
                         </button>
                       ) : (
                         <button
@@ -1033,8 +1035,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                             setMenuOpenFor(null);
                             onOpenReport(post.id);
                           }}
-                          className="w-full text-left px-4 py-2.5 text-sm"
-                          style={{ color: "var(--accent-start)" }}
+                          className="w-full text-left px-4 py-3 text-sm"
+                          style={{ color: "var(--heart)", fontWeight: 600 }}
                         >
                           Report
                         </button>
@@ -1046,8 +1048,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             </div>
 
             <div
-              className="mx-4 rounded-2xl aspect-[4/5] overflow-hidden flex items-center justify-center"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+              className="w-full aspect-[4/5] overflow-hidden flex items-center justify-center"
+              style={{ background: "var(--bg-sunken)" }}
               onDoubleClick={() => toggleLike(post)}
             >
               {post.media_type === "photo" ? (
@@ -1059,19 +1061,19 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
             <PollBlock postId={post.id} currentUserId={userId} />
 
-            <div className="flex items-center justify-between px-4 pt-3">
+            <div className="flex items-center justify-between px-4 pt-2.5">
               <div className="flex items-center gap-5">
-                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
-                  <div className="h-8 flex items-center justify-center">
-                    <Send size={22} color="var(--text)" />
+                <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+                  <div className="h-7 flex items-center justify-center">
+                    <Send size={23} color="var(--text)" strokeWidth={1.9} />
                   </div>
-                  <span className="text-[10px] leading-none h-3 mt-0.5">&nbsp;</span>
+                  <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
                 </div>
-                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
-                  <button onClick={() => toggleSave(post)} className="h-8 flex items-center justify-center">
-                    <Bookmark size={22} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} />
+                <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+                  <button onClick={() => toggleSave(post)} className="h-7 flex items-center justify-center">
+                    <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
                   </button>
-                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                     {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
                   </span>
                 </div>
@@ -1085,33 +1087,33 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   }}
                   onTouchEnd={() => clearTimeout(pressTimers.current[post.id])}
                   onTouchMove={() => clearTimeout(pressTimers.current[post.id])}
-                  className="h-8 flex items-center justify-center"
+                  className="h-8 flex items-center justify-center transition-transform active:scale-90"
                 >
-                  <Heart size={30} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} />
+                  <Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} />
                 </button>
-                <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+                <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                   {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
                 </span>
               </div>
 
               <div className="flex items-center gap-5">
-                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
+                <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                   <button
                     onClick={() => !post.comments_disabled && setCommentSheetFor(post)}
                     disabled={post.comments_disabled}
-                    className="h-8 flex items-center justify-center"
+                    className="h-7 flex items-center justify-center"
                   >
-                    <MessageCircle size={22} color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"} />
+                    <MessageCircle size={23} color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"} strokeWidth={1.9} style={{ transform: "scaleX(-1)" }} />
                   </button>
-                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                     {countPrefs.comments && !post.hide_comments && post.commentCount > 0 ? formatCount(post.commentCount) : "\u00A0"}
                   </span>
                 </div>
-                <div className="flex flex-col items-center" style={{ minWidth: 30 }}>
-                  <button onClick={() => toggleRepost(post)} className="h-8 flex items-center justify-center">
-                    <Repeat2 size={24} color={post.reposted ? "var(--accent-end)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 2} />
+                <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+                  <button onClick={() => toggleRepost(post)} className="h-7 flex items-center justify-center">
+                    <Repeat2 size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 1.9} />
                   </button>
-                  <span className="text-[10px] leading-none h-3 mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                     {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
                   </span>
                 </div>
@@ -1122,14 +1124,28 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               <LikesViewsPopup post={post} isOwner={post.user_id === userId} onClose={() => setLikesPopupFor(null)} />
             )}
 
-            <div className="px-4 pt-1">
+            <div className="px-4 pt-1.5">
               <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
               <CaptionText
                 username={post.username}
                 caption={post.caption}
                 onOpenProfile={() => onOpenProfile?.(post.user_id)}
               />
+              {!post.comments_disabled && !post.hide_comments && post.commentCount > 1 && (
+                <button
+                  onClick={() => setCommentSheetFor(post)}
+                  className="text-[13px] mt-1 block"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  View all {formatCount(post.commentCount)} comments
+                </button>
+              )}
+              <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
+                {timeAgo(post.created_at)} ago
+              </span>
             </div>
+
+            <div className="h-px mx-4 mt-3" style={{ background: "var(--border-subtle)" }} />
           </div>
         ))
       )}
@@ -2007,14 +2023,14 @@ function ReelCommentsSheet({
       <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <div
         className="fixed left-0 right-0 bottom-0 z-40 rounded-t-3xl flex flex-col"
-        style={{ background: "var(--bg)", maxHeight: "78vh", border: "1px solid var(--border)" }}
+        style={{ background: "var(--bg)", maxHeight: "82vh", border: "1px solid var(--border)" }}
       >
-        <div className="flex items-center justify-center pt-2.5 pb-1">
-          <div className="rounded-full" style={{ width: 36, height: 4, background: "var(--toggle-off)" }} />
+        <div className="flex items-center justify-center pt-2.5 pb-2">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
         </div>
-        <div className="flex items-center justify-between px-4 pb-2">
-          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Comments</span>
-          <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
+        <div className="relative flex items-center justify-center px-4 pb-2.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+          <span className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>Comments</span>
+          <button onClick={onClose} className="absolute right-4"><X size={20} color="var(--text)" /></button>
         </div>
 
         {postCaption && (
@@ -3676,11 +3692,11 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
           <button
             onClick={toggleFollow}
             disabled={followBusy}
-            className="rounded-lg px-4 py-1.5 text-xs"
+            className="rounded-lg px-5 py-1.5 text-[13px] transition-transform active:scale-[0.98]"
             style={{
               background: isFollowing ? "var(--surface)" : ACCENT,
               border: isFollowing ? "1px solid var(--border)" : "none",
-              color: isFollowing ? "var(--text)" : "var(--bg)",
+              color: isFollowing ? "var(--text)" : "var(--on-accent)",
               fontWeight: 700,
               opacity: followBusy ? 0.6 : 1,
             }}
@@ -3690,68 +3706,82 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
         )}
       </div>
 
-      <div className="flex items-center gap-5 px-4 mb-4">
+      <div className="flex items-center gap-6 px-4 mb-3">
         <div
-          className="w-20 h-20 rounded-full shrink-0 flex items-center justify-center overflow-hidden"
-          style={{ background: ACCENT }}
+          className="shrink-0 rounded-full flex items-center justify-center"
+          style={{ width: 88, height: 88, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 3 }}
         >
-          {profile.avatar_url ? (
-            <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <span className="text-2xl" style={{ color: "var(--bg)", fontWeight: 700 }}>
-              {profile.username[0].toUpperCase()}
-            </span>
-          )}
+          <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center" style={{ background: "var(--surface)", border: "3px solid var(--bg)" }}>
+            {profile.avatar_url ? (
+              <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-3xl" style={{ color: "var(--text)", fontWeight: 700 }}>
+                {profile.username[0].toUpperCase()}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex gap-6">
+        <div className="flex-1 flex justify-around">
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{posts.length}</span>
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Posts</span>
+            <span className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>{posts.length}</span>
+            <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Posts</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{followerCount}</span>
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Followers</span>
+            <span className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(followerCount)}</span>
+            <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Followers</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{followingCount}</span>
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Following</span>
+            <span className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(followingCount)}</span>
+            <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Following</span>
           </div>
         </div>
       </div>
 
-      <div className="px-4 mb-4">
-        <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>
+      <div className="px-4 mb-3">
+        <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>
           {profile.full_name || profile.username}
         </p>
         {profile.bio && (
-          <p className="text-xs mt-1" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{profile.bio}</p>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{profile.bio}</p>
         )}
       </div>
 
+      {isOwnProfile && (
+        <div className="px-4 mb-4">
+          <button
+            onClick={onOpenSettings}
+            className="w-full rounded-xl py-2 text-[13px] transition-transform active:scale-[0.98]"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+          >
+            Edit Profile
+          </button>
+        </div>
+      )}
+
       <div
-        className="flex items-center justify-center gap-12 py-2.5 mx-4 mb-3"
+        className="flex items-center justify-around mb-0.5"
         style={{ borderTop: "1px solid var(--border)" }}
       >
         <button
           onClick={() => setTab("posts")}
-          className="flex items-center gap-1.5 py-2"
-          style={{ borderBottom: tab === "posts" ? "2px solid var(--text)" : "2px solid transparent" }}
+          className="flex-1 flex items-center justify-center py-2.5"
+          style={{ borderBottom: tab === "posts" ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
         >
-          <Grid3x3 size={24} color={tab === "posts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "posts" ? 2.2 : 1.8} />
+          <Grid3x3 size={23} color={tab === "posts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "posts" ? 2.2 : 1.8} />
         </button>
         <button
           onClick={() => setTab("reposts")}
-          className="flex items-center gap-1.5 py-2"
-          style={{ borderBottom: tab === "reposts" ? "2px solid var(--text)" : "2px solid transparent" }}
+          className="flex-1 flex items-center justify-center py-2.5"
+          style={{ borderBottom: tab === "reposts" ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
         >
-          <Repeat2 size={25} color={tab === "reposts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "reposts" ? 2.2 : 1.8} />
+          <Repeat2 size={24} color={tab === "reposts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "reposts" ? 2.2 : 1.8} />
         </button>
         <button
           onClick={() => setTab("tagged")}
-          className="flex items-center gap-1.5 py-2"
-          style={{ borderBottom: tab === "tagged" ? "2px solid var(--text)" : "2px solid transparent" }}
+          className="flex-1 flex items-center justify-center py-2.5"
+          style={{ borderBottom: tab === "tagged" ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
         >
-          <UserSquare2 size={24} color={tab === "tagged" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "tagged" ? 2.2 : 1.8} />
+          <UserSquare2 size={23} color={tab === "tagged" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "tagged" ? 2.2 : 1.8} />
         </button>
       </div>
 
@@ -5016,10 +5046,10 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
 function AuthInput({ icon: Icon, type, placeholder, value, onChange, showToggle, onToggle, revealed }) {
   return (
     <div
-      className="flex items-center gap-2.5 rounded-xl px-3.5 py-3 mb-3"
-      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      className="flex items-center gap-3 rounded-2xl px-4 py-3.5 mb-3"
+      style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
     >
-      <Icon size={17} color="var(--text-muted)" />
+      <Icon size={18} color="var(--text-muted)" />
       <input
         type={type}
         placeholder={placeholder}
@@ -5030,7 +5060,7 @@ function AuthInput({ icon: Icon, type, placeholder, value, onChange, showToggle,
       />
       {showToggle && (
         <button onClick={onToggle} type="button">
-          {revealed ? <EyeOff size={16} color="var(--text-muted)" /> : <Eye size={16} color="var(--text-muted)" />}
+          {revealed ? <EyeOff size={17} color="var(--text-muted)" /> : <Eye size={17} color="var(--text-muted)" />}
         </button>
       )}
     </div>
@@ -5090,7 +5120,7 @@ function LoginScreen({ onLogin, onGoSignup }) {
       <button
         onClick={handleLogin}
         disabled={loading}
-        className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
+        className="w-full rounded-2xl py-3.5 text-sm mt-2 mb-4 transition-transform active:scale-[0.98]"
         style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
         {loading ? "Please wait..." : "Log In"}
@@ -5187,7 +5217,7 @@ function SignupScreen({ onSignup, onGoLogin }) {
       <button
         onClick={handleSignup}
         disabled={loading}
-        className="w-full rounded-xl py-3 text-sm mt-2 mb-4"
+        className="w-full rounded-2xl py-3.5 text-sm mt-2 mb-4 transition-transform active:scale-[0.98]"
         style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
         {loading ? "Please wait..." : "Sign Up"}
