@@ -2117,6 +2117,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     }
   };
 
+  const [sharePost, setSharePost] = useState(null);
+
   const toggleSave = async (post) => {
     if (!userId) return;
 
@@ -2261,9 +2263,12 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             <div className="flex items-center justify-between px-4 pt-2.5">
               <div className="flex items-center gap-5">
                 <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
-                  <div className="h-7 flex items-center justify-center">
+                  <button
+                    onClick={() => setSharePost(post)}
+                    className="h-7 flex items-center justify-center transition-transform active:scale-90"
+                  >
                     <Send size={23} color="var(--text)" strokeWidth={1.9} />
-                  </div>
+                  </button>
                   <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
@@ -2363,6 +2368,10 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           }}
         />
       )}
+
+      {sharePost && (
+        <ShareSheet item={sharePost} currentUserId={userId} onClose={() => setSharePost(null)} />
+      )}
     </div>
   );
 }
@@ -2384,6 +2393,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [commentSheetOpen, setCommentSheetOpen] = useState(false);
   const [likesPopupOpen, setLikesPopupOpen] = useState(false);
+  const [shareReel, setShareReel] = useState(null);
   const [countPrefs, toggleCountPref] = useCountPrefs();
   const touchStartY = React.useRef(0);
   const videoRef = React.useRef(null);
@@ -2966,7 +2976,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                   <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.repostCount)}</span>
                 )}
               </button>
-              <button className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+              <button
+                onClick={() => setShareReel(reel)}
+                className="flex flex-col items-center gap-1 transition-transform active:scale-90"
+                style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
+              >
                 <SendHorizontal size={26} color="#FFFFFF" strokeWidth={2} />
               </button>
               <button onClick={toggleSave} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
@@ -3055,6 +3069,9 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
             setReels((prev) => prev.map((r, i) => (i === index ? { ...r, commentCount: r.commentCount + 1 } : r)))
           }
         />
+      )}
+      {shareReel && (
+        <ShareSheet item={shareReel} currentUserId={userId} onClose={() => setShareReel(null)} />
       )}
     </div>
   );
@@ -3531,6 +3548,7 @@ function CommentRow({
           </div>
         </>
       )}
+
     </div>
   );
 }
@@ -4060,7 +4078,7 @@ function UploadScreen() {
   );
 }
 
-function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, onAccentChange }) {
+function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, onAccentChange, onOpenSaved }) {
   const [view, setView] = useState("menu"); // "menu" | "editProfile" | "changeEmail" | "changePassword" | "appearance"
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
@@ -4543,6 +4561,14 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
           </button>
         </div>
 
+        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Your content</div>
+        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <button onClick={onOpenSaved} className="w-full flex items-center gap-2.5 px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
+            <Bookmark size={16} color="var(--text-muted)" />
+            <span>Saved</span>
+          </button>
+        </div>
+
         <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Account</div>
         <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <button onClick={() => setView("editProfile")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
@@ -4573,6 +4599,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
   const [userId, setUserId] = useState(null);
   const [likesPopupOpen, setLikesPopupOpen] = useState(false);
   const [commentSheetOpen, setCommentSheetOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [countPrefs] = useCountPrefs();
   const pressTimer = React.useRef(null);
@@ -4725,9 +4752,12 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       <div className="flex items-center justify-between px-4 pt-2.5">
         <div className="flex items-center gap-5">
           <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
-            <div className="h-7 flex items-center justify-center">
+            <button
+              onClick={() => setShareOpen(true)}
+              className="h-7 flex items-center justify-center transition-transform active:scale-90"
+            >
               <Send size={23} color="var(--text)" strokeWidth={1.9} />
-            </div>
+            </button>
             <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
           </div>
           <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
@@ -4830,6 +4860,9 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             onBack();
           }}
         />
+      )}
+      {shareOpen && post && (
+        <ShareSheet item={post} currentUserId={userId} onClose={() => setShareOpen(false)} />
       )}
     </div>
   );
@@ -6672,6 +6705,314 @@ function NicknamesSheet({ conversationId, currentUserId, onClose, onSaved }) {
   );
 }
 
+// ---- Sharing a post or reel ----
+// One sheet used by Feed, Reels and PostDetail. Sends into a DM (reusing
+// the conversation tables), copies a link, or hands off to the OS share
+// sheet where the browser supports it.
+function ShareSheet({ item, currentUserId, onClose }) {
+  const [groups, setGroups] = useState([]);
+  const [people, setPeople] = useState([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [sentTo, setSentTo] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+  const [flash, setFlash] = useState("");
+
+  const link = `${window.location.origin}/p/${item.id}`;
+  const label = item.media_type === "photo" ? "📷 Shared a post" : "🎬 Shared a reel";
+
+  const say = (m) => {
+    setFlash(m);
+    setTimeout(() => setFlash(""), 1800);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: memberRows } = await supabase
+        .from("conversation_members")
+        .select("conversation_id")
+        .eq("user_id", currentUserId || "");
+      const ids = (memberRows || []).map((r) => r.conversation_id);
+      let groupRows = [];
+      if (ids.length > 0) {
+        const { data } = await supabase.from("conversations").select("id, title, avatar_url").in("id", ids).eq("is_group", true);
+        groupRows = data || [];
+      }
+      const { data: profileRows } = await supabase
+        .from("profiles")
+        .select("id, username, avatar_url")
+        .neq("id", currentUserId || "")
+        .limit(50);
+      if (!cancelled) {
+        setGroups(groupRows);
+        setPeople(profileRows || []);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
+
+  const sendInto = async (conversationId) => {
+    const { error } = await supabase.from("messages").insert({
+      conversation_id: conversationId,
+      sender_id: currentUserId,
+      // Videos don't render in a bubble, so only photos travel as media;
+      // either way the link goes along so the post is reachable.
+      image_url: item.media_type === "photo" ? item.media_url : null,
+      content: item.caption ? `${label} · ${item.caption}\n${link}` : `${label}\n${link}`,
+    });
+    if (error) throw error;
+    await supabase
+      .from("conversations")
+      .update({ last_message: label, last_message_at: new Date().toISOString() })
+      .eq("id", conversationId);
+  };
+
+  const toGroup = async (g) => {
+    setBusyId(g.id);
+    try {
+      await sendInto(g.id);
+      setSentTo((prev) => [...prev, g.id]);
+    } catch (e) {
+      say(e.message);
+    }
+    setBusyId(null);
+  };
+
+  const toPerson = async (pr) => {
+    setBusyId(pr.id);
+    const { data: convoId, error } = await supabase.rpc("get_or_create_conversation", { other_user: pr.id });
+    if (error) {
+      setBusyId(null);
+      say(error.message);
+      return;
+    }
+    try {
+      await sendInto(convoId);
+      await supabase.from("notifications").insert({ user_id: pr.id, actor_id: currentUserId, type: "message" });
+      setSentTo((prev) => [...prev, pr.id]);
+    } catch (e) {
+      say(e.message);
+    }
+    setBusyId(null);
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      say("Link copied");
+    } catch {
+      say("Couldn't copy on this device");
+    }
+  };
+
+  const nativeShare = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "Loop", text: item.caption || "", url: link });
+        return;
+      }
+      await navigator.clipboard.writeText(link);
+      say("Link copied");
+    } catch {
+      say("Sharing isn't available here");
+    }
+  };
+
+  const q = query.trim().toLowerCase();
+  const shownGroups = groups.filter((g) => (g.title || "Group").toLowerCase().includes(q));
+  const shownPeople = people.filter((pr) => pr.username.toLowerCase().includes(q));
+
+  const SendBtn = ({ id, onClick }) => {
+    const done = sentTo.includes(id);
+    return (
+      <button
+        onClick={() => !done && onClick()}
+        disabled={done || busyId === id}
+        className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+        style={{
+          background: done ? "var(--bg-sunken)" : ACCENT,
+          border: done ? "1px solid var(--border)" : "none",
+          color: done ? "var(--text-muted)" : "var(--on-accent)",
+          fontWeight: 700,
+          opacity: busyId === id ? 0.6 : 1,
+        }}
+      >
+        {done ? "Sent" : busyId === id ? "..." : "Send"}
+      </button>
+    );
+  };
+
+  return (
+    <StorySheetShell title="Share" onClose={onClose}>
+      {flash && <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
+
+      <div className="flex gap-2 px-4 pb-3">
+        <button
+          onClick={copyLink}
+          className="flex-1 flex items-center justify-center gap-2 rounded-full h-11 text-xs transition-transform active:scale-95"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+        >
+          <Copy size={15} /> Copy link
+        </button>
+        <button
+          onClick={nativeShare}
+          className="flex-1 flex items-center justify-center gap-2 rounded-full h-11 text-xs transition-transform active:scale-95"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+        >
+          <Share2 size={15} /> Share to...
+        </button>
+      </div>
+
+      <div className="px-4 pb-2">
+        <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <Search size={16} color="var(--text-muted)" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search chats and people"
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "var(--text)" }}
+          />
+        </div>
+      </div>
+
+      <div className="pb-6">
+        {loading ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : (
+          <>
+            {shownGroups.length > 0 && (
+              <p className="text-[11px] px-4 pt-1 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>Groups</p>
+            )}
+            {shownGroups.map((g) => (
+              <div key={g.id} className="flex items-center gap-3 px-4 py-2.5">
+                {g.avatar_url ? (
+                  <img src={g.avatar_url} alt="" className="rounded-full object-cover shrink-0" style={{ width: 44, height: 44 }} />
+                ) : (
+                  <div className="w-11 h-11 rounded-full shrink-0 flex items-center justify-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                    <Users size={18} color="var(--text)" />
+                  </div>
+                )}
+                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{g.title || "Group"}</span>
+                <SendBtn id={g.id} onClick={() => toGroup(g)} />
+              </div>
+            ))}
+
+            {shownPeople.length > 0 && (
+              <p className="text-[11px] px-4 pt-3 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>People</p>
+            )}
+            {shownPeople.map((pr) => (
+              <div key={pr.id} className="flex items-center gap-3 px-4 py-2.5">
+                <Avatar username={pr.username} avatarUrl={pr.avatar_url} size={44} />
+                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{pr.username}</span>
+                <SendBtn id={pr.id} onClick={() => toPerson(pr)} />
+              </div>
+            ))}
+
+            {shownGroups.length === 0 && shownPeople.length === 0 && (
+              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Nothing matches that</p>
+            )}
+          </>
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Saved posts ----
+// Saving already worked; there was simply nowhere to look at the results.
+function SavedScreen({ onBack, onOpenPost }) {
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const { data: saves } = await supabase
+        .from("saves")
+        .select("post_id, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      const ids = (saves || []).map((r) => r.post_id);
+      if (ids.length === 0) {
+        setPosts([]);
+        setLoading(false);
+        return;
+      }
+      const { data: rows } = await supabase
+        .from("posts")
+        .select("id, media_url, media_type, caption")
+        .in("id", ids);
+
+      // Keep the order the posts were saved in, newest first.
+      const byId = {};
+      (rows || []).forEach((r) => (byId[r.id] = r));
+      setPosts(ids.map((id) => byId[id]).filter(Boolean));
+      setLoading(false);
+    })();
+  }, []);
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-4">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <h1 className="text-xl" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Saved</h1>
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+          {Array.from({ length: 9 }, (_, i) => (
+            <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
+          ))}
+        </div>
+      ) : posts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-20 px-8 text-center">
+          <Bookmark size={30} color="var(--toggle-off)" />
+          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Nothing saved yet</p>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Tap the bookmark on any post or reel and it will show up here.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+          {posts.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onOpenPost?.(p.id)}
+              className="aspect-square relative overflow-hidden"
+              style={{ background: "var(--bg-sunken)" }}
+            >
+              {p.media_type === "photo" ? (
+                <img src={p.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+              ) : (
+                <video src={p.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+              )}
+              {p.media_type !== "photo" && (
+                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                  <Video size={13} color="#FFFFFF" />
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -8436,6 +8777,7 @@ export default function App() {
   const [viewProfileId, setViewProfileId] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewPostId, setViewPostId] = useState(null);
+  const [savedOpen, setSavedOpen] = useState(false);
   const [theme, setThemeState] = useState(() => {
     try {
       return localStorage.getItem("loop_theme") || "dark";
@@ -8494,7 +8836,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen;
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -8546,8 +8888,16 @@ export default function App() {
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId)}>
-          {inboxOpen ? (
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen)}>
+          {savedOpen ? (
+            <SavedScreen
+              onBack={() => setSavedOpen(false)}
+              onOpenPost={(postId) => {
+                setSavedOpen(false);
+                setViewPostId(postId);
+              }}
+            />
+          ) : inboxOpen ? (
             <MessagesScreen onBack={() => setInboxOpen(false)} />
           ) : notificationsOpen ? (
             <NotificationsScreen onBack={() => setNotificationsOpen(false)} />
@@ -8565,6 +8915,10 @@ export default function App() {
               accentStart={accentStart}
               accentEnd={accentEnd}
               onAccentChange={setCustomAccent}
+              onOpenSaved={() => {
+                setSettingsOpen(false);
+                setSavedOpen(true);
+              }}
             />
           ) : viewPostId !== null ? (
             <PostDetailScreen
