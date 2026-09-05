@@ -2121,6 +2121,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [sharePost, setSharePost] = useState(null);
   const [collectionPost, setCollectionPost] = useState(null);
   const savePressRef = React.useRef(null);
+  const longPressedRef = React.useRef(false);
 
   const toggleSave = async (post) => {
     if (!userId) return;
@@ -2223,6 +2224,16 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                       className="absolute right-0 top-8 z-20 rounded-2xl overflow-hidden py-1"
                       style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 190, boxShadow: "0 8px 28px rgba(0,0,0,0.35)" }}
                     >
+                      <button
+                        onClick={() => {
+                          setMenuOpenFor(null);
+                          setCollectionPost(post);
+                        }}
+                        className="w-full flex items-center gap-2 px-4 py-3 text-sm"
+                        style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}
+                      >
+                        <Bookmark size={16} /> Save to collection
+                      </button>
                       {post.user_id === userId ? (
                         <button
                           onClick={() => deletePost(post)}
@@ -2276,14 +2287,28 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                   <button
-                    onClick={() => toggleSave(post)}
+                    onClick={() => {
+                      // A long press already opened the collection sheet; the
+                      // click that follows lifting the finger must not also
+                      // toggle the save.
+                      if (longPressedRef.current) {
+                        longPressedRef.current = false;
+                        return;
+                      }
+                      toggleSave(post);
+                    }}
                     onTouchStart={() => {
-                      savePressRef.current = setTimeout(() => setCollectionPost(post), 500);
+                      longPressedRef.current = false;
+                      savePressRef.current = setTimeout(() => {
+                        longPressedRef.current = true;
+                        setCollectionPost(post);
+                      }, 500);
                     }}
                     onTouchEnd={() => clearTimeout(savePressRef.current)}
                     onTouchMove={() => clearTimeout(savePressRef.current)}
                     onContextMenu={(e) => {
                       e.preventDefault();
+                      longPressedRef.current = true;
                       setCollectionPost(post);
                     }}
                     className="h-7 flex items-center justify-center transition-transform active:scale-90"
@@ -2395,8 +2420,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           onClose={() => setCollectionPost(null)}
           onDone={() => {
             // Filing a post into a collection should also save it, so it
-            // still appears under "All posts".
-            if (!collectionPost.saved) toggleSave(collectionPost);
+            // still shows under "All posts" — but only if it isn't already.
+            const current = posts.find((p) => p.id === collectionPost.id);
+            if (current && !current.saved) toggleSave(current);
             setCollectionPost(null);
           }}
         />
@@ -2423,6 +2449,9 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
   const [commentSheetOpen, setCommentSheetOpen] = useState(false);
   const [likesPopupOpen, setLikesPopupOpen] = useState(false);
   const [shareReel, setShareReel] = useState(null);
+  const [collectionReel, setCollectionReel] = useState(null);
+  const savePressRef = React.useRef(null);
+  const longPressedRef = React.useRef(false);
   const [countPrefs, toggleCountPref] = useCountPrefs();
   const touchStartY = React.useRef(0);
   const videoRef = React.useRef(null);
@@ -3012,7 +3041,33 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
               >
                 <SendHorizontal size={26} color="#FFFFFF" strokeWidth={2} />
               </button>
-              <button onClick={toggleSave} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+              <button
+                onClick={() => {
+                  // The long press already opened the collection sheet; don't
+                  // let the click that follows un-save the reel.
+                  if (longPressedRef.current) {
+                    longPressedRef.current = false;
+                    return;
+                  }
+                  toggleSave();
+                }}
+                onTouchStart={() => {
+                  longPressedRef.current = false;
+                  savePressRef.current = setTimeout(() => {
+                    longPressedRef.current = true;
+                    setCollectionReel(reel);
+                  }, 500);
+                }}
+                onTouchEnd={() => clearTimeout(savePressRef.current)}
+                onTouchMove={() => clearTimeout(savePressRef.current)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  longPressedRef.current = true;
+                  setCollectionReel(reel);
+                }}
+                className="flex flex-col items-center gap-1 transition-transform active:scale-90"
+                style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
+              >
                 <Bookmark size={26} color="#FFFFFF" fill={reel.saved ? "#FFFFFF" : "none"} strokeWidth={2} />
                 {countPrefs.saves && !reel.hide_saves && reel.saveCount > 0 && (
                   <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.saveCount)}</span>
@@ -3101,6 +3156,19 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       )}
       {shareReel && (
         <ShareSheet item={shareReel} currentUserId={userId} onClose={() => setShareReel(null)} />
+      )}
+
+      {collectionReel && (
+        <AddToCollectionSheet
+          postIds={[collectionReel.id]}
+          currentUserId={userId}
+          onClose={() => setCollectionReel(null)}
+          onDone={() => {
+            const current = reels[index];
+            if (current && current.id === collectionReel.id && !current.saved) toggleSave();
+            setCollectionReel(null);
+          }}
+        />
       )}
     </div>
   );
@@ -7314,6 +7382,103 @@ function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
   );
 }
 
+// Rename a collection and choose its cover from the posts inside it.
+function CollectionEditSheet({ collection, posts, onClose, onSaved }) {
+  const [name, setName] = useState(collection.name);
+  const [cover, setCover] = useState(collection.cover_url || null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  // Only photos make sensible covers — a video frame can't be read here
+  // without decoding it, so those are left out of the picker.
+  const coverChoices = posts.filter((p) => p.media_type === "photo");
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase
+      .from("save_collections")
+      .update({ name: trimmed, cover_url: cover })
+      .eq("id", collection.id);
+    setBusy(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    onSaved({ ...collection, name: trimmed, cover_url: cover });
+  };
+
+  return (
+    <StorySheetShell title="Edit collection" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      <div className="px-4 pb-3">
+        <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={40}
+          className="w-full rounded-full px-4 h-11 text-sm outline-none"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+      </div>
+
+      <div className="px-4 pb-3">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Cover</label>
+          {cover && (
+            <button onClick={() => setCover(null)} className="text-[11px]" style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+              Use newest post
+            </button>
+          )}
+        </div>
+        {coverChoices.length === 0 ? (
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Add a photo to this collection to pick a cover.
+          </p>
+        ) : (
+          <div className="grid grid-cols-4 gap-1.5">
+            {coverChoices.map((p) => {
+              const picked = cover === p.media_url;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setCover(p.media_url)}
+                  className="aspect-square rounded-xl overflow-hidden relative"
+                  style={{ border: picked ? "2px solid var(--accent-solid)" : "1px solid var(--border)" }}
+                >
+                  <img src={p.media_url} alt="" className="w-full h-full object-cover" />
+                  {picked && (
+                    <span
+                      className="absolute bottom-1 right-1 rounded-full flex items-center justify-center"
+                      style={{ width: 18, height: 18, background: ACCENT }}
+                    >
+                      <Check size={11} color="var(--on-accent)" strokeWidth={3} />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="px-4 pb-6">
+        <button
+          onClick={save}
+          disabled={busy || !name.trim()}
+          className="w-full rounded-full h-11 text-sm transition-transform active:scale-95"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy || !name.trim() ? 0.5 : 1 }}
+        >
+          {busy ? "Saving..." : "Save changes"}
+        </button>
+      </div>
+    </StorySheetShell>
+  );
+}
+
 function SavedScreen({ onBack, onOpenPost }) {
   const [tab, setTab] = useState("all"); // all | collections
   const [userId, setUserId] = useState(null);
@@ -7329,6 +7494,8 @@ function SavedScreen({ onBack, onOpenPost }) {
   const [selected, setSelected] = useState([]);
   const [sheet, setSheet] = useState(null); // add | collaborators | menu
   const [flash, setFlash] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [collectionsError, setCollectionsError] = useState("");
 
   const say = (m) => {
     setFlash(m);
@@ -7351,28 +7518,50 @@ function SavedScreen({ onBack, onOpenPost }) {
   }, []);
 
   const loadSaved = async (uid) => {
-    // Only post_id is selected here on purpose — the saves table is
-    // ordered client-side so this keeps working whatever columns exist.
-    const { data: saves } = await supabase.from("saves").select("post_id").eq("user_id", uid);
+    // Only post_id is selected on purpose — the ordering happens on the
+    // posts table, so this keeps working whatever columns saves has.
+    const { data: saves, error: savesErr } = await supabase
+      .from("saves")
+      .select("post_id")
+      .eq("user_id", uid);
+
+    if (savesErr) {
+      setLoadError(savesErr.message);
+      setPosts([]);
+      return;
+    }
+
     const ids = (saves || []).map((r) => r.post_id);
     if (ids.length === 0) {
       setPosts([]);
       return;
     }
-    const { data: rows } = await supabase
+    const { data: rows, error: postsErr } = await supabase
       .from("posts")
       .select("id, media_url, media_type, caption, created_at")
       .in("id", ids)
       .order("created_at", { ascending: false });
+
+    if (postsErr) {
+      setLoadError(postsErr.message);
+      setPosts([]);
+      return;
+    }
     setPosts(rows || []);
   };
 
   const loadCollections = async (uid) => {
-    const { data: owned } = await supabase
+    const { data: owned, error: ownedErr } = await supabase
       .from("save_collections")
       .select("id, name, cover_url, is_collaborative, owner_id")
       .eq("owner_id", uid)
       .order("created_at", { ascending: false });
+
+    if (ownedErr) {
+      setCollectionsError(ownedErr.message);
+      setCollections([]);
+      return;
+    }
 
     const { data: shared } = await supabase
       .from("collection_collaborators")
@@ -7550,6 +7739,13 @@ function SavedScreen({ onBack, onOpenPost }) {
         {sheet === "menu" && (
           <StorySheetShell title={openCollection.name} onClose={() => setSheet(null)}>
             <div className="pb-6">
+              {isOwner && (
+                <StoryMenuRow
+                  icon={<Pencil size={17} color="var(--text)" />}
+                  label="Rename & cover"
+                  onClick={() => setSheet("edit")}
+                />
+              )}
               <StoryMenuRow
                 icon={<Users size={17} color="var(--text)" />}
                 label="Collaborators"
@@ -7583,6 +7779,20 @@ function SavedScreen({ onBack, onOpenPost }) {
             currentUserId={userId}
             onClose={() => setSheet(null)}
             onChanged={() => loadCollections(userId)}
+          />
+        )}
+
+        {sheet === "edit" && (
+          <CollectionEditSheet
+            collection={openCollection}
+            posts={collectionPosts}
+            onClose={() => setSheet(null)}
+            onSaved={(updated) => {
+              setOpenCollection(updated);
+              setSheet(null);
+              loadCollections(userId);
+              say("Collection updated");
+            }}
           />
         )}
       </div>
@@ -7644,7 +7854,12 @@ function SavedScreen({ onBack, onOpenPost }) {
           ))}
         </div>
       ) : tab === "all" ? (
-        posts.length === 0 ? (
+        loadError ? (
+          <div className="px-6 py-12 text-center">
+            <p className="text-sm mb-1.5" style={{ color: "var(--heart)", fontWeight: 600 }}>Couldn't load your saved posts</p>
+            <p className="text-xs" style={{ color: "var(--text-muted)", wordBreak: "break-word" }}>{loadError}</p>
+          </div>
+        ) : posts.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-20 px-8 text-center">
             <Bookmark size={30} color="var(--toggle-off)" />
             <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Nothing saved yet</p>
@@ -7665,6 +7880,14 @@ function SavedScreen({ onBack, onOpenPost }) {
             ))}
           </div>
         )
+      ) : collectionsError ? (
+        <div className="px-6 py-12 text-center">
+          <p className="text-sm mb-1.5" style={{ color: "var(--heart)", fontWeight: 600 }}>Couldn't load collections</p>
+          <p className="text-xs mb-3" style={{ color: "var(--text-muted)", wordBreak: "break-word" }}>{collectionsError}</p>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            If this mentions a missing table, run collections-setup.sql in Supabase.
+          </p>
+        </div>
       ) : collections.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 py-16 px-8 text-center">
           <Bookmark size={30} color="var(--toggle-off)" />
@@ -8815,10 +9038,20 @@ function NotificationsScreen({ onBack }) {
       ? "mentioned you in a comment"
       : type === "message"
       ? "sent you a message"
+      : type === "collection"
+      ? "added a post to your shared collection"
       : "";
 
   const iconFor = (type) =>
-    type === "like" ? Heart : type === "comment" || type === "mention" ? MessageCircle : type === "message" ? SendHorizontal : CircleUserRound;
+    type === "like"
+      ? Heart
+      : type === "comment" || type === "mention"
+      ? MessageCircle
+      : type === "message"
+      ? SendHorizontal
+      : type === "collection"
+      ? Bookmark
+      : CircleUserRound;
   const colorFor = (type) => (type === "like" ? "var(--accent-start)" : "var(--text-muted)");
 
   return (
