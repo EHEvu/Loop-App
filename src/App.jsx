@@ -5170,6 +5170,7 @@ function MessagesScreen({ onBack }) {
   const [searching, setSearching] = useState(false);
   const [openChat, setOpenChat] = useState(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [rowMenu, setRowMenu] = useState(null); // conversation object
 
   useEffect(() => {
     init();
@@ -5193,7 +5194,7 @@ function MessagesScreen({ onBack }) {
     // Which conversations am I a member of, and when did I last read each?
     const { data: memberships } = await supabase
       .from("conversation_members")
-      .select("conversation_id, last_read_at")
+      .select("conversation_id, last_read_at, pinned, hidden, muted_messages, muted_calls")
       .eq("user_id", uid);
 
     if (!memberships || memberships.length === 0) {
@@ -5201,13 +5202,28 @@ function MessagesScreen({ onBack }) {
       return;
     }
 
-    const convoIds = memberships.map((m) => m.conversation_id);
+    // "Delete" hides the chat for you only, like Instagram — the other
+    // person keeps their copy.
+    const visible = memberships.filter((m) => !m.hidden);
+    if (visible.length === 0) {
+      setConversations([]);
+      return;
+    }
+    const convoIds = visible.map((m) => m.conversation_id);
     const lastReadMap = {};
-    memberships.forEach((m) => (lastReadMap[m.conversation_id] = m.last_read_at));
+    const flagMap = {};
+    visible.forEach((m) => {
+      lastReadMap[m.conversation_id] = m.last_read_at;
+      flagMap[m.conversation_id] = {
+        pinned: !!m.pinned,
+        mutedMessages: !!m.muted_messages,
+        mutedCalls: !!m.muted_calls,
+      };
+    });
 
     const { data: convos } = await supabase
       .from("conversations")
-      .select("id, user_a, user_b, is_group, title, last_message, last_message_at")
+      .select("id, user_a, user_b, is_group, title, avatar_url, last_message, last_message_at")
       .in("id", convoIds)
       .order("last_message_at", { ascending: false, nullsFirst: false });
 
@@ -5258,7 +5274,7 @@ function MessagesScreen({ onBack }) {
       if (c.is_group) {
         const names = members.filter((m) => m !== uid).map((m) => profMap[m]?.username || "?");
         displayName = c.title || names.slice(0, 3).join(", ") || "Group";
-        avatarUrl = null;
+        avatarUrl = c.avatar_url || null;
         otherUser = null;
       } else {
         const otherId = members.find((m) => m !== uid) || (c.user_a === uid ? c.user_b : c.user_a);
@@ -5277,9 +5293,29 @@ function MessagesScreen({ onBack }) {
         lastMessage: c.last_message,
         lastMessageAt: c.last_message_at,
         unread: unreadMap[c.id] || 0,
+        ...(flagMap[c.id] || { pinned: false, mutedMessages: false, mutedCalls: false }),
       };
     });
+    // Pinned chats float to the top; the rest keep their recency order.
+    merged.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return 0;
+    });
     setConversations(merged);
+  };
+
+  const setConvoFlag = async (convo, patch) => {
+    const { error } = await supabase
+      .from("conversation_members")
+      .update(patch)
+      .eq("conversation_id", convo.conversationId)
+      .eq("user_id", userId);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setRowMenu(null);
+    loadConversations(userId);
   };
 
   useEffect(() => {
@@ -5425,44 +5461,108 @@ function MessagesScreen({ onBack }) {
           </div>
         ) : (
           conversations.map((c) => (
-            <button
-              key={c.conversationId}
-              onClick={() => setOpenChat(c)}
-              className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
-            >
-              {c.isGroup ? (
-                <div
-                  className="w-[52px] h-[52px] rounded-full shrink-0 flex items-center justify-center"
-                  style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
-                >
-                  <div className="w-full h-full rounded-full flex items-center justify-center" style={{ background: "var(--surface)" }}>
-                    <Users size={21} color="var(--text)" />
-                  </div>
-                </div>
-              ) : (
-                <Avatar username={c.displayName} avatarUrl={c.avatarUrl} size={52} />
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: c.unread > 0 ? 700 : 600 }}>{c.displayName}</p>
-                <p className="text-[13px] truncate mt-0.5" style={{ color: c.unread > 0 ? "var(--text)" : "var(--text-muted)", fontWeight: c.unread > 0 ? 600 : 400 }}>
-                  {c.lastMessage || "Say hi 👋"}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1.5 shrink-0">
-                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{timeShort(c.lastMessageAt)}</span>
-                {c.unread > 0 && (
-                  <span
-                    className="rounded-full flex items-center justify-center text-[10px]"
-                    style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 20, height: 20, padding: "0 6px" }}
-                  >
-                    {c.unread > 99 ? "99+" : c.unread}
-                  </span>
+            <div key={c.conversationId} className="flex items-center">
+              <button
+                onClick={() => setOpenChat(c)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setRowMenu(c);
+                }}
+                className="flex-1 min-w-0 flex items-center gap-3 pl-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+              >
+                {c.isGroup ? (
+                  c.avatarUrl ? (
+                    <img src={c.avatarUrl} alt="" className="rounded-full object-cover shrink-0" style={{ width: 52, height: 52 }} />
+                  ) : (
+                    <div
+                      className="w-[52px] h-[52px] rounded-full shrink-0 flex items-center justify-center"
+                      style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
+                    >
+                      <div className="w-full h-full rounded-full flex items-center justify-center" style={{ background: "var(--surface)" }}>
+                        <Users size={21} color="var(--text)" />
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <Avatar username={c.displayName} avatarUrl={c.avatarUrl} size={52} />
                 )}
-              </div>
-            </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[14px] truncate flex items-center gap-1.5" style={{ color: "var(--text)", fontWeight: c.unread > 0 ? 700 : 600 }}>
+                    {c.pinned && <Pin size={11} color="var(--text-muted)" style={{ flexShrink: 0 }} />}
+                    <span className="truncate">{c.displayName}</span>
+                    {c.mutedMessages && <VolumeX size={11} color="var(--text-muted)" style={{ flexShrink: 0 }} />}
+                  </p>
+                  <p className="text-[13px] truncate mt-0.5" style={{ color: c.unread > 0 ? "var(--text)" : "var(--text-muted)", fontWeight: c.unread > 0 ? 600 : 400 }}>
+                    {c.lastMessage || "Say hi 👋"}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-1.5 shrink-0">
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{timeShort(c.lastMessageAt)}</span>
+                  {c.unread > 0 && !c.mutedMessages && (
+                    <span
+                      className="rounded-full flex items-center justify-center text-[10px]"
+                      style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 20, height: 20, padding: "0 6px" }}
+                    >
+                      {c.unread > 99 ? "99+" : c.unread}
+                    </span>
+                  )}
+                </div>
+              </button>
+              <button
+                onClick={() => setRowMenu(c)}
+                className="px-3 py-3 shrink-0 transition-transform active:scale-90"
+              >
+                <Ellipsis size={17} color="var(--text-muted)" />
+              </button>
+            </div>
           ))
         )}
       </div>
+    
+      {rowMenu && (
+        <StorySheetShell title={rowMenu.displayName} onClose={() => setRowMenu(null)}>
+          <div className="pb-6">
+            <StoryMenuRow
+              icon={<Pin size={17} color="var(--text)" />}
+              label={rowMenu.pinned ? "Unpin from top" : "Pin to top"}
+              onClick={() => setConvoFlag(rowMenu, { pinned: !rowMenu.pinned })}
+            />
+            <StoryMenuRow
+              icon={rowMenu.mutedMessages ? <Volume2 size={17} color="var(--text)" /> : <VolumeX size={17} color="var(--text)" />}
+              label={rowMenu.mutedMessages ? "Unmute messages" : "Mute messages"}
+              onClick={() => setConvoFlag(rowMenu, { muted_messages: !rowMenu.mutedMessages })}
+              trailing={
+                <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: rowMenu.mutedMessages ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+                  <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: rowMenu.mutedMessages ? 17 : 2, transition: "left 0.15s" }} />
+                </span>
+              }
+            />
+            <StoryMenuRow
+              icon={<Bell size={17} color="var(--text)" />}
+              label={rowMenu.mutedCalls ? "Unmute calls" : "Mute calls"}
+              onClick={() => setConvoFlag(rowMenu, { muted_calls: !rowMenu.mutedCalls })}
+              trailing={
+                <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: rowMenu.mutedCalls ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+                  <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: rowMenu.mutedCalls ? 17 : 2, transition: "left 0.15s" }} />
+                </span>
+              }
+            />
+            <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+            <StoryMenuRow
+              icon={<Trash2 size={17} color="var(--heart)" />}
+              label="Delete chat"
+              danger
+              onClick={() => {
+                if (!window.confirm("Delete this chat from your inbox? The other person keeps their copy.")) return;
+                setConvoFlag(rowMenu, { hidden: true });
+              }}
+            />
+            <p className="text-[11px] px-4 pt-2" style={{ color: "var(--text-muted)" }}>
+              Deleting only removes it for you. A new message will bring the chat back.
+            </p>
+          </div>
+        </StorySheetShell>
+      )}
     </div>
   );
 }
@@ -5607,6 +5707,53 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
 // ---- Messaging helpers ----
 
 const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🔥", "👍"];
+
+// Shown when you tap "+" on the quick row.
+const EMOJI_LIBRARY = {
+  Smileys: ["😀","😃","😄","😁","😆","😅","🤣","😊","🙂","😉","😍","🥰","😘","😗","😋","😛","🤪","🤨","🧐","🤓","😎","🥳","😏","😒","😞","😔","😟","😕","🙁","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","🤗","🤔","🤭","🤫","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕"],
+  Gestures: ["👍","👎","👌","🤌","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👏","🙌","👐","🤲","🤝","🙏","💪","🦾","✍️","💅","👀","👋","🖐️","✋","🖖"],
+  Hearts: ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","♥️"],
+  Fun: ["🔥","✨","🌟","💫","⭐","🎉","🎊","🎈","🎁","🏆","🥇","💯","💥","💦","💨","🕳️","💣","🎵","🎶","👑","💎","🌈","☀️","🌙","⚡","❄️","🍀","🌸","🌹","🥀"],
+  Food: ["🍎","🍌","🍇","🍓","🍑","🍍","🥭","🍔","🍟","🍕","🌭","🥪","🌮","🌯","🍜","🍝","🍣","🍤","🍩","🍪","🎂","🍰","🍫","🍬","☕","🍵","🧋","🥤","🍺","🍻"],
+  Animals: ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔","🐧","🐦","🦆","🦅","🦉","🐴","🦄","🐝","🦋","🐌","🐞","🐢","🐍","🐙"],
+};
+
+function EmojiPickerSheet({ onPick, onClose }) {
+  const [tab, setTab] = useState("Smileys");
+  const tabs = Object.keys(EMOJI_LIBRARY);
+  return (
+    <StorySheetShell title="Choose a reaction" onClose={onClose}>
+      <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        {tabs.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className="rounded-full px-3 h-8 text-xs shrink-0"
+            style={{
+              background: tab === t ? ACCENT : "var(--bg-sunken)",
+              color: tab === t ? "var(--on-accent)" : "var(--text-muted)",
+              border: tab === t ? "none" : "1px solid var(--border)",
+              fontWeight: 600,
+            }}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-8 gap-1 px-4 pb-6">
+        {EMOJI_LIBRARY[tab].map((e) => (
+          <button
+            key={e}
+            onClick={() => onPick(e)}
+            className="aspect-square flex items-center justify-center text-xl rounded-lg transition-transform active:scale-125"
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+    </StorySheetShell>
+  );
+}
 
 function secsToClock(total) {
   const s = Math.max(0, Math.round(total || 0));
@@ -5863,7 +6010,7 @@ function ForwardSheet({ message, currentUserId, onClose, onDone }) {
 }
 
 // Group members: rename, add, remove, promote, leave.
-function GroupManageSheet({ conversationId, title, currentUserId, onClose, onRenamed, onLeft }) {
+function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onClose, onRenamed, onLeft, onPhotoChanged, onOpenInvite }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState(title || "");
@@ -5873,10 +6020,40 @@ function GroupManageSheet({ conversationId, title, currentUserId, onClose, onRen
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
+  const [photo, setPhoto] = useState(avatarUrl || null);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   useEffect(() => {
     loadMembers();
   }, [conversationId]);
+
+  const uploadPhoto = async (file) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    setError("");
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${currentUserId}/${conversationId}/group-${Date.now()}-${safeName}`;
+    const { error: upErr } = await supabase.storage.from("messages").upload(path, file);
+    if (upErr) {
+      setPhotoBusy(false);
+      setError(upErr.message);
+      return;
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("messages").getPublicUrl(path);
+    const { error: dbErr } = await supabase
+      .from("conversations")
+      .update({ avatar_url: publicUrl })
+      .eq("id", conversationId);
+    setPhotoBusy(false);
+    if (dbErr) {
+      setError(dbErr.message);
+      return;
+    }
+    setPhoto(publicUrl);
+    onPhotoChanged?.(publicUrl);
+  };
 
   const loadMembers = async () => {
     setLoading(true);
@@ -5990,6 +6167,36 @@ function GroupManageSheet({ conversationId, title, currentUserId, onClose, onRen
   return (
     <StorySheetShell title="Group info" onClose={onClose}>
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      <div className="flex flex-col items-center pb-3">
+        <label className="cursor-pointer relative">
+          {photo ? (
+            <img src={photo} alt="" className="rounded-full object-cover" style={{ width: 76, height: 76 }} />
+          ) : (
+            <div className="rounded-full flex items-center justify-center" style={{ width: 76, height: 76, background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <Users size={30} color="var(--text-muted)" />
+            </div>
+          )}
+          <span
+            className="absolute bottom-0 right-0 rounded-full flex items-center justify-center"
+            style={{ width: 26, height: 26, background: ACCENT, border: "2px solid var(--bg)" }}
+          >
+            <ImagePlus size={13} color="var(--on-accent)" />
+          </span>
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files[0]) uploadPhoto(e.target.files[0]);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <span className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+          {photoBusy ? "Uploading..." : "Tap to change group photo"}
+        </span>
+      </div>
 
       <div className="px-4 pb-3">
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Group name</label>
@@ -6105,6 +6312,9 @@ function GroupManageSheet({ conversationId, title, currentUserId, onClose, onRen
       )}
 
       <div className="h-px my-2 mx-4" style={{ background: "var(--border)" }} />
+      {onOpenInvite && (
+        <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Invite link" onClick={onOpenInvite} />
+      )}
       <button
         onClick={leave}
         className="w-full flex items-center gap-3 px-4 py-3.5 text-sm mb-5 transition-colors active:bg-[var(--active-highlight)]"
@@ -6118,6 +6328,349 @@ function GroupManageSheet({ conversationId, title, currentUserId, onClose, onRen
 
 const MSG_COLS =
   "id, sender_id, content, image_url, audio_url, audio_duration, reply_to_id, forwarded, created_at, edited_at, deleted";
+
+// ---- Chat customisation ----
+// Themes colour your own bubbles; fonts apply to the whole thread.
+// Both are stored on the conversation, so everyone in the chat sees them.
+const CHAT_THEMES = [
+  { key: "default", name: "Default",   bubble: "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%)", on: "var(--on-accent)" },
+  { key: "sunset",  name: "Sunset",    bubble: "linear-gradient(135deg, #FF7E5F 0%, #FEB47B 100%)", on: "#3A1A0E" },
+  { key: "ocean",   name: "Ocean",     bubble: "linear-gradient(135deg, #2E3192 0%, #1BFFFF 100%)", on: "#04222B" },
+  { key: "forest",  name: "Forest",    bubble: "linear-gradient(135deg, #134E5E 0%, #71B280 100%)", on: "#08201A" },
+  { key: "berry",   name: "Berry",     bubble: "linear-gradient(135deg, #B24592 0%, #F15F79 100%)", on: "#2E0B22" },
+  { key: "mono",    name: "Monochrome",bubble: "linear-gradient(135deg, #434343 0%, #000000 100%)", on: "#FFFFFF" },
+  { key: "citrus",  name: "Citrus",    bubble: "linear-gradient(135deg, #F7971E 0%, #FFD200 100%)", on: "#2E1E00" },
+  { key: "lavender",name: "Lavender",  bubble: "linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)", on: "#FFFFFF" },
+  { key: "mint",    name: "Mint",      bubble: "linear-gradient(135deg, #00B09B 0%, #96C93D 100%)", on: "#04241E" },
+  { key: "rose",    name: "Rose",      bubble: "linear-gradient(135deg, #ED4264 0%, #FFEDBC 100%)", on: "#33060F" },
+];
+
+// System stacks only — no extra webfont downloads, so nothing flashes
+// or blocks while a chat opens.
+const CHAT_FONTS = [
+  { key: "default",   name: "Default",   stack: "inherit" },
+  { key: "sora",      name: "Sora",      stack: "'Sora', sans-serif" },
+  { key: "cinzel",    name: "Cinzel",    stack: "'Cinzel', serif" },
+  { key: "serif",     name: "Serif",     stack: "Georgia, 'Times New Roman', serif" },
+  { key: "mono",      name: "Mono",      stack: "'Courier New', ui-monospace, monospace" },
+  { key: "rounded",   name: "Rounded",   stack: "'Trebuchet MS', 'Segoe UI', sans-serif" },
+  { key: "classic",   name: "Classic",   stack: "'Palatino Linotype', Palatino, serif" },
+  { key: "wide",      name: "Wide",      stack: "Verdana, Geneva, sans-serif" },
+  { key: "condensed", name: "Condensed", stack: "'Arial Narrow', Arial, sans-serif" },
+  { key: "playful",   name: "Playful",   stack: "'Comic Sans MS', 'Segoe UI', cursive" },
+];
+
+const themeOf = (key) => CHAT_THEMES.find((t) => t.key === key) || CHAT_THEMES[0];
+const fontOf = (key) => CHAT_FONTS.find((f) => f.key === key) || CHAT_FONTS[0];
+
+function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
+  const [pickedTheme, setPickedTheme] = useState(theme || "default");
+  const [pickedFont, setPickedFont] = useState(font || "default");
+  const [preview, setPreview] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const t = themeOf(pickedTheme);
+  const f = fontOf(pickedFont);
+
+  const apply = async () => {
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase
+      .from("conversations")
+      .update({ theme: pickedTheme, chat_font: pickedFont })
+      .eq("id", conversationId);
+    setBusy(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    onApplied(pickedTheme, pickedFont);
+  };
+
+  return (
+    <StorySheetShell title="Customise chat" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      {preview && (
+        <div className="mx-4 mb-3 rounded-2xl p-3" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", fontFamily: f.stack }}>
+          <div className="flex justify-start mb-2">
+            <div className="px-3.5 py-2 text-sm" style={{ background: "var(--surface)", color: "var(--text)", borderRadius: "16px 16px 16px 4px", border: "1px solid var(--border)" }}>
+              How does this look?
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <div className="px-3.5 py-2 text-sm" style={{ background: t.bubble, color: t.on, borderRadius: "16px 16px 4px 16px" }}>
+              Looks great 🔥
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-3 px-4">
+        {/* Theme — left */}
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] mb-2 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>Theme</p>
+          <div className="flex flex-col gap-1.5" style={{ maxHeight: 250, overflowY: "auto" }}>
+            {CHAT_THEMES.map((th) => (
+              <button
+                key={th.key}
+                onClick={() => setPickedTheme(th.key)}
+                className="flex items-center gap-2 rounded-xl px-2 py-2 text-left"
+                style={{
+                  background: pickedTheme === th.key ? "var(--bg-sunken)" : "transparent",
+                  border: pickedTheme === th.key ? "1px solid var(--accent-solid)" : "1px solid transparent",
+                }}
+              >
+                <span className="rounded-full shrink-0" style={{ width: 22, height: 22, background: th.bubble }} />
+                <span className="text-xs truncate" style={{ color: "var(--text)" }}>{th.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Font — right */}
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] mb-2 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>Font</p>
+          <div className="flex flex-col gap-1.5" style={{ maxHeight: 250, overflowY: "auto" }}>
+            {CHAT_FONTS.map((ft) => (
+              <button
+                key={ft.key}
+                onClick={() => setPickedFont(ft.key)}
+                className="rounded-xl px-2.5 py-2 text-left"
+                style={{
+                  background: pickedFont === ft.key ? "var(--bg-sunken)" : "transparent",
+                  border: pickedFont === ft.key ? "1px solid var(--accent-solid)" : "1px solid transparent",
+                  fontFamily: ft.stack,
+                }}
+              >
+                <span className="text-xs truncate block" style={{ color: "var(--text)" }}>{ft.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2.5 px-4 pt-4 pb-6">
+        <button
+          onClick={() => setPreview((v) => !v)}
+          className="flex-1 rounded-full h-11 text-sm transition-transform active:scale-95"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+        >
+          {preview ? "Hide preview" : "Preview"}
+        </button>
+        <button
+          onClick={apply}
+          disabled={busy}
+          className="flex-1 rounded-full h-11 text-sm transition-transform active:scale-95"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? "Applying..." : "Apply"}
+        </button>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Invite link ----
+function InviteSheet({ conversationId, code, title, currentUserId, onClose, onReset }) {
+  const [showQR, setShowQR] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [flash, setFlash] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const link = `${window.location.origin}/join/${code || ""}`;
+  const say = (m) => {
+    setFlash(m);
+    setTimeout(() => setFlash(""), 1800);
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      say("Link copied");
+    } catch {
+      say("Couldn't copy on this device");
+    }
+  };
+
+  const share = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: title || "Join my group on Loop", url: link });
+        return;
+      }
+      await navigator.clipboard.writeText(link);
+      say("Link copied");
+    } catch {
+      say("Sharing isn't available here");
+    }
+  };
+
+  const reset = async () => {
+    if (!window.confirm("Reset the link? The old one will stop working.")) return;
+    setBusy(true);
+    const { data, error } = await supabase.rpc("reset_invite_code", { p_conversation_id: conversationId });
+    setBusy(false);
+    if (error) {
+      say(error.message);
+      return;
+    }
+    onReset(data);
+    say("New link created");
+  };
+
+  if (sendOpen) {
+    return (
+      <ForwardSheet
+        message={{ content: `Join "${title || "my group"}" on Loop: ${link}` }}
+        currentUserId={currentUserId}
+        onClose={() => setSendOpen(false)}
+      />
+    );
+  }
+
+  return (
+    <StorySheetShell title="Invite link" onClose={onClose}>
+      {flash && <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
+
+      <div className="px-4 pb-3">
+        <div className="rounded-2xl px-4 py-3" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <span className="text-[11px] block mb-1" style={{ color: "var(--text-muted)" }}>Anyone with this link can join</span>
+          <span className="text-xs block" style={{ color: "var(--text)", wordBreak: "break-all" }}>{link}</span>
+        </div>
+      </div>
+
+      {showQR && (
+        <div className="flex flex-col items-center pb-3">
+          <div className="rounded-2xl p-3" style={{ background: "#FFFFFF" }}>
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=0&data=${encodeURIComponent(link)}`}
+              alt="Invite QR code"
+              width={200}
+              height={200}
+            />
+          </div>
+          <span className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>Point a camera at this to join</span>
+        </div>
+      )}
+
+      <div className="pb-6">
+        <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={copy} />
+        <StoryMenuRow icon={<SendHorizontal size={17} color="var(--text)" />} label="Send in Loop" onClick={() => setSendOpen(true)} />
+        <StoryMenuRow
+          icon={<Hash size={17} color="var(--text)" />}
+          label={showQR ? "Hide QR code" : "QR code"}
+          onClick={() => setShowQR((v) => !v)}
+        />
+        <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Share" onClick={share} />
+        <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+        <StoryMenuRow icon={<RefreshCw size={17} color="var(--heart)" />} label="Reset link" danger busy={busy} onClick={reset} />
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Nicknames ----
+function NicknamesSheet({ conversationId, currentUserId, onClose, onSaved }) {
+  const [rows, setRows] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data: members } = await supabase
+        .from("conversation_members")
+        .select("user_id, nickname")
+        .eq("conversation_id", conversationId);
+      const ids = (members || []).map((m) => m.user_id);
+      let profiles = [];
+      if (ids.length > 0) {
+        const { data } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+        profiles = data || [];
+      }
+      const built = (members || []).map((m) => ({
+        ...m,
+        username: profiles.find((pr) => pr.id === m.user_id)?.username || "unknown",
+        avatarUrl: profiles.find((pr) => pr.id === m.user_id)?.avatar_url || null,
+      }));
+      setRows(built);
+      const d = {};
+      built.forEach((b) => (d[b.user_id] = b.nickname || ""));
+      setDrafts(d);
+      setLoading(false);
+    })();
+  }, [conversationId]);
+
+  const save = async (userId) => {
+    setBusyId(userId);
+    setError("");
+    const value = (drafts[userId] || "").trim();
+    const { error: err } = await supabase
+      .from("conversation_members")
+      .update({ nickname: value || null })
+      .eq("conversation_id", conversationId)
+      .eq("user_id", userId);
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setRows((prev) => prev.map((r) => (r.user_id === userId ? { ...r, nickname: value || null } : r)));
+    onSaved?.();
+  };
+
+  return (
+    <StorySheetShell title="Nicknames" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+      <p className="text-[11px] px-4 pb-2" style={{ color: "var(--text-muted)" }}>
+        Nicknames are visible to everyone in this chat.
+      </p>
+      <div className="pb-6">
+        {loading ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : (
+          rows.map((r) => {
+            const changed = (drafts[r.user_id] || "") !== (r.nickname || "");
+            return (
+              <div key={r.user_id} className="flex items-center gap-3 px-4 py-2.5">
+                <Avatar username={r.username} avatarUrl={r.avatarUrl} size={40} />
+                <div className="flex-1 min-w-0">
+                  <span className="text-[11px] block mb-1 truncate" style={{ color: "var(--text-muted)" }}>
+                    {r.username}{r.user_id === currentUserId ? " (you)" : ""}
+                  </span>
+                  <input
+                    value={drafts[r.user_id] || ""}
+                    onChange={(e) => setDrafts((prev) => ({ ...prev, [r.user_id]: e.target.value }))}
+                    placeholder="Set a nickname"
+                    maxLength={30}
+                    className="w-full rounded-full px-3 h-9 text-sm outline-none"
+                    style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+                  />
+                </div>
+                <button
+                  onClick={() => save(r.user_id)}
+                  disabled={!changed || busyId === r.user_id}
+                  className="rounded-full px-3.5 h-9 text-xs shrink-0 transition-transform active:scale-95"
+                  style={{
+                    background: changed ? ACCENT : "var(--bg-sunken)",
+                    border: changed ? "none" : "1px solid var(--border)",
+                    color: changed ? "var(--on-accent)" : "var(--text-muted)",
+                    fontWeight: 700,
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
 
 function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack }) {
   const [messages, setMessages] = useState([]);
@@ -6141,6 +6694,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const [title, setTitle] = useState(chatTitle);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [emojiSheetFor, setEmojiSheetFor] = useState(null);
+  const [sheet, setSheet] = useState(null); // customise | invite | nicknames
+  const [convoMeta, setConvoMeta] = useState({ theme: "default", chat_font: "default", invite_code: null, avatar_url: null });
+  const [nicknames, setNicknames] = useState({}); // userId -> nickname
   const [recording, setRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
   const [audioUploading, setAudioUploading] = useState(false);
@@ -6157,11 +6714,13 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const cancelRecordRef = React.useRef(false);
   const recordSecsRef = React.useRef(0);
   const inputRef = React.useRef(null);
+  const messageIdsRef = React.useRef([]); // read by the realtime handler
 
   useEffect(() => {
     loadMessages();
     markRead();
-    if (isGroup) loadMemberNames();
+    loadConvoMeta();
+    loadMemberNames();
 
     const channel = supabase.channel(`chat:${conversationId}`, {
       config: { broadcast: { self: false } },
@@ -6194,7 +6753,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       // conversation — so we take everything RLS lets through and keep
       // only the rows belonging to messages in this chat.
       .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => {
-        loadReactions();
+        loadReactions(messageIdsRef.current);
       })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         if (payload.userId === currentUserId) return;
@@ -6219,6 +6778,12 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, typingUsers, searchOpen]);
 
+  useEffect(() => {
+    const ids = messages.map((m) => m.id);
+    messageIdsRef.current = ids;
+    if (ids.length > 0) loadReactions(ids);
+  }, [messages.length]);
+
   const loadMessages = async () => {
     setLoading(true);
     const { data } = await supabase
@@ -6228,16 +6793,12 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       .order("created_at", { ascending: true });
     setMessages(data || []);
     setLoading(false);
-    loadReactions(data || []);
   };
 
-  const loadReactions = async (list) => {
-    const source = list || messages;
-    const ids = source.map((m) => m.id);
-    if (ids.length === 0) {
-      setReactions({});
-      return;
-    }
+  // Takes plain ids so the realtime callback can pass a ref and never work
+  // from a stale `messages` closure.
+  const loadReactions = async (ids) => {
+    if (!ids || ids.length === 0) return;
     const { data } = await supabase
       .from("message_reactions")
       .select("message_id, user_id, emoji")
@@ -6250,10 +6811,24 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     setReactions(map);
   };
 
+  const loadConvoMeta = async () => {
+    const { data } = await supabase
+      .from("conversations")
+      .select("theme, chat_font, invite_code, avatar_url, title")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (data) {
+      setConvoMeta(data);
+      if (isGroup && data.title) setTitle(data.title);
+    }
+  };
+
+  // Names and nicknames both come from here — nicknames win wherever a
+  // person is shown inside this chat.
   const loadMemberNames = async () => {
     const { data: members } = await supabase
       .from("conversation_members")
-      .select("user_id")
+      .select("user_id, nickname")
       .eq("conversation_id", conversationId);
     const ids = (members || []).map((m) => m.user_id);
     if (ids.length === 0) return;
@@ -6261,6 +6836,11 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     const map = {};
     (profiles || []).forEach((pr) => (map[pr.id] = pr.username));
     setMemberNames(map);
+    const nick = {};
+    (members || []).forEach((m) => {
+      if (m.nickname) nick[m.user_id] = m.nickname;
+    });
+    setNicknames(nick);
   };
 
   const loadOtherRead = async () => {
@@ -6527,8 +7107,14 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     return "";
   };
 
-  const nameOf = (userId) =>
-    userId === currentUserId ? "You" : isGroup ? memberNames[userId] || "unknown" : title;
+  const nameOf = (userId) => {
+    if (nicknames[userId]) return nicknames[userId];
+    if (userId === currentUserId) return "You";
+    return isGroup ? memberNames[userId] || "unknown" : title;
+  };
+
+  const chatTheme = themeOf(convoMeta.theme);
+  const chatFont = fontOf(convoMeta.chat_font);
 
   const myLastMessage = [...messages].reverse().find((m) => m.sender_id === currentUserId && !m.deleted);
   const seen = !isGroup && myLastMessage && otherLastRead && new Date(otherLastRead) >= new Date(myLastMessage.created_at);
@@ -6539,7 +7125,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     : messages;
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)", fontFamily: chatFont.stack }}>
       {/* header */}
       <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
@@ -6551,13 +7137,19 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
         >
           {isGroup ? (
-            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--border)" }}>
-              <Users size={16} color="var(--text)" />
-            </div>
+            convoMeta.avatar_url ? (
+              <img src={convoMeta.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+            ) : (
+              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--border)" }}>
+                <Users size={16} color="var(--text)" />
+              </div>
+            )
           ) : (
             <Avatar username={title} avatarUrl={chatAvatarUrl} size={32} />
           )}
-          <span className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{title}</span>
+          <span className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
+            {!isGroup && nicknames[otherUser?.id] ? nicknames[otherUser.id] : title}
+          </span>
         </button>
         <button
           onClick={() => {
@@ -6568,11 +7160,9 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         >
           <Search size={19} color={searchOpen ? "var(--accent-solid)" : "var(--text)"} />
         </button>
-        {isGroup && (
-          <button onClick={() => setGroupSheet(true)} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
-            <Ellipsis size={19} color="var(--text)" />
-          </button>
-        )}
+        <button onClick={() => setSheet("options")} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
+          <Ellipsis size={19} color="var(--text)" />
+        </button>
       </div>
 
       {searchOpen && (
@@ -6612,12 +7202,15 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
             {q ? "No messages match that" : "No messages yet — say hi 👋"}
           </p>
         ) : (
-          visibleMessages.map((m) => {
+          visibleMessages.map((m, idx) => {
             const mine = m.sender_id === currentUserId;
             const isLast = myLastMessage && m.id === myLastMessage.id;
             const parent = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : null;
             const rx = reactions[m.id] || [];
             const myRx = rx.find((r) => r.user_id === currentUserId);
+            // No room above for the first couple of bubbles — the row would
+            // be clipped by the scroll container, so it opens downward.
+            const flipDown = idx < 2;
 
             if (editingId === m.id) {
               return (
@@ -6643,7 +7236,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
               <div key={m.id} className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}`}>
                 {isGroup && !mine && (
                   <span className="text-[10px] mb-0.5 ml-1" style={{ color: "var(--text-muted)" }}>
-                    {memberNames[m.sender_id] || "unknown"}
+                    {nicknames[m.sender_id] || memberNames[m.sender_id] || "unknown"}
                   </span>
                 )}
 
@@ -6716,8 +7309,8 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                         <div
                           className="px-3.5 py-2 text-sm"
                           style={{
-                            background: mine ? ACCENT : "var(--surface)",
-                            color: mine ? "var(--on-accent)" : "var(--text)",
+                            background: mine ? chatTheme.bubble : "var(--surface)",
+                            color: mine ? chatTheme.on : "var(--text)",
                             borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                             whiteSpace: "pre-wrap",
                             wordBreak: "break-word",
@@ -6744,12 +7337,13 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       />
                       {pickerFor === m.id && (
                         <div
-                          className={`absolute z-50 flex items-center gap-1 px-2 py-1.5 rounded-full ${mine ? "right-0" : "left-0"}`}
+                          className={`absolute z-50 flex items-center gap-0.5 px-2 py-1.5 rounded-full ${mine ? "right-0" : "left-0"}`}
                           style={{
                             background: "var(--surface-raised)",
                             border: "1px solid var(--border)",
-                            bottom: "100%",
-                            marginBottom: 6,
+                            ...(flipDown
+                              ? { top: "100%", marginTop: 6 }
+                              : { bottom: "100%", marginBottom: 6 }),
                             boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
                           }}
                         >
@@ -6766,11 +7360,28 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                               {e}
                             </button>
                           ))}
+                          <button
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              setEmojiSheetFor(m);
+                            }}
+                            className="ml-0.5 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-110"
+                            style={{ width: 26, height: 26, background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
+                          >
+                            <Plus size={14} color="var(--text)" strokeWidth={2.5} />
+                          </button>
                         </div>
                       )}
                       <div
                         className={`absolute z-50 rounded-xl overflow-hidden py-1 ${mine ? "right-0" : "left-0"}`}
-                        style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 150, top: "100%", marginTop: 4, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}
+                        style={{
+                          background: "var(--surface-raised)",
+                          border: "1px solid var(--border)",
+                          minWidth: 150,
+                          top: "100%",
+                          marginTop: flipDown && pickerFor === m.id ? 52 : 4,
+                          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                        }}
                       >
                         <button onClick={() => startReply(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
                           <CornerUpLeft size={13} /> Reply
@@ -6814,8 +7425,15 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       setPickerFor(m.id);
                       openedAtRef.current = Date.now();
                     }}
-                    className="flex items-center gap-0.5 px-2 py-0.5 rounded-full -mt-1.5 mx-1 relative z-10"
-                    style={{ background: "var(--surface-raised)", border: "1px solid var(--border)" }}
+                    className="flex items-center gap-0.5 px-2 py-0.5 rounded-full mx-1"
+                    style={{
+                      background: "var(--surface-raised)",
+                      border: "1px solid var(--border)",
+                      marginTop: -8,
+                      position: "relative",
+                      zIndex: 20,
+                      boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
+                    }}
                   >
                     {[...new Set(rx.map((r) => r.emoji))].slice(0, 3).map((e) => (
                       <span key={e} className="text-[12px] leading-none">{e}</span>
@@ -6939,6 +7557,16 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         )}
       </div>
 
+      {emojiSheetFor && (
+        <EmojiPickerSheet
+          onPick={(e) => {
+            react(emojiSheetFor, e);
+            setEmojiSheetFor(null);
+          }}
+          onClose={() => setEmojiSheetFor(null)}
+        />
+      )}
+
       {forwardMsg && (
         <ForwardSheet
           message={forwardMsg}
@@ -6947,15 +7575,88 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         />
       )}
 
+      {sheet === "options" && (
+        <StorySheetShell title="Chat options" onClose={() => setSheet(null)}>
+          <div className="pb-6">
+            <StoryMenuRow
+              icon={<Sparkles size={17} color="var(--text)" />}
+              label="Customise chat"
+              onClick={() => setSheet("customise")}
+            />
+            <StoryMenuRow
+              icon={<Pencil size={17} color="var(--text)" />}
+              label="Nicknames"
+              onClick={() => setSheet("nicknames")}
+            />
+            {isGroup && (
+              <>
+                <StoryMenuRow
+                  icon={<Users size={17} color="var(--text)" />}
+                  label="Group info"
+                  onClick={() => {
+                    setSheet(null);
+                    setGroupSheet(true);
+                  }}
+                />
+                <StoryMenuRow
+                  icon={<Share2 size={17} color="var(--text)" />}
+                  label="Invite link"
+                  onClick={() => setSheet("invite")}
+                />
+              </>
+            )}
+          </div>
+        </StorySheetShell>
+      )}
+
+      {sheet === "customise" && (
+        <CustomiseSheet
+          conversationId={conversationId}
+          theme={convoMeta.theme}
+          font={convoMeta.chat_font}
+          onClose={() => setSheet(null)}
+          onApplied={(t, f) => {
+            setConvoMeta((prev) => ({ ...prev, theme: t, chat_font: f }));
+            setSheet(null);
+          }}
+        />
+      )}
+
+      {sheet === "nicknames" && (
+        <NicknamesSheet
+          conversationId={conversationId}
+          currentUserId={currentUserId}
+          onClose={() => setSheet(null)}
+          onSaved={loadMemberNames}
+        />
+      )}
+
+      {sheet === "invite" && (
+        <InviteSheet
+          conversationId={conversationId}
+          code={convoMeta.invite_code}
+          title={title}
+          currentUserId={currentUserId}
+          onClose={() => setSheet(null)}
+          onReset={(code) => setConvoMeta((prev) => ({ ...prev, invite_code: code }))}
+        />
+      )}
+
       {groupSheet && (
         <GroupManageSheet
           conversationId={conversationId}
           title={title}
+          avatarUrl={convoMeta.avatar_url}
           currentUserId={currentUserId}
           onClose={() => setGroupSheet(false)}
           onRenamed={(t) => {
             setTitle(t);
             setGroupSheet(false);
+          }}
+          onPhotoChanged={(url) => setConvoMeta((prev) => ({ ...prev, avatar_url: url }))}
+          onOpenInvite={() => {
+            setGroupSheet(false);
+            setSheet("invite");
           }}
           onLeft={() => {
             setGroupSheet(false);
