@@ -61,6 +61,7 @@ import {
   LogOut,
   Shield,
 } from "lucide-react";
+import QRCode from "qrcode";
 
 // ---- Design tokens ----
 // bg: var(--bg) (deep aubergine-black)  card: var(--surface)
@@ -2118,6 +2119,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   };
 
   const [sharePost, setSharePost] = useState(null);
+  const [collectionPost, setCollectionPost] = useState(null);
+  const savePressRef = React.useRef(null);
 
   const toggleSave = async (post) => {
     if (!userId) return;
@@ -2272,7 +2275,19 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
-                  <button onClick={() => toggleSave(post)} className="h-7 flex items-center justify-center">
+                  <button
+                    onClick={() => toggleSave(post)}
+                    onTouchStart={() => {
+                      savePressRef.current = setTimeout(() => setCollectionPost(post), 500);
+                    }}
+                    onTouchEnd={() => clearTimeout(savePressRef.current)}
+                    onTouchMove={() => clearTimeout(savePressRef.current)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setCollectionPost(post);
+                    }}
+                    className="h-7 flex items-center justify-center transition-transform active:scale-90"
+                  >
                     <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
                   </button>
                   <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
@@ -2371,6 +2386,20 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
       {sharePost && (
         <ShareSheet item={sharePost} currentUserId={userId} onClose={() => setSharePost(null)} />
+      )}
+
+      {collectionPost && (
+        <AddToCollectionSheet
+          postIds={[collectionPost.id]}
+          currentUserId={userId}
+          onClose={() => setCollectionPost(null)}
+          onDone={() => {
+            // Filing a post into a collection should also save it, so it
+            // still appears under "All posts".
+            if (!collectionPost.saved) toggleSave(collectionPost);
+            setCollectionPost(null);
+          }}
+        />
       )}
     </div>
   );
@@ -6508,11 +6537,30 @@ function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
 // ---- Invite link ----
 function InviteSheet({ conversationId, code, title, currentUserId, onClose, onReset }) {
   const [showQR, setShowQR] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState("");
   const [sendOpen, setSendOpen] = useState(false);
   const [flash, setFlash] = useState("");
   const [busy, setBusy] = useState(false);
 
   const link = `${window.location.origin}/join/${code || ""}`;
+
+  // Rendered on-device with the qrcode package — the link never leaves
+  // the browser. Regenerates whenever the link is reset.
+  useEffect(() => {
+    if (!showQR) return;
+    let cancelled = false;
+    QRCode.toDataURL(link, { width: 220, margin: 1, errorCorrectionLevel: "M" })
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showQR, link]);
+
   const say = (m) => {
     setFlash(m);
     setTimeout(() => setFlash(""), 1800);
@@ -6576,13 +6624,12 @@ function InviteSheet({ conversationId, code, title, currentUserId, onClose, onRe
 
       {showQR && (
         <div className="flex flex-col items-center pb-3">
-          <div className="rounded-2xl p-3" style={{ background: "#FFFFFF" }}>
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=0&data=${encodeURIComponent(link)}`}
-              alt="Invite QR code"
-              width={200}
-              height={200}
-            />
+          <div className="rounded-2xl p-3 flex items-center justify-center" style={{ background: "#FFFFFF", minWidth: 226, minHeight: 226 }}>
+            {qrDataUrl ? (
+              <img src={qrDataUrl} alt="Invite QR code" width={200} height={200} />
+            ) : (
+              <span className="text-xs" style={{ color: "#666" }}>Generating...</span>
+            )}
           </div>
           <span className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>Point a camera at this to join</span>
         </div>
@@ -6923,11 +6970,370 @@ function ShareSheet({ item, currentUserId, onClose }) {
   );
 }
 
-// ---- Saved posts ----
-// Saving already worked; there was simply nowhere to look at the results.
-function SavedScreen({ onBack, onOpenPost }) {
-  const [posts, setPosts] = useState([]);
+// ---- Saved posts and collections ----
+
+// Small reusable grid tile.
+function MediaTile({ post, onClick, selected, selectable, badge }) {
+  return (
+    <button
+      onClick={onClick}
+      className="aspect-square relative overflow-hidden"
+      style={{ background: "var(--bg-sunken)" }}
+    >
+      {post.media_type === "photo" ? (
+        <img src={post.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+      ) : (
+        <video src={post.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+      )}
+      {post.media_type !== "photo" && (
+        <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+          <Video size={13} color="#FFFFFF" />
+        </span>
+      )}
+      {badge}
+      {selectable && (
+        <span
+          className="absolute bottom-1.5 right-1.5 rounded-full flex items-center justify-center"
+          style={{
+            width: 20,
+            height: 20,
+            background: selected ? ACCENT : "rgba(0,0,0,0.45)",
+            border: selected ? "none" : "1.5px solid rgba(255,255,255,0.8)",
+          }}
+        >
+          {selected && <Check size={12} color="var(--on-accent)" strokeWidth={3} />}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// Pick which collections a post belongs to. Used from the bookmark
+// long-press and from inside a collection.
+function AddToCollectionSheet({ postIds, currentUserId, onClose, onDone }) {
+  const [collections, setCollections] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [collaborative, setCollaborative] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [addedTo, setAddedTo] = useState([]);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    // Owned collections plus any collaborative ones you were added to.
+    const { data: owned } = await supabase
+      .from("save_collections")
+      .select("id, name, cover_url, is_collaborative, owner_id")
+      .eq("owner_id", currentUserId || "")
+      .order("created_at", { ascending: false });
+
+    const { data: shared } = await supabase
+      .from("collection_collaborators")
+      .select("collection_id")
+      .eq("user_id", currentUserId || "");
+
+    let sharedRows = [];
+    const sharedIds = (shared || []).map((r) => r.collection_id);
+    if (sharedIds.length > 0) {
+      const { data } = await supabase
+        .from("save_collections")
+        .select("id, name, cover_url, is_collaborative, owner_id")
+        .in("id", sharedIds)
+        .eq("is_collaborative", true);
+      sharedRows = data || [];
+    }
+
+    const seen = new Set();
+    const merged = [...(owned || []), ...sharedRows].filter((c) => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+    setCollections(merged);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, [currentUserId]);
+
+  const addInto = async (collectionId) => {
+    setBusy(true);
+    setError("");
+    const rows = postIds.map((id) => ({ collection_id: collectionId, post_id: id, added_by: currentUserId }));
+    const { error: err } = await supabase
+      .from("collection_items")
+      .upsert(rows, { onConflict: "collection_id,post_id" });
+    setBusy(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setAddedTo((prev) => [...prev, collectionId]);
+    onDone?.();
+  };
+
+  const createAndAdd = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setBusy(true);
+    setError("");
+    const { data: created, error: err } = await supabase
+      .from("save_collections")
+      .insert({ owner_id: currentUserId, name, is_collaborative: collaborative })
+      .select("id, name, cover_url, is_collaborative, owner_id")
+      .single();
+    if (err) {
+      setBusy(false);
+      setError(err.message);
+      return;
+    }
+    setCollections((prev) => [created, ...prev]);
+    setNewName("");
+    setBusy(false);
+    await addInto(created.id);
+  };
+
+  return (
+    <StorySheetShell title={postIds.length > 1 ? `Add ${postIds.length} posts to...` : "Save to collection"} onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      <div className="px-4 pb-3">
+        <div className="flex items-center gap-2 mb-2">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="New collection name"
+            maxLength={40}
+            className="flex-1 rounded-full px-4 h-11 text-sm outline-none"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+          />
+          <button
+            onClick={createAndAdd}
+            disabled={busy || !newName.trim()}
+            className="rounded-full px-4 h-11 text-xs shrink-0 transition-transform active:scale-95"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy || !newName.trim() ? 0.5 : 1 }}
+          >
+            Create
+          </button>
+        </div>
+        <button onClick={() => setCollaborative((v) => !v)} className="flex items-center gap-2.5 w-full text-left">
+          <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: collaborative ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+            <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: collaborative ? 17 : 2, transition: "left 0.15s" }} />
+          </span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>Make it collaborative — invite people to add posts</span>
+        </button>
+      </div>
+
+      <div className="pb-6">
+        {loading ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : collections.length === 0 ? (
+          <p className="text-xs text-center py-6 px-8" style={{ color: "var(--text-muted)" }}>
+            No collections yet. Name one above to make your first.
+          </p>
+        ) : (
+          collections.map((c) => {
+            const done = addedTo.includes(c.id);
+            return (
+              <button
+                key={c.id}
+                onClick={() => !done && addInto(c.id)}
+                disabled={done || busy}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors active:bg-[var(--active-highlight)]"
+              >
+                <div
+                  className="w-12 h-12 rounded-xl shrink-0 overflow-hidden flex items-center justify-center"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                >
+                  {c.cover_url ? (
+                    <img src={c.cover_url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Bookmark size={17} color="var(--text-muted)" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
+                  {c.is_collaborative && (
+                    <span className="flex items-center gap-1 text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                      <Users size={10} /> Collaborative
+                      {c.owner_id !== currentUserId ? " · shared with you" : ""}
+                    </span>
+                  )}
+                </div>
+                {done && <Check size={17} color="var(--accent-solid)" />}
+              </button>
+            );
+          })
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// Manage who can add to a collaborative collection.
+function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
+  const [rows, setRows] = useState([]);
+  const [candidates, setCandidates] = useState([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+  const isOwner = collection.owner_id === currentUserId;
+
+  const load = async () => {
+    const { data: collabs } = await supabase
+      .from("collection_collaborators")
+      .select("user_id")
+      .eq("collection_id", collection.id);
+    const ids = (collabs || []).map((r) => r.user_id);
+    let profiles = [];
+    if (ids.length > 0) {
+      const { data } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+      profiles = data || [];
+    }
+    setRows(
+      (collabs || []).map((r) => ({
+        user_id: r.user_id,
+        username: profiles.find((pr) => pr.id === r.user_id)?.username || "unknown",
+        avatarUrl: profiles.find((pr) => pr.id === r.user_id)?.avatar_url || null,
+      }))
+    );
+    const { data: all } = await supabase.from("profiles").select("id, username, avatar_url").limit(60);
+    setCandidates(all || []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, [collection.id]);
+
+  const add = async (pr) => {
+    setBusyId(pr.id);
+    setError("");
+    const { error: err } = await supabase
+      .from("collection_collaborators")
+      .insert({ collection_id: collection.id, user_id: pr.id });
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    await load();
+    onChanged?.();
+  };
+
+  const remove = async (r) => {
+    setBusyId(r.user_id);
+    setError("");
+    const { error: err } = await supabase
+      .from("collection_collaborators")
+      .delete()
+      .eq("collection_id", collection.id)
+      .eq("user_id", r.user_id);
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    await load();
+    onChanged?.();
+  };
+
+  const memberIds = rows.map((r) => r.user_id);
+  const shown = candidates
+    .filter((c) => !memberIds.includes(c.id) && c.id !== collection.owner_id)
+    .filter((c) => c.username.toLowerCase().includes(query.trim().toLowerCase()));
+
+  return (
+    <StorySheetShell title="Collaborators" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+      {!collection.is_collaborative && (
+        <p className="text-[11px] px-4 pb-2" style={{ color: "var(--text-muted)" }}>
+          This collection isn't collaborative yet — turn it on in the collection's ··· menu so invitees can add posts.
+        </p>
+      )}
+
+      <p className="text-[11px] px-4 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>
+        {rows.length} collaborator{rows.length === 1 ? "" : "s"}
+      </p>
+      {loading ? (
+        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-xs px-4 pb-2" style={{ color: "var(--text-muted)" }}>No one added yet</p>
+      ) : (
+        rows.map((r) => (
+          <div key={r.user_id} className="flex items-center gap-3 px-4 py-2.5">
+            <Avatar username={r.username} avatarUrl={r.avatarUrl} size={40} />
+            <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{r.username}</span>
+            {(isOwner || r.user_id === currentUserId) && (
+              <button onClick={() => remove(r)} disabled={busyId === r.user_id} className="p-1 shrink-0 transition-transform active:scale-90">
+                <UserMinus size={17} color="var(--heart)" />
+              </button>
+            )}
+          </div>
+        ))
+      )}
+
+      {isOwner && (
+        <>
+          <div className="px-4 pt-3 pb-2">
+            <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+              <Search size={16} color="var(--text-muted)" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search people to invite"
+                className="flex-1 bg-transparent outline-none text-sm"
+                style={{ color: "var(--text)" }}
+              />
+            </div>
+          </div>
+          <div className="pb-6">
+            {shown.slice(0, 20).map((c) => (
+              <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+                <Avatar username={c.username} avatarUrl={c.avatar_url} size={40} />
+                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{c.username}</span>
+                <button
+                  onClick={() => add(c)}
+                  disabled={busyId === c.id}
+                  className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+                  style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busyId === c.id ? 0.6 : 1 }}
+                >
+                  Invite
+                </button>
+              </div>
+            ))}
+            {shown.length === 0 && (
+              <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>Everyone is already invited</p>
+            )}
+          </div>
+        </>
+      )}
+    </StorySheetShell>
+  );
+}
+
+function SavedScreen({ onBack, onOpenPost }) {
+  const [tab, setTab] = useState("all"); // all | collections
+  const [userId, setUserId] = useState(null);
+  const [posts, setPosts] = useState([]);
+  const [collections, setCollections] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [openCollection, setOpenCollection] = useState(null);
+  const [collectionPosts, setCollectionPosts] = useState([]);
+  const [collectionLoading, setCollectionLoading] = useState(false);
+
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [sheet, setSheet] = useState(null); // add | collaborators | menu
+  const [flash, setFlash] = useState("");
+
+  const say = (m) => {
+    setFlash(m);
+    setTimeout(() => setFlash(""), 1800);
+  };
 
   useEffect(() => {
     (async () => {
@@ -6938,39 +7344,298 @@ function SavedScreen({ onBack, onOpenPost }) {
         setLoading(false);
         return;
       }
-      const { data: saves } = await supabase
-        .from("saves")
-        .select("post_id, created_at")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      const ids = (saves || []).map((r) => r.post_id);
-      if (ids.length === 0) {
-        setPosts([]);
-        setLoading(false);
-        return;
-      }
-      const { data: rows } = await supabase
-        .from("posts")
-        .select("id, media_url, media_type, caption")
-        .in("id", ids);
-
-      // Keep the order the posts were saved in, newest first.
-      const byId = {};
-      (rows || []).forEach((r) => (byId[r.id] = r));
-      setPosts(ids.map((id) => byId[id]).filter(Boolean));
+      setUserId(user.id);
+      await Promise.all([loadSaved(user.id), loadCollections(user.id)]);
       setLoading(false);
     })();
   }, []);
 
+  const loadSaved = async (uid) => {
+    // Only post_id is selected here on purpose — the saves table is
+    // ordered client-side so this keeps working whatever columns exist.
+    const { data: saves } = await supabase.from("saves").select("post_id").eq("user_id", uid);
+    const ids = (saves || []).map((r) => r.post_id);
+    if (ids.length === 0) {
+      setPosts([]);
+      return;
+    }
+    const { data: rows } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, caption, created_at")
+      .in("id", ids)
+      .order("created_at", { ascending: false });
+    setPosts(rows || []);
+  };
+
+  const loadCollections = async (uid) => {
+    const { data: owned } = await supabase
+      .from("save_collections")
+      .select("id, name, cover_url, is_collaborative, owner_id")
+      .eq("owner_id", uid)
+      .order("created_at", { ascending: false });
+
+    const { data: shared } = await supabase
+      .from("collection_collaborators")
+      .select("collection_id")
+      .eq("user_id", uid);
+    const sharedIds = (shared || []).map((r) => r.collection_id);
+    let sharedRows = [];
+    if (sharedIds.length > 0) {
+      const { data } = await supabase
+        .from("save_collections")
+        .select("id, name, cover_url, is_collaborative, owner_id")
+        .in("id", sharedIds);
+      sharedRows = data || [];
+    }
+
+    const seen = new Set();
+    const merged = [...(owned || []), ...sharedRows].filter((c) => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+
+    // Count items and borrow the newest item as a cover when none is set.
+    const ids = merged.map((c) => c.id);
+    let items = [];
+    if (ids.length > 0) {
+      const { data } = await supabase.from("collection_items").select("collection_id, post_id").in("collection_id", ids);
+      items = data || [];
+    }
+    const postIds = [...new Set(items.map((i) => i.post_id))];
+    let media = {};
+    if (postIds.length > 0) {
+      const { data } = await supabase.from("posts").select("id, media_url, media_type").in("id", postIds);
+      (data || []).forEach((m) => (media[m.id] = m));
+    }
+    setCollections(
+      merged.map((c) => {
+        const mine = items.filter((i) => i.collection_id === c.id);
+        const first = mine.map((i) => media[i.post_id]).find(Boolean);
+        return { ...c, count: mine.length, previewUrl: c.cover_url || first?.media_url || null, previewType: first?.media_type };
+      })
+    );
+  };
+
+  const openCollectionView = async (c) => {
+    setOpenCollection(c);
+    setCollectionLoading(true);
+    const { data: items } = await supabase.from("collection_items").select("post_id").eq("collection_id", c.id);
+    const ids = (items || []).map((i) => i.post_id);
+    if (ids.length === 0) {
+      setCollectionPosts([]);
+      setCollectionLoading(false);
+      return;
+    }
+    const { data: rows } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, created_at")
+      .in("id", ids)
+      .order("created_at", { ascending: false });
+    setCollectionPosts(rows || []);
+    setCollectionLoading(false);
+  };
+
+  const toggleSelect = (id) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const removeFromCollection = async (postId) => {
+    const { error } = await supabase
+      .from("collection_items")
+      .delete()
+      .eq("collection_id", openCollection.id)
+      .eq("post_id", postId);
+    if (error) {
+      say(error.message);
+      return;
+    }
+    setCollectionPosts((prev) => prev.filter((p) => p.id !== postId));
+    loadCollections(userId);
+  };
+
+  const toggleCollaborative = async () => {
+    const next = !openCollection.is_collaborative;
+    const { error } = await supabase.from("save_collections").update({ is_collaborative: next }).eq("id", openCollection.id);
+    if (error) {
+      say(error.message);
+      return;
+    }
+    setOpenCollection((prev) => ({ ...prev, is_collaborative: next }));
+    loadCollections(userId);
+    say(next ? "Collaboration turned on" : "Collaboration turned off");
+  };
+
+  const deleteCollection = async () => {
+    if (!window.confirm(`Delete "${openCollection.name}"? The posts stay saved.`)) return;
+    const { error } = await supabase.from("save_collections").delete().eq("id", openCollection.id);
+    if (error) {
+      say(error.message);
+      return;
+    }
+    setSheet(null);
+    setOpenCollection(null);
+    loadCollections(userId);
+  };
+
+  // ---------- collection detail ----------
+  if (openCollection) {
+    const isOwner = openCollection.owner_id === userId;
+    return (
+      <div className="flex-1 overflow-y-auto pb-4">
+        <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+          <button
+            onClick={() => {
+              setOpenCollection(null);
+              setSelectMode(false);
+              setSelected([]);
+            }}
+            className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"
+          >
+            <ChevronLeft size={24} color="var(--text)" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg truncate" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
+              {openCollection.name}
+            </h1>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+              {collectionPosts.length} post{collectionPosts.length === 1 ? "" : "s"}
+              {openCollection.is_collaborative ? " · Collaborative" : ""}
+            </span>
+          </div>
+          <button onClick={() => setSheet("menu")} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
+            <Ellipsis size={19} color="var(--text)" />
+          </button>
+        </div>
+
+        {flash && <p className="text-xs px-4 py-2" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
+
+        {collectionLoading ? (
+          <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
+            ))}
+          </div>
+        ) : collectionPosts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center">
+            <Bookmark size={28} color="var(--toggle-off)" />
+            <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>This collection is empty</p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Go to Saved, pick some posts, and add them here.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+            {collectionPosts.map((p) => (
+              <MediaTile
+                key={p.id}
+                post={p}
+                onClick={() => onOpenPost?.(p.id)}
+                badge={
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeFromCollection(p.id);
+                    }}
+                    className="absolute bottom-1.5 left-1.5 rounded-full flex items-center justify-center"
+                    style={{ width: 20, height: 20, background: "rgba(0,0,0,0.55)" }}
+                  >
+                    <X size={11} color="#FFFFFF" />
+                  </span>
+                }
+              />
+            ))}
+          </div>
+        )}
+
+        {sheet === "menu" && (
+          <StorySheetShell title={openCollection.name} onClose={() => setSheet(null)}>
+            <div className="pb-6">
+              <StoryMenuRow
+                icon={<Users size={17} color="var(--text)" />}
+                label="Collaborators"
+                onClick={() => setSheet("collaborators")}
+              />
+              {isOwner && (
+                <StoryMenuRow
+                  icon={<UserPlus size={17} color="var(--text)" />}
+                  label={openCollection.is_collaborative ? "Turn off collaboration" : "Make collaborative"}
+                  onClick={toggleCollaborative}
+                  trailing={
+                    <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: openCollection.is_collaborative ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+                      <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: openCollection.is_collaborative ? 17 : 2, transition: "left 0.15s" }} />
+                    </span>
+                  }
+                />
+              )}
+              {isOwner && (
+                <>
+                  <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+                  <StoryMenuRow icon={<Trash2 size={17} color="var(--heart)" />} label="Delete collection" danger onClick={deleteCollection} />
+                </>
+              )}
+            </div>
+          </StorySheetShell>
+        )}
+
+        {sheet === "collaborators" && (
+          <CollaboratorsSheet
+            collection={openCollection}
+            currentUserId={userId}
+            onClose={() => setSheet(null)}
+            onChanged={() => loadCollections(userId)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ---------- main saved screen ----------
   return (
     <div className="flex-1 overflow-y-auto pb-4">
-      <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3">
         <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
-        <h1 className="text-xl" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Saved</h1>
+        <h1 className="flex-1 text-xl" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Saved</h1>
+        {tab === "all" && posts.length > 0 && (
+          <button
+            onClick={() => {
+              setSelectMode((v) => !v);
+              setSelected([]);
+            }}
+            className="text-xs px-2"
+            style={{ color: selectMode ? "var(--accent-solid)" : "var(--text-muted)", fontWeight: 600 }}
+          >
+            {selectMode ? "Cancel" : "Select"}
+          </button>
+        )}
       </div>
+
+      <div className="flex" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        {[
+          { k: "all", label: "All posts" },
+          { k: "collections", label: "Collections" },
+        ].map((t) => (
+          <button
+            key={t.k}
+            onClick={() => {
+              setTab(t.k);
+              setSelectMode(false);
+              setSelected([]);
+            }}
+            className="flex-1 py-2.5 text-[13px]"
+            style={{
+              color: tab === t.k ? "var(--text)" : "var(--text-muted)",
+              fontWeight: tab === t.k ? 700 : 500,
+              borderBottom: tab === t.k ? "2px solid var(--text)" : "2px solid transparent",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {flash && <p className="text-xs px-4 py-2" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
 
       {loading ? (
         <div className="grid grid-cols-3 gap-0.5 mt-0.5">
@@ -6978,36 +7643,117 @@ function SavedScreen({ onBack, onOpenPost }) {
             <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
           ))}
         </div>
-      ) : posts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-2 py-20 px-8 text-center">
+      ) : tab === "all" ? (
+        posts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-20 px-8 text-center">
+            <Bookmark size={30} color="var(--toggle-off)" />
+            <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Nothing saved yet</p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Tap the bookmark on any post or reel and it will show up here.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+            {posts.map((p) => (
+              <MediaTile
+                key={p.id}
+                post={p}
+                selectable={selectMode}
+                selected={selected.includes(p.id)}
+                onClick={() => (selectMode ? toggleSelect(p.id) : onOpenPost?.(p.id))}
+              />
+            ))}
+          </div>
+        )
+      ) : collections.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-16 px-8 text-center">
           <Bookmark size={30} color="var(--toggle-off)" />
-          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Nothing saved yet</p>
+          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>No collections yet</p>
           <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Tap the bookmark on any post or reel and it will show up here.
+            Group your saved posts into albums — and invite people to add to them.
           </p>
+          <button
+            onClick={() => setSheet("add")}
+            className="rounded-full px-5 h-10 text-xs mt-1 transition-transform active:scale-95"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+          >
+            New collection
+          </button>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-0.5 mt-0.5">
-          {posts.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => onOpenPost?.(p.id)}
-              className="aspect-square relative overflow-hidden"
-              style={{ background: "var(--bg-sunken)" }}
-            >
-              {p.media_type === "photo" ? (
-                <img src={p.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
-              ) : (
-                <video src={p.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-              )}
-              {p.media_type !== "photo" && (
-                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-                  <Video size={13} color="#FFFFFF" />
+        <div className="px-4 pt-3">
+          <button
+            onClick={() => setSheet("add")}
+            className="w-full flex items-center gap-3 rounded-2xl px-4 py-3 mb-3 transition-transform active:scale-[0.99]"
+            style={{ background: "var(--bg-sunken)", border: "1px dashed var(--border)" }}
+          >
+            <span className="rounded-full flex items-center justify-center shrink-0" style={{ width: 34, height: 34, background: ACCENT }}>
+              <Plus size={17} color="var(--on-accent)" strokeWidth={3} />
+            </span>
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>New collection</span>
+          </button>
+
+          <div className="grid grid-cols-2 gap-3">
+            {collections.map((c) => (
+              <button key={c.id} onClick={() => openCollectionView(c)} className="text-left transition-transform active:scale-[0.98]">
+                <div
+                  className="aspect-square rounded-2xl overflow-hidden flex items-center justify-center mb-1.5"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                >
+                  {c.previewUrl ? (
+                    c.previewType === "photo" || c.cover_url ? (
+                      <img src={c.previewUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <video src={c.previewUrl} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                    )
+                  ) : (
+                    <Bookmark size={24} color="var(--toggle-off)" />
+                  )}
+                </div>
+                <span className="text-[13px] truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
+                <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  {c.count} post{c.count === 1 ? "" : "s"}
+                  {c.is_collaborative && (
+                    <>
+                      {" · "}
+                      <Users size={10} />
+                      {c.owner_id !== userId ? "shared" : "collab"}
+                    </>
+                  )}
                 </span>
-              )}
-            </button>
-          ))}
+              </button>
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* selection action bar */}
+      {selectMode && selected.length > 0 && (
+        <div className="fixed left-0 right-0 bottom-0 px-4 py-3 z-40" style={{ background: "var(--bg)", borderTop: "1px solid var(--border)" }}>
+          <button
+            onClick={() => setSheet("add")}
+            className="w-full rounded-full h-11 text-sm transition-transform active:scale-95"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+          >
+            Add {selected.length} to a collection
+          </button>
+        </div>
+      )}
+
+      {sheet === "add" && (
+        <AddToCollectionSheet
+          postIds={selected}
+          currentUserId={userId}
+          onClose={() => setSheet(null)}
+          onDone={() => {
+            setSheet(null);
+            setSelectMode(false);
+            setSelected([]);
+            loadCollections(userId);
+            setTab("collections");
+            say("Added to collection");
+          }}
+        />
       )}
     </div>
   );
