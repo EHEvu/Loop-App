@@ -2120,6 +2120,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
   const [sharePost, setSharePost] = useState(null);
   const [collectionPost, setCollectionPost] = useState(null);
+  const [saveError, setSaveError] = useState("");
   const savePressRef = React.useRef(null);
   const longPressedRef = React.useRef(false);
 
@@ -2130,10 +2131,16 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       prev.map((p) => (p.id === post.id ? { ...p, saved: !p.saved } : p))
     );
 
-    if (post.saved) {
-      await supabase.from("saves").delete().eq("post_id", post.id).eq("user_id", userId);
-    } else {
-      await supabase.from("saves").insert({ post_id: post.id, user_id: userId });
+    const { error } = post.saved
+      ? await supabase.from("saves").delete().eq("post_id", post.id).eq("user_id", userId)
+      : await supabase.from("saves").insert({ post_id: post.id, user_id: userId });
+
+    if (error) {
+      // Put the icon back where it was — a bookmark that looks saved but
+      // isn't is worse than an honest failure.
+      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, saved: post.saved } : p)));
+      setSaveError(error.message);
+      setTimeout(() => setSaveError(""), 4000);
     }
   };
 
@@ -2175,6 +2182,13 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         hasNotifications={hasNotifications}
       />
       <StoriesBar onOpenProfile={onOpenProfile} />
+
+      {saveError && (
+        <div className="mx-4 mb-2 rounded-xl px-3 py-2" style={{ background: "var(--bg-sunken)", border: "1px solid var(--heart)" }}>
+          <p className="text-[11px]" style={{ color: "var(--heart)", fontWeight: 600 }}>Couldn't save that post</p>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)", wordBreak: "break-word" }}>{saveError}</p>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
@@ -2652,10 +2666,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
 
     setReels((prev) => prev.map((r, i) => (i === index ? { ...r, saved: !wasSaved } : r)));
 
-    if (wasSaved) {
-      await supabase.from("saves").delete().eq("post_id", reel.id).eq("user_id", userId);
-    } else {
-      await supabase.from("saves").insert({ post_id: reel.id, user_id: userId });
+    const { error } = wasSaved
+      ? await supabase.from("saves").delete().eq("post_id", reel.id).eq("user_id", userId)
+      : await supabase.from("saves").insert({ post_id: reel.id, user_id: userId });
+
+    if (error) {
+      setReels((prev) => prev.map((r, i) => (i === index ? { ...r, saved: wasSaved } : r)));
+      showToast(error.message);
     }
   };
 
@@ -4777,10 +4794,13 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
     if (!userId || !post) return;
     const was = post.saved;
     setPost((prev) => ({ ...prev, saved: !was, saveCount: was ? prev.saveCount - 1 : prev.saveCount + 1 }));
-    if (was) {
-      await supabase.from("saves").delete().eq("post_id", post.id).eq("user_id", userId);
-    } else {
-      await supabase.from("saves").insert({ post_id: post.id, user_id: userId });
+    const { error } = was
+      ? await supabase.from("saves").delete().eq("post_id", post.id).eq("user_id", userId)
+      : await supabase.from("saves").insert({ post_id: post.id, user_id: userId });
+
+    if (error) {
+      setPost((prev) => ({ ...prev, saved: was, saveCount: was ? prev.saveCount + 1 : prev.saveCount - 1 }));
+      alert(error.message);
     }
   };
 
