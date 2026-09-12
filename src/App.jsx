@@ -4985,6 +4985,995 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
   );
 }
 
+// ---- Your activity ----
+// Everything here is counted from your own rows. Time spent is the one
+// exception: nothing has ever recorded it, so it starts from the moment
+// this build first runs rather than pretending to know your history.
+const TIME_KEY = "loop_time_spent";
+
+function readTimeSpent() {
+  try {
+    const raw = localStorage.getItem(TIME_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function recordTimeSpent(seconds) {
+  try {
+    const day = new Date().toISOString().slice(0, 10);
+    const data = readTimeSpent();
+    data[day] = (data[day] || 0) + seconds;
+    // Keep a fortnight; older days aren't shown anywhere.
+    const keep = Object.keys(data).sort().slice(-14);
+    const trimmed = {};
+    keep.forEach((k) => (trimmed[k] = data[k]));
+    localStorage.setItem(TIME_KEY, JSON.stringify(trimmed));
+  } catch {}
+}
+
+function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
+  const [view, setView] = useState("menu"); // menu | likes | comments | time
+  const [counts, setCounts] = useState({ likes: 0, comments: 0, saves: 0 });
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [likesRes, commentsRes, savesRes] = await Promise.all([
+        supabase.from("likes").select("post_id", { count: "exact", head: true }).eq("user_id", currentUserId),
+        supabase.from("comments").select("id", { count: "exact", head: true }).eq("user_id", currentUserId),
+        supabase.from("saves").select("post_id", { count: "exact", head: true }).eq("user_id", currentUserId),
+      ]);
+      setCounts({
+        likes: likesRes.count || 0,
+        comments: commentsRes.count || 0,
+        saves: savesRes.count || 0,
+      });
+      setLoading(false);
+    })();
+  }, [currentUserId]);
+
+  const openLikes = async () => {
+    setView("likes");
+    setLoading(true);
+    setError("");
+    const { data, error: err } = await supabase.from("likes").select("post_id").eq("user_id", currentUserId);
+    if (err) {
+      setError(err.message);
+      setLoading(false);
+      return;
+    }
+    const ids = (data || []).map((r) => r.post_id);
+    if (ids.length === 0) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+    const { data: rows } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, created_at")
+      .in("id", ids)
+      .order("created_at", { ascending: false });
+    setItems(rows || []);
+    setLoading(false);
+  };
+
+  const openComments = async () => {
+    setView("comments");
+    setLoading(true);
+    setError("");
+    const { data, error: err } = await supabase
+      .from("comments")
+      .select("id, post_id, body, created_at")
+      .eq("user_id", currentUserId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (err) setError(err.message);
+    setItems(data || []);
+    setLoading(false);
+  };
+
+  const Header = ({ title, back }) => (
+    <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+      <button onClick={back} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <ChevronLeft size={24} color="var(--text)" />
+      </button>
+      <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{title}</h1>
+    </div>
+  );
+
+  if (view === "likes" || view === "comments") {
+    const isLikes = view === "likes";
+    return (
+      <div className="flex-1 overflow-y-auto pb-6">
+        <Header title={isLikes ? "Likes" : "Comments"} back={() => setView("menu")} />
+        {error ? (
+          <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
+        ) : loading ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : items.length === 0 ? (
+          <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Nothing here yet</p>
+        ) : isLikes ? (
+          <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+            {items.map((p) => (
+              <MediaTile key={p.id} post={p} onClick={() => onOpenPost?.(p.id)} />
+            ))}
+          </div>
+        ) : (
+          items.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => onOpenPost?.(c.post_id)}
+              className="w-full text-left px-4 py-3"
+              style={{ borderBottom: "1px solid var(--border-subtle)" }}
+            >
+              <p className="text-sm" style={{ color: "var(--text)", wordBreak: "break-word" }}>{c.body}</p>
+              <span className="text-[11px] mt-1 block" style={{ color: "var(--text-muted)" }}>{timeAgo(c.created_at)} ago</span>
+            </button>
+          ))
+        )}
+      </div>
+    );
+  }
+
+  if (view === "time") {
+    const data = readTimeSpent();
+    const days = Object.keys(data).sort().slice(-7);
+    const total = days.reduce((a, d) => a + data[d], 0);
+    const avg = days.length ? Math.round(total / days.length) : 0;
+    const fmt = (sec) => {
+      const m = Math.round(sec / 60);
+      return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+    };
+    const max = Math.max(1, ...days.map((d) => data[d]));
+
+    return (
+      <div className="flex-1 overflow-y-auto pb-6">
+        <Header title="Time spent" back={() => setView("menu")} />
+        <div className="px-4 pt-4">
+          <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>
+            Measured on this device only, and only since this version was installed — nothing was
+            recorded before that.
+          </p>
+          <div className="rounded-2xl px-4 py-4 mb-4" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <span className="text-[11px] block" style={{ color: "var(--text-muted)" }}>Daily average</span>
+            <span className="text-2xl block mt-0.5" style={{ color: "var(--text)", fontWeight: 700 }}>{fmt(avg)}</span>
+          </div>
+          {days.length === 0 ? (
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No days recorded yet</p>
+          ) : (
+            <div className="flex items-end justify-between gap-2" style={{ height: 140 }}>
+              {days.map((d) => (
+                <div key={d} className="flex-1 flex flex-col items-center gap-1.5">
+                  <div className="w-full rounded-t-lg" style={{ height: `${(data[d] / max) * 100}%`, background: ACCENT, minHeight: 4 }} />
+                  <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+                    {new Date(d).toLocaleDateString(undefined, { weekday: "short" })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-6">
+      <Header title="Your activity" back={onBack} />
+      <div className="flex gap-2 px-4 pt-4 pb-3">
+        {[
+          { label: "Likes", value: counts.likes },
+          { label: "Comments", value: counts.comments },
+          { label: "Saved", value: counts.saves },
+        ].map((c) => (
+          <div key={c.label} className="flex-1 rounded-2xl px-3 py-3 text-center" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <span className="text-lg block" style={{ color: "var(--text)", fontWeight: 700 }}>{loading ? "—" : formatCount(c.value)}</span>
+            <span className="text-[11px] block mt-0.5" style={{ color: "var(--text-muted)" }}>{c.label}</span>
+          </div>
+        ))}
+      </div>
+      <StoryMenuRow icon={<Heart size={17} color="var(--text)" />} label="Likes you've given" onClick={openLikes} />
+      <StoryMenuRow icon={<MessageCircle size={17} color="var(--text)" style={{ transform: "scaleX(-1)" }} />} label="Comments you've made" onClick={openComments} />
+      <StoryMenuRow icon={<Gauge size={17} color="var(--text)" />} label="Time spent" onClick={() => setView("time")} />
+    </div>
+  );
+}
+
+// ---- Archive ----
+function ArchiveScreen({ currentUserId, onBack, onOpenPost }) {
+  const [tab, setTab] = useState("posts");
+  const [posts, setPosts] = useState([]);
+  const [stories, setStories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data: p, error: pe } = await supabase
+        .from("posts")
+        .select("id, media_url, media_type, created_at")
+        .eq("user_id", currentUserId)
+        .eq("archived", true)
+        .order("created_at", { ascending: false });
+      if (pe) setError(pe.message);
+      setPosts(p || []);
+
+      // Owners can read their own stories past expiry, so this is the
+      // full story archive rather than only the live ones.
+      const { data: st } = await supabase
+        .from("stories")
+        .select("id, media_url, media_type, created_at")
+        .eq("user_id", currentUserId)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      setStories(st || []);
+      setLoading(false);
+    })();
+  }, [currentUserId]);
+
+  const shown = tab === "posts" ? posts : stories;
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-6">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3">
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Archive</h1>
+      </div>
+
+      <div className="flex" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        {[
+          { k: "posts", label: "Posts" },
+          { k: "stories", label: "Stories" },
+        ].map((t) => (
+          <button
+            key={t.k}
+            onClick={() => setTab(t.k)}
+            className="flex-1 py-2.5 text-[13px]"
+            style={{
+              color: tab === t.k ? "var(--text)" : "var(--text-muted)",
+              fontWeight: tab === t.k ? 700 : 500,
+              borderBottom: tab === t.k ? "2px solid var(--text)" : "2px solid transparent",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {error ? (
+        <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
+      ) : loading ? (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+      ) : shown.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-16 px-8 text-center">
+          <Archive size={28} color="var(--toggle-off)" />
+          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>
+            {tab === "posts" ? "No archived posts" : "No stories yet"}
+          </p>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            {tab === "posts"
+              ? "Archive a post from its ··· menu and it lands here."
+              : "Stories you post stay here after they expire."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+          {shown.map((item) => (
+            <MediaTile
+              key={item.id}
+              post={item}
+              onClick={() => tab === "posts" && onOpenPost?.(item.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Multi-account ----
+// Supabase keeps one session in localStorage, so switching accounts means
+// stashing each session's tokens ourselves and calling setSession to swap.
+// Refresh tokens rotate, so a stashed one can go stale — that case is
+// handled by asking for a fresh login rather than failing silently.
+const ACCOUNTS_KEY = "loop_accounts";
+
+function readAccounts() {
+  try {
+    const raw = localStorage.getItem(ACCOUNTS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAccounts(list) {
+  try {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(list));
+  } catch {}
+}
+
+async function rememberCurrentAccount(profile) {
+  const { data } = await supabase.auth.getSession();
+  const session = data?.session;
+  if (!session || !profile) return;
+  const entry = {
+    id: profile.id,
+    username: profile.username,
+    avatar_url: profile.avatar_url || null,
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+  };
+  const list = readAccounts().filter((a) => a.id !== entry.id);
+  writeAccounts([entry, ...list].slice(0, 5));
+}
+
+function AccountSwitcherSheet({ currentUserId, onClose, onSwitched, onAddAccount }) {
+  const [accounts, setAccounts] = useState(readAccounts());
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  const switchTo = async (acc) => {
+    if (acc.id === currentUserId) {
+      onClose();
+      return;
+    }
+    setBusyId(acc.id);
+    setError("");
+    const { error: err } = await supabase.auth.setSession({
+      access_token: acc.access_token,
+      refresh_token: acc.refresh_token,
+    });
+    setBusyId(null);
+    if (err) {
+      // Stale refresh token — drop it and send them to a normal login.
+      writeAccounts(readAccounts().filter((a) => a.id !== acc.id));
+      setAccounts(readAccounts());
+      setError(`Session for @${acc.username} expired. Log in again to add it back.`);
+      return;
+    }
+    onSwitched();
+  };
+
+  const forget = (acc) => {
+    writeAccounts(readAccounts().filter((a) => a.id !== acc.id));
+    setAccounts(readAccounts());
+  };
+
+  return (
+    <StorySheetShell title="Switch account" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+      <div className="pb-2">
+        {accounts.length === 0 ? (
+          <p className="text-xs text-center py-5 px-8" style={{ color: "var(--text-muted)" }}>
+            No other accounts saved on this device yet.
+          </p>
+        ) : (
+          accounts.map((a) => (
+            <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
+              <Avatar username={a.username} avatarUrl={a.avatar_url} size={44} />
+              <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</span>
+              {a.id === currentUserId ? (
+                <Check size={18} color="var(--accent-solid)" />
+              ) : (
+                <>
+                  <button
+                    onClick={() => switchTo(a)}
+                    disabled={busyId === a.id}
+                    className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+                    style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busyId === a.id ? 0.6 : 1 }}
+                  >
+                    {busyId === a.id ? "..." : "Switch"}
+                  </button>
+                  <button onClick={() => forget(a)} className="p-1 shrink-0"><X size={16} color="var(--text-muted)" /></button>
+                </>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+      <StoryMenuRow icon={<UserPlus size={17} color="var(--text)" />} label="Log into another account" onClick={onAddAccount} />
+      <div className="pb-4" />
+    </StorySheetShell>
+  );
+}
+
+// ---- Share profile ----
+function ShareProfileSheet({ profile, currentUserId, onClose }) {
+  const [qr, setQr] = useState("");
+  const [flash, setFlash] = useState("");
+  const [sendOpen, setSendOpen] = useState(false);
+
+  const link = `${window.location.origin}/u/${profile.username}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    QRCode.toDataURL(link, { width: 220, margin: 1, errorCorrectionLevel: "M" })
+      .then((url) => !cancelled && setQr(url))
+      .catch(() => !cancelled && setQr(""));
+    return () => {
+      cancelled = true;
+    };
+  }, [link]);
+
+  const say = (m) => {
+    setFlash(m);
+    setTimeout(() => setFlash(""), 1800);
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      say("Link copied");
+    } catch {
+      say("Couldn't copy on this device");
+    }
+  };
+
+  const share = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `@${profile.username} on Loop`, url: link });
+        return;
+      }
+      await navigator.clipboard.writeText(link);
+      say("Link copied");
+    } catch {
+      say("Sharing isn't available here");
+    }
+  };
+
+  if (sendOpen) {
+    return (
+      <ForwardSheet
+        message={{ content: `Check out @${profile.username} on Loop: ${link}` }}
+        currentUserId={currentUserId}
+        onClose={() => setSendOpen(false)}
+      />
+    );
+  }
+
+  return (
+    <StorySheetShell title="Share profile" onClose={onClose}>
+      {flash && <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
+
+      <div className="flex flex-col items-center pb-4">
+        <div className="rounded-3xl p-4 flex items-center justify-center" style={{ background: "#FFFFFF", minWidth: 252, minHeight: 252 }}>
+          {qr ? <img src={qr} alt="Profile QR code" width={220} height={220} /> : <span className="text-xs" style={{ color: "#666" }}>Generating...</span>}
+        </div>
+        <span className="text-sm mt-3" style={{ color: "var(--text)", fontWeight: 700 }}>@{profile.username}</span>
+        <span className="text-[11px] mt-0.5 px-8 text-center" style={{ color: "var(--text-muted)", wordBreak: "break-all" }}>{link}</span>
+      </div>
+
+      <div className="pb-6">
+        <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={copy} />
+        <StoryMenuRow icon={<SendHorizontal size={17} color="var(--text)" />} label="Send in Loop" onClick={() => setSendOpen(true)} />
+        <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Share to..." onClick={share} />
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- People lists (close friends, blocked, restricted, muted) ----
+// All four are the same shape: a list of people you've put in a bucket,
+// plus a search to add more. `table` picks which store to write to.
+function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProfile }) {
+  const isCloseFriends = kind === "close_friends";
+  const [members, setMembers] = useState([]);
+  const [candidates, setCandidates] = useState([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    const { data, error: err } = isCloseFriends
+      ? await supabase.from("close_friends").select("friend_id").eq("user_id", currentUserId)
+      : await supabase.from("user_relations").select("target_id").eq("user_id", currentUserId).eq("kind", kind);
+
+    if (err) {
+      setError(err.message);
+      setLoading(false);
+      return;
+    }
+    const ids = (data || []).map((r) => (isCloseFriends ? r.friend_id : r.target_id));
+    let profiles = [];
+    if (ids.length > 0) {
+      const { data: pr } = await supabase.from("profiles").select("id, username, full_name, avatar_url").in("id", ids);
+      profiles = pr || [];
+    }
+    setMembers(profiles);
+
+    const { data: all } = await supabase
+      .from("profiles")
+      .select("id, username, full_name, avatar_url")
+      .neq("id", currentUserId || "")
+      .limit(80);
+    setCandidates(all || []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, [kind, currentUserId]);
+
+  const add = async (person) => {
+    setBusyId(person.id);
+    setError("");
+    const { error: err } = isCloseFriends
+      ? await supabase.from("close_friends").insert({ user_id: currentUserId, friend_id: person.id })
+      : await supabase.from("user_relations").insert({ user_id: currentUserId, target_id: person.id, kind });
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setMembers((prev) => [...prev, person]);
+  };
+
+  const remove = async (person) => {
+    setBusyId(person.id);
+    setError("");
+    const { error: err } = isCloseFriends
+      ? await supabase.from("close_friends").delete().eq("user_id", currentUserId).eq("friend_id", person.id)
+      : await supabase
+          .from("user_relations")
+          .delete()
+          .eq("user_id", currentUserId)
+          .eq("target_id", person.id)
+          .eq("kind", kind);
+    setBusyId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setMembers((prev) => prev.filter((m) => m.id !== person.id));
+  };
+
+  const memberIds = members.map((m) => m.id);
+  const q = query.trim().toLowerCase();
+  const shown = candidates
+    .filter((c) => !memberIds.includes(c.id))
+    .filter((c) => c.username.toLowerCase().includes(q) || (c.full_name || "").toLowerCase().includes(q));
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-6">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{title}</h1>
+      </div>
+
+      {hint && <p className="text-[11px] px-4 pt-3" style={{ color: "var(--text-muted)" }}>{hint}</p>}
+      {error && <p className="text-xs px-4 pt-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      <p className="text-[11px] px-4 pt-3 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>
+        {members.length} on this list
+      </p>
+      {loading ? (
+        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
+      ) : members.length === 0 ? (
+        <p className="text-xs px-4 pb-1" style={{ color: "var(--text-muted)" }}>Nobody yet</p>
+      ) : (
+        members.map((m) => (
+          <div key={m.id} className="flex items-center gap-3 px-4 py-2.5">
+            <button onClick={() => onOpenProfile?.(m.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+              <Avatar username={m.username} avatarUrl={m.avatar_url} size={44} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{m.username}</p>
+                {m.full_name && <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{m.full_name}</p>}
+              </div>
+            </button>
+            <button
+              onClick={() => remove(m)}
+              disabled={busyId === m.id}
+              className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+              style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+            >
+              Remove
+            </button>
+          </div>
+        ))
+      )}
+
+      <div className="px-4 pt-4 pb-2">
+        <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <Search size={16} color="var(--text-muted)" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search people to add"
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "var(--text)" }}
+          />
+        </div>
+      </div>
+
+      {shown.slice(0, 25).map((c) => (
+        <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+          <Avatar username={c.username} avatarUrl={c.avatar_url} size={44} />
+          <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{c.username}</span>
+          <button
+            onClick={() => add(c)}
+            disabled={busyId === c.id}
+            className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busyId === c.id ? 0.6 : 1 }}
+          >
+            Add
+          </button>
+        </div>
+      ))}
+      {!loading && shown.length === 0 && (
+        <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>No one else to add</p>
+      )}
+    </div>
+  );
+}
+
+// ---- Edit profile ----
+
+// Instagram's username rules: lowercase letters, numbers, dots and
+// underscores; 1-30 characters; no leading, trailing or doubled dots.
+function validateUsername(raw) {
+  const v = (raw || "").trim();
+  if (v.length === 0) return "Username can't be empty";
+  if (v.length > 30) return "Username can't be longer than 30 characters";
+  if (!/^[a-z0-9._]+$/.test(v)) return "Only lowercase letters, numbers, periods and underscores";
+  if (v.startsWith(".") || v.endsWith(".")) return "Username can't start or end with a period";
+  if (v.includes("..")) return "Username can't have two periods in a row";
+  return null;
+}
+
+const GENDERS = [
+  { key: "male", label: "Male" },
+  { key: "female", label: "Female" },
+  { key: "third", label: "Third gender" },
+];
+
+function EditProfileScreen({ currentUserId, onBack, onSaved }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [flash, setFlash] = useState("");
+
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [username, setUsername] = useState("");
+  const [originalUsername, setOriginalUsername] = useState("");
+  const [bio, setBio] = useState("");
+  const [links, setLinks] = useState([]);
+  const [gender, setGender] = useState(null);
+
+  const [nameError, setNameError] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [available, setAvailable] = useState(null);
+  const fileRef = React.useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: err } = await supabase
+        .from("profiles")
+        .select("username, full_name, bio, avatar_url, links, gender")
+        .eq("id", currentUserId)
+        .maybeSingle();
+      if (err) setError(err.message);
+      if (data) {
+        setUsername(data.username || "");
+        setOriginalUsername(data.username || "");
+        setFullName(data.full_name || "");
+        setBio(data.bio || "");
+        setAvatarUrl(data.avatar_url || null);
+        setGender(data.gender || null);
+        setLinks(Array.isArray(data.links) ? data.links : []);
+      }
+      setLoading(false);
+    })();
+  }, [currentUserId]);
+
+  // Debounced availability check — only when it actually changed.
+  useEffect(() => {
+    const v = username.trim();
+    setAvailable(null);
+    const problem = validateUsername(v);
+    setNameError(problem);
+    if (problem || v.toLowerCase() === originalUsername.toLowerCase()) return;
+
+    const t = setTimeout(async () => {
+      setChecking(true);
+      const { data, error: err } = await supabase.rpc("username_available", { p_username: v });
+      setChecking(false);
+      if (err) {
+        setAvailable(null);
+        return;
+      }
+      setAvailable(!!data);
+    }, 450);
+    return () => clearTimeout(t);
+  }, [username, originalUsername]);
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    setAvatarBusy(true);
+    setError("");
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${currentUserId}/${Date.now()}-${safeName}`;
+    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file);
+    if (upErr) {
+      setAvatarBusy(false);
+      setError(upErr.message);
+      return;
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("avatars").getPublicUrl(path);
+    setAvatarUrl(publicUrl);
+    setAvatarBusy(false);
+  };
+
+  const setLink = (i, field, value) =>
+    setLinks((prev) => prev.map((l, idx) => (idx === i ? { ...l, [field]: value } : l)));
+
+  const addLink = () => {
+    if (links.length >= 5) return;
+    setLinks((prev) => [...prev, { title: "", url: "" }]);
+  };
+
+  const removeLink = (i) => setLinks((prev) => prev.filter((_, idx) => idx !== i));
+
+  const save = async () => {
+    setError("");
+    const problem = validateUsername(username);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    if (available === false) {
+      setError("That username is taken");
+      return;
+    }
+    if (!gender) {
+      setError("Please choose a gender — it's required");
+      return;
+    }
+    if (bio.length > 150) {
+      setError("Bio can't be longer than 150 characters");
+      return;
+    }
+
+    // Drop blank rows and normalise the URLs so a bare domain still works.
+    const cleanLinks = links
+      .map((l) => ({ title: (l.title || "").trim(), url: (l.url || "").trim() }))
+      .filter((l) => l.url)
+      .slice(0, 5)
+      .map((l) => ({
+        title: l.title || l.url.replace(/^https?:\/\//, "").split("/")[0],
+        url: /^https?:\/\//i.test(l.url) ? l.url : `https://${l.url}`,
+      }));
+
+    setSaving(true);
+    const { error: err } = await supabase
+      .from("profiles")
+      .update({
+        username: username.trim(),
+        full_name: fullName.trim() || null,
+        bio: bio.trim() || null,
+        avatar_url: avatarUrl,
+        links: cleanLinks,
+        gender,
+      })
+      .eq("id", currentUserId);
+    setSaving(false);
+
+    if (err) {
+      // The unique index fires here if someone took the name in between.
+      setError(err.message.includes("profiles_username_lower_idx") ? "That username is taken" : err.message);
+      return;
+    }
+    setFlash("Profile saved");
+    setTimeout(() => setFlash(""), 1500);
+    onSaved?.();
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+      </div>
+    );
+  }
+
+  const nameState = nameError
+    ? { text: nameError, color: "var(--heart)" }
+    : checking
+    ? { text: "Checking...", color: "var(--text-muted)" }
+    : available === true
+    ? { text: "Available", color: "var(--accent-solid)" }
+    : available === false
+    ? { text: "Taken", color: "var(--heart)" }
+    : null;
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-10">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <h1 className="flex-1 text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Edit profile</h1>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="rounded-full px-4 h-9 text-xs transition-transform active:scale-95"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: saving ? 0.6 : 1 }}
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+
+      {error && <p className="text-xs px-4 pt-3" style={{ color: "var(--heart)" }}>{error}</p>}
+      {flash && <p className="text-xs px-4 pt-3" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
+
+      <div className="flex flex-col items-center py-5">
+        <button onClick={() => fileRef.current?.click()} className="relative transition-transform active:scale-95">
+          <div
+            className="rounded-full overflow-hidden flex items-center justify-center"
+            style={{ width: 88, height: 88, background: "var(--surface)", border: "1px solid var(--border)" }}
+          >
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-3xl" style={{ color: "var(--text)", fontWeight: 700 }}>
+                {(username || "u")[0].toUpperCase()}
+              </span>
+            )}
+          </div>
+          <span
+            className="absolute bottom-0 right-0 rounded-full flex items-center justify-center"
+            style={{ width: 28, height: 28, background: ACCENT, border: "2px solid var(--bg)" }}
+          >
+            <ImagePlus size={14} color="var(--on-accent)" />
+          </span>
+        </button>
+        <span className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+          {avatarBusy ? "Uploading..." : "Change photo"}
+        </span>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files[0]) uploadAvatar(e.target.files[0]);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      <div className="px-4">
+        <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Name</label>
+        <input
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
+          maxLength={60}
+          placeholder="Your name"
+          className="w-full rounded-2xl px-4 h-12 text-sm outline-none mb-4"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Username</label>
+          {nameState && (
+            <span className="text-[11px]" style={{ color: nameState.color, fontWeight: 600 }}>{nameState.text}</span>
+          )}
+        </div>
+        <div
+          className="flex items-center rounded-2xl px-4 h-12 mb-1"
+          style={{ background: "var(--bg-sunken)", border: `1px solid ${nameError || available === false ? "var(--heart)" : "var(--border)"}` }}
+        >
+          <span className="text-sm shrink-0" style={{ color: "var(--text-muted)" }}>@</span>
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/\s/g, ""))}
+            maxLength={30}
+            autoCapitalize="none"
+            autoCorrect="off"
+            className="flex-1 bg-transparent outline-none text-sm ml-1"
+            style={{ color: "var(--text)" }}
+          />
+        </div>
+        <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>
+          Lowercase letters, numbers, periods and underscores.
+        </p>
+
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Bio</label>
+          <span className="text-[11px]" style={{ color: bio.length > 150 ? "var(--heart)" : "var(--text-muted)" }}>
+            {bio.length}/150
+          </span>
+        </div>
+        <textarea
+          value={bio}
+          onChange={(e) => setBio(e.target.value.slice(0, 150))}
+          rows={3}
+          placeholder="Tell people about yourself"
+          className="w-full rounded-2xl px-4 py-3 text-sm outline-none resize-none mb-4"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Links</label>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{links.length}/5</span>
+        </div>
+        {links.map((l, i) => (
+          <div key={i} className="flex items-center gap-2 mb-2">
+            <div className="flex-1 min-w-0">
+              <input
+                value={l.title || ""}
+                onChange={(e) => setLink(i, "title", e.target.value)}
+                maxLength={30}
+                placeholder="Label (optional)"
+                className="w-full rounded-t-2xl px-4 h-10 text-sm outline-none"
+                style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", borderBottom: "none", color: "var(--text)" }}
+              />
+              <input
+                value={l.url || ""}
+                onChange={(e) => setLink(i, "url", e.target.value)}
+                placeholder="example.com"
+                autoCapitalize="none"
+                className="w-full rounded-b-2xl px-4 h-10 text-sm outline-none"
+                style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+              />
+            </div>
+            <button onClick={() => removeLink(i)} className="p-2 shrink-0 transition-transform active:scale-90">
+              <X size={17} color="var(--text-muted)" />
+            </button>
+          </div>
+        ))}
+        {links.length < 5 && (
+          <button
+            onClick={addLink}
+            className="w-full flex items-center justify-center gap-2 rounded-2xl h-11 text-xs mb-4 transition-transform active:scale-[0.99]"
+            style={{ background: "var(--bg-sunken)", border: "1px dashed var(--border)", color: "var(--text)", fontWeight: 600 }}
+          >
+            <Plus size={15} /> Add link
+          </button>
+        )}
+
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Gender</label>
+          <span className="text-[11px]" style={{ color: gender ? "var(--text-muted)" : "var(--heart)" }}>Required</span>
+        </div>
+        <div className="flex gap-2 mb-6">
+          {GENDERS.map((g) => (
+            <button
+              key={g.key}
+              onClick={() => setGender(g.key)}
+              className="flex-1 rounded-2xl h-11 text-xs transition-transform active:scale-95"
+              style={{
+                background: gender === g.key ? ACCENT : "var(--bg-sunken)",
+                border: gender === g.key ? "none" : "1px solid var(--border)",
+                color: gender === g.key ? "var(--on-accent)" : "var(--text)",
+                fontWeight: 600,
+              }}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---- Profile → post feed ----
 // Tapping a grid tile on Instagram doesn't open one post in isolation: it
 // drops you into a scrollable column of that grid, positioned at the tile
@@ -5803,7 +6792,7 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
   );
 }
 
-function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory }) {
+function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -5819,6 +6808,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
   const [sheet, setSheet] = useState(null); // note | newHighlight | avatar
   const [highlightsKey, setHighlightsKey] = useState(0);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
   const avatarInputRef = React.useRef(null);
   const avatarPressRef = React.useRef(null);
   const avatarLongRef = React.useRef(false);
@@ -5854,7 +6844,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url, note, note_created_at")
+      .select("id, username, full_name, bio, avatar_url, note, note_created_at, links, gender, is_private")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -5931,6 +6921,10 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
       setIsFollowing(!!existingFollow);
     }
 
+    if (user && targetId === user.id && profileData) {
+      rememberCurrentAccount(profileData);
+    }
+
     setLoading(false);
   };
 
@@ -5969,6 +6963,19 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
     }
     setProfile((prev) => ({ ...prev, avatar_url: null }));
     setSheet(null);
+  };
+
+  const togglePrivacy = async () => {
+    if (!myId || !profile) return;
+    setPrivacyBusy(true);
+    const next = !profile.is_private;
+    const { error } = await supabase.from("profiles").update({ is_private: next }).eq("id", myId);
+    setPrivacyBusy(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setProfile((prev) => ({ ...prev, is_private: next }));
   };
 
   const toggleFollow = async () => {
@@ -6027,18 +7034,33 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
   return (
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           {onBack && (
             <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
           )}
-          <span className="text-base" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
-            {profile.username}
-          </span>
+          <button
+            onClick={() => isOwnProfile && setSheet("accounts")}
+            disabled={!isOwnProfile}
+            className="flex items-center gap-1 min-w-0 transition-transform active:scale-95"
+          >
+            <span className="text-base truncate" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
+              {profile.username}
+            </span>
+            {isOwnProfile && <ChevronLeft size={16} color="var(--text-muted)" style={{ transform: "rotate(-90deg)" }} />}
+          </button>
+          {profile.is_private && (
+            <Lock size={13} color="var(--text-muted)" className="shrink-0" />
+          )}
         </div>
         {isOwnProfile ? (
-          <button onClick={onOpenSettings}>
-            <Settings size={20} color="var(--text)" />
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            <button onClick={() => setSheet("create")} className="transition-transform active:scale-90">
+              <PlusSquare size={22} color="var(--text)" />
+            </button>
+            <button onClick={() => setSheet("menu")} className="transition-transform active:scale-90">
+              <SlidersHorizontal size={21} color="var(--text)" />
+            </button>
+          </div>
         ) : (
           <button
             onClick={toggleFollow}
@@ -6130,16 +7152,39 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
         {profile.bio && (
           <p className="text-[13px] mt-0.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{profile.bio}</p>
         )}
+        {Array.isArray(profile.links) && profile.links.length > 0 && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+            {profile.links.map((l, i) => (
+              <a
+                key={i}
+                href={l.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-[13px]"
+                style={{ color: "var(--accent-solid)", fontWeight: 600 }}
+              >
+                <Share2 size={11} /> {l.title || l.url}
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       {isOwnProfile && (
-        <div className="px-4 mb-4">
+        <div className="flex gap-2 px-4 mb-4">
           <button
-            onClick={onOpenSettings}
-            className="w-full rounded-xl py-2 text-[13px] transition-transform active:scale-[0.98]"
+            onClick={() => onOpenEditProfile?.()}
+            className="flex-1 rounded-xl py-2 text-[13px] transition-transform active:scale-[0.98]"
             style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
           >
-            Edit Profile
+            Edit profile
+          </button>
+          <button
+            onClick={() => setSheet("shareProfile")}
+            className="flex-1 rounded-xl py-2 text-[13px] transition-transform active:scale-[0.98]"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+          >
+            Share profile
           </button>
         </div>
       )}
@@ -6266,6 +7311,166 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
             setHighlightsKey((k) => k + 1);
           }}
         />
+      )}
+
+      {sheet === "accounts" && (
+        <AccountSwitcherSheet
+          currentUserId={myId}
+          onClose={() => setSheet(null)}
+          onSwitched={() => {
+            setSheet(null);
+            onSwitched?.();
+          }}
+          onAddAccount={() => {
+            setSheet(null);
+            onAddAccount?.();
+          }}
+        />
+      )}
+
+      {sheet === "shareProfile" && (
+        <ShareProfileSheet profile={profile} currentUserId={myId} onClose={() => setSheet(null)} />
+      )}
+
+      {sheet === "create" && (
+        <StorySheetShell title="Create" onClose={() => setSheet(null)}>
+          <div className="pb-6">
+            <StoryMenuRow
+              icon={<ImageIcon size={17} color="var(--text)" />}
+              label="Post"
+              onClick={() => {
+                setSheet(null);
+                onCreate?.("post");
+              }}
+            />
+            <StoryMenuRow
+              icon={<Plus size={17} color="var(--text)" />}
+              label="Story"
+              onClick={() => {
+                setSheet(null);
+                onAddStory?.();
+              }}
+            />
+            <StoryMenuRow
+              icon={<Clapperboard size={17} color="var(--text)" />}
+              label="Reel"
+              onClick={() => {
+                setSheet(null);
+                onCreate?.("reel");
+              }}
+            />
+            <StoryMenuRow
+              icon={<Star size={17} color="var(--text)" />}
+              label="Highlight"
+              onClick={() => setSheet("newHighlight")}
+            />
+            <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+            <div className="px-4 py-3">
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>Live</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                Live video isn't built yet — it needs streaming infrastructure, so it's not
+                something this menu can do today.
+              </p>
+            </div>
+          </div>
+        </StorySheetShell>
+      )}
+
+      {sheet === "menu" && (
+        <StorySheetShell title="Settings and activity" onClose={() => setSheet(null)}>
+          <div className="pb-6">
+            <StoryMenuRow
+              icon={<Gauge size={17} color="var(--text)" />}
+              label="Your activity"
+              onClick={() => {
+                setSheet(null);
+                onOpenActivity?.();
+              }}
+            />
+            <StoryMenuRow
+              icon={<Archive size={17} color="var(--text)" />}
+              label="Archive"
+              onClick={() => {
+                setSheet(null);
+                onOpenArchive?.();
+              }}
+            />
+            <StoryMenuRow
+              icon={<Bookmark size={17} color="var(--text)" />}
+              label="Saved"
+              onClick={() => {
+                setSheet(null);
+                onOpenSaved?.();
+              }}
+            />
+
+            <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+
+            <StoryMenuRow
+              icon={<Lock size={17} color="var(--text)" />}
+              label={profile.is_private ? "Private account" : "Public account"}
+              busy={privacyBusy}
+              onClick={togglePrivacy}
+              trailing={
+                <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: profile.is_private ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+                  <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: profile.is_private ? 17 : 2, transition: "left 0.15s" }} />
+                </span>
+              }
+            />
+            <StoryMenuRow
+              icon={<Star size={17} color="var(--text)" />}
+              label="Close friends"
+              onClick={() => {
+                setSheet(null);
+                onOpenPeopleList?.("close_friends");
+              }}
+            />
+            <StoryMenuRow
+              icon={<UserMinus size={17} color="var(--text)" />}
+              label="Blocked"
+              onClick={() => {
+                setSheet(null);
+                onOpenPeopleList?.("blocked");
+              }}
+            />
+            <StoryMenuRow
+              icon={<Shield size={17} color="var(--text)" />}
+              label="Restricted"
+              onClick={() => {
+                setSheet(null);
+                onOpenPeopleList?.("restricted");
+              }}
+            />
+            <StoryMenuRow
+              icon={<VolumeX size={17} color="var(--text)" />}
+              label="Muted"
+              onClick={() => {
+                setSheet(null);
+                onOpenPeopleList?.("muted");
+              }}
+            />
+
+            <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+
+            <StoryMenuRow
+              icon={<Settings size={17} color="var(--text)" />}
+              label="Settings"
+              onClick={() => {
+                setSheet(null);
+                onOpenSettings?.();
+              }}
+            />
+
+            <div className="px-4 pt-3">
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>Supervision</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                Parental supervision needs verified ages and linked guardian accounts, neither of
+                which exists in Loop yet. Rather than show a switch that does nothing, it's left
+                out until that groundwork is there.
+              </p>
+            </div>
+          </div>
+        </StorySheetShell>
       )}
 
       {sheet === "avatar" && (
@@ -10756,6 +11961,13 @@ const TABS = [
   { key: "profile", label: "Profile", icon: CircleUserRound, screen: ProfileScreen },
 ];
 
+const PEOPLE_LIST_META = {
+  close_friends: { title: "Close friends", hint: "Only these people see stories you share with close friends." },
+  blocked: { title: "Blocked", hint: "Blocked people can't find your profile, posts or story." },
+  restricted: { title: "Restricted", hint: "Their comments on your posts are only visible to them until you approve." },
+  muted: { title: "Muted", hint: "You stay following them, but their posts and stories stop appearing." },
+};
+
 export default function App() {
   const [authScreen, setAuthScreen] = useState("login"); // "login" | "signup" | null
   const [checkingSession, setCheckingSession] = useState(true);
@@ -10771,6 +11983,11 @@ export default function App() {
   const [viewPostId, setViewPostId] = useState(null);
   const [savedOpen, setSavedOpen] = useState(false);
   const [profileFeed, setProfileFeed] = useState(null); // { postIds, index, title }
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [peopleList, setPeopleList] = useState(null); // close_friends | blocked | restricted | muted
+  const [profileRefresh, setProfileRefresh] = useState(0);
   const [meId, setMeId] = useState(null);
 
   useEffect(() => {
@@ -10834,7 +12051,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null;
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -10886,8 +12103,47 @@ export default function App() {
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null)}>
-          {profileFeed ? (
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh)}>
+          {editProfileOpen ? (
+            <EditProfileScreen
+              currentUserId={meId}
+              onBack={() => setEditProfileOpen(false)}
+              onSaved={() => {
+                setEditProfileOpen(false);
+                setProfileRefresh((n) => n + 1);
+              }}
+            />
+          ) : activityOpen ? (
+            <YourActivityScreen
+              currentUserId={meId}
+              onBack={() => setActivityOpen(false)}
+              onOpenPost={(postId) => {
+                setActivityOpen(false);
+                setViewPostId(postId);
+              }}
+            />
+          ) : archiveOpen ? (
+            <ArchiveScreen
+              currentUserId={meId}
+              onBack={() => setArchiveOpen(false)}
+              onOpenPost={(postId) => {
+                setArchiveOpen(false);
+                setViewPostId(postId);
+              }}
+            />
+          ) : peopleList ? (
+            <PeopleListScreen
+              kind={peopleList}
+              title={PEOPLE_LIST_META[peopleList].title}
+              hint={PEOPLE_LIST_META[peopleList].hint}
+              currentUserId={meId}
+              onBack={() => setPeopleList(null)}
+              onOpenProfile={(id) => {
+                setPeopleList(null);
+                setViewProfileId(id);
+              }}
+            />
+          ) : profileFeed ? (
             <ProfileFeedScreen
               postIds={profileFeed.postIds}
               startIndex={profileFeed.index}
@@ -10976,9 +12232,20 @@ export default function App() {
             />
           ) : active === "profile" ? (
             <ProfileScreen
+              key={profileRefresh}
               onOpenSettings={() => setSettingsOpen(true)}
               onOpenPost={(postId) => setViewPostId(postId)}
               onOpenProfile={(id) => setViewProfileId(id)}
+              onOpenEditProfile={() => setEditProfileOpen(true)}
+              onOpenActivity={() => setActivityOpen(true)}
+              onOpenArchive={() => setArchiveOpen(true)}
+              onOpenSaved={() => setSavedOpen(true)}
+              onOpenPeopleList={(kind) => setPeopleList(kind)}
+              onCreate={() => setActive("upload")}
+              onAddAccount={async () => {
+                await supabase.auth.signOut();
+              }}
+              onSwitched={() => window.location.reload()}
               onOpenProfileFeed={({ posts, index, title }) =>
                 setProfileFeed({ postIds: posts.map((x) => x.id), index, title })
               }
