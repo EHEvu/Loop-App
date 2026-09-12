@@ -5007,7 +5007,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
       }
       const { data: rows, error: err } = await supabase
         .from("posts")
-        .select("id, user_id, media_url, media_type, caption, location, created_at, hide_likes, hide_comments, comments_disabled")
+        .select("id, user_id, media_url, media_type, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled")
         .in("id", postIds);
 
       if (err) {
@@ -5030,15 +5030,26 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
         .in("id", authorIds.length ? authorIds : ["x"]);
 
       const ids = ordered.map((p) => p.id);
-      const [likesRes, savesRes, commentsRes] = await Promise.all([
+      const [likesRes, savesRes, commentsRes, repostsRes, tagsRes] = await Promise.all([
         supabase.from("likes").select("post_id, user_id").in("post_id", ids),
         supabase.from("saves").select("post_id, user_id").in("post_id", ids),
         supabase.from("comments").select("post_id").in("post_id", ids),
+        supabase.from("reposts").select("post_id, user_id").in("post_id", ids),
+        supabase.from("post_tags").select("post_id, tagged_user_id").in("post_id", ids),
       ]);
 
       const likes = likesRes.data || [];
       const saves = savesRes.data || [];
       const comments = commentsRes.data || [];
+      const reposts = repostsRes.data || [];
+      const tagRows = tagsRes.data || [];
+
+      const taggedIds = [...new Set(tagRows.map((t) => t.tagged_user_id))];
+      let tagProfiles = [];
+      if (taggedIds.length > 0) {
+        const { data } = await supabase.from("profiles").select("id, username").in("id", taggedIds);
+        tagProfiles = data || [];
+      }
 
       if (cancelled) return;
       setPosts(
@@ -5050,8 +5061,17 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
             avatarUrl: author?.avatar_url || null,
             likeCount: likes.filter((l) => l.post_id === p.id).length,
             liked: likes.some((l) => l.post_id === p.id && l.user_id === currentUserId),
+            saveCount: saves.filter((sv) => sv.post_id === p.id).length,
             saved: saves.some((sv) => sv.post_id === p.id && sv.user_id === currentUserId),
             commentCount: comments.filter((c) => c.post_id === p.id).length,
+            repostCount: reposts.filter((r) => r.post_id === p.id).length,
+            reposted: reposts.some((r) => r.post_id === p.id && r.user_id === currentUserId),
+            tags: tagRows
+              .filter((t) => t.post_id === p.id)
+              .map((t) => ({
+                tagged_user_id: t.tagged_user_id,
+                username: tagProfiles.find((tp) => tp.id === t.tagged_user_id)?.username || "unknown",
+              })),
           };
         })
       );
@@ -5093,15 +5113,39 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
     }
   };
 
+  const toggleRepost = async (post) => {
+    if (!currentUserId) return;
+    const was = post.reposted;
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === post.id ? { ...p, reposted: !was, repostCount: was ? p.repostCount - 1 : p.repostCount + 1 } : p
+      )
+    );
+    const { error: err } = was
+      ? await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", currentUserId)
+      : await supabase.from("reposts").insert({ post_id: post.id, user_id: currentUserId });
+    if (err) {
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id ? { ...p, reposted: was, repostCount: was ? p.repostCount + 1 : p.repostCount - 1 } : p
+        )
+      );
+    }
+  };
+
   const toggleSave = async (post) => {
     if (!currentUserId) return;
     const was = post.saved;
-    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, saved: !was } : p)));
+    setPosts((prev) =>
+      prev.map((p) => (p.id === post.id ? { ...p, saved: !was, saveCount: was ? p.saveCount - 1 : p.saveCount + 1 } : p))
+    );
     const { error: err } = was
       ? await supabase.from("saves").delete().eq("post_id", post.id).eq("user_id", currentUserId)
       : await supabase.from("saves").insert({ post_id: post.id, user_id: currentUserId });
     if (err) {
-      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, saved: was } : p)));
+      setPosts((prev) =>
+        prev.map((p) => (p.id === post.id ? { ...p, saved: was, saveCount: was ? p.saveCount + 1 : p.saveCount - 1 } : p))
+      );
       alert(err.message);
     }
   };
@@ -5162,48 +5206,73 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 )}
               </div>
 
-              <div className="flex items-center gap-5 px-4 pt-2.5">
-                <button onClick={() => toggleLike(post)} className="flex items-center gap-1.5 transition-transform active:scale-90">
-                  <Heart
-                    size={24}
-                    color={post.liked ? "var(--heart)" : "var(--text)"}
-                    fill={post.liked ? "var(--heart)" : "none"}
-                    strokeWidth={1.9}
-                  />
-                  {!post.hide_likes && post.likeCount > 0 && (
-                    <span className="text-[12px]" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{formatCount(post.likeCount)}</span>
-                  )}
-                </button>
-                <button
-                  onClick={() => !post.comments_disabled && setCommentFor(post)}
-                  disabled={post.comments_disabled}
-                  className="flex items-center gap-1.5 transition-transform active:scale-90"
-                >
-                  <MessageCircle
-                    size={24}
-                    color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"}
-                    strokeWidth={1.9}
-                    style={{ transform: "scaleX(-1)" }}
-                  />
-                  {!post.hide_comments && post.commentCount > 0 && (
-                    <span className="text-[12px]" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{formatCount(post.commentCount)}</span>
-                  )}
-                </button>
-                <button onClick={() => setShareFor(post)} className="transition-transform active:scale-90">
-                  <Send size={23} color="var(--text)" strokeWidth={1.9} />
-                </button>
-                <div className="flex-1" />
-                <button onClick={() => toggleSave(post)} className="transition-transform active:scale-90">
-                  <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
-                </button>
+              <div className="flex items-center justify-between px-4 pt-2.5">
+                <div className="flex items-center gap-5">
+                  <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+                    <button onClick={() => setShareFor(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
+                      <Send size={23} color="var(--text)" strokeWidth={1.9} />
+                    </button>
+                    <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
+                  </div>
+                  <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+                    <button onClick={() => toggleSave(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
+                      <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
+                    </button>
+                    <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                      {!post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-center" style={{ minWidth: 34 }}>
+                  <button onClick={() => toggleLike(post)} className="h-8 flex items-center justify-center transition-transform active:scale-90">
+                    <Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} />
+                  </button>
+                  <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                    {!post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-5">
+                  <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+                    <button
+                      onClick={() => !post.comments_disabled && setCommentFor(post)}
+                      disabled={post.comments_disabled}
+                      className="h-7 flex items-center justify-center transition-transform active:scale-90"
+                    >
+                      <MessageCircle size={23} color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"} strokeWidth={1.9} style={{ transform: "scaleX(-1)" }} />
+                    </button>
+                    <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                      {!post.hide_comments && post.commentCount > 0 ? formatCount(post.commentCount) : "\u00A0"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
+                    <button onClick={() => toggleRepost(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
+                      <Repeat2 size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 1.9} />
+                    </button>
+                    <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                      {!post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              <div className="px-4 pt-1.5">
+              <div className="px-4 pt-2">
+                <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
                 <CaptionText
                   username={post.username}
                   caption={post.caption}
                   onOpenProfile={() => onOpenProfile?.(post.user_id)}
                 />
+                {!post.comments_disabled && !post.hide_comments && post.commentCount > 1 && (
+                  <button
+                    onClick={() => setCommentFor(post)}
+                    className="text-[13px] mt-1 block"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    View all {formatCount(post.commentCount)} comments
+                  </button>
+                )}
                 <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
                   {timeAgo(post.created_at)} ago
                 </span>
