@@ -4985,7 +4985,756 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
   );
 }
 
-function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
+// ---- Profile → post feed ----
+// Tapping a grid tile on Instagram doesn't open one post in isolation: it
+// drops you into a scrollable column of that grid, positioned at the tile
+// you touched. This renders the same list and jumps to that index.
+function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, onOpenProfile, onOpenReport }) {
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [commentFor, setCommentFor] = useState(null);
+  const [shareFor, setShareFor] = useState(null);
+  const containerRef = React.useRef(null);
+  const itemRefs = React.useRef({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!postIds || postIds.length === 0) {
+        setLoading(false);
+        return;
+      }
+      const { data: rows, error: err } = await supabase
+        .from("posts")
+        .select("id, user_id, media_url, media_type, caption, location, created_at, hide_likes, hide_comments, comments_disabled")
+        .in("id", postIds);
+
+      if (err) {
+        if (!cancelled) {
+          setError(err.message);
+          setLoading(false);
+        }
+        return;
+      }
+
+      const byId = {};
+      (rows || []).forEach((r) => (byId[r.id] = r));
+      // Preserve the grid's order rather than whatever the DB returned.
+      const ordered = postIds.map((id) => byId[id]).filter(Boolean);
+
+      const authorIds = [...new Set(ordered.map((p) => p.user_id))];
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, username, avatar_url")
+        .in("id", authorIds.length ? authorIds : ["x"]);
+
+      const ids = ordered.map((p) => p.id);
+      const [likesRes, savesRes, commentsRes] = await Promise.all([
+        supabase.from("likes").select("post_id, user_id").in("post_id", ids),
+        supabase.from("saves").select("post_id, user_id").in("post_id", ids),
+        supabase.from("comments").select("post_id").in("post_id", ids),
+      ]);
+
+      const likes = likesRes.data || [];
+      const saves = savesRes.data || [];
+      const comments = commentsRes.data || [];
+
+      if (cancelled) return;
+      setPosts(
+        ordered.map((p) => {
+          const author = (profiles || []).find((pr) => pr.id === p.user_id);
+          return {
+            ...p,
+            username: author?.username || "unknown",
+            avatarUrl: author?.avatar_url || null,
+            likeCount: likes.filter((l) => l.post_id === p.id).length,
+            liked: likes.some((l) => l.post_id === p.id && l.user_id === currentUserId),
+            saved: saves.some((sv) => sv.post_id === p.id && sv.user_id === currentUserId),
+            commentCount: comments.filter((c) => c.post_id === p.id).length,
+          };
+        })
+      );
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [postIds, currentUserId]);
+
+  // Jump to the tapped post once the list has rendered.
+  useEffect(() => {
+    if (loading || posts.length === 0) return;
+    const target = posts[startIndex];
+    if (!target) return;
+    const el = itemRefs.current[target.id];
+    if (el && containerRef.current) {
+      containerRef.current.scrollTop = el.offsetTop - containerRef.current.offsetTop;
+    }
+  }, [loading, posts.length]);
+
+  const toggleLike = async (post) => {
+    if (!currentUserId) return;
+    const was = post.liked;
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === post.id ? { ...p, liked: !was, likeCount: was ? p.likeCount - 1 : p.likeCount + 1 } : p
+      )
+    );
+    const { error: err } = was
+      ? await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", currentUserId)
+      : await supabase.from("likes").insert({ post_id: post.id, user_id: currentUserId });
+    if (err) {
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id ? { ...p, liked: was, likeCount: was ? p.likeCount + 1 : p.likeCount - 1 } : p
+        )
+      );
+    }
+  };
+
+  const toggleSave = async (post) => {
+    if (!currentUserId) return;
+    const was = post.saved;
+    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, saved: !was } : p)));
+    const { error: err } = was
+      ? await supabase.from("saves").delete().eq("post_id", post.id).eq("user_id", currentUserId)
+      : await supabase.from("saves").insert({ post_id: post.id, user_id: currentUserId });
+    if (err) {
+      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, saved: was } : p)));
+      alert(err.message);
+    }
+  };
+
+  const heading =
+    title === "reels" ? "Reels" : title === "reposts" ? "Reposts" : title === "tagged" ? "Tagged" : "Posts";
+
+  return (
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3 shrink-0" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{heading}</h1>
+      </div>
+
+      <div ref={containerRef} className="flex-1 overflow-y-auto pb-4">
+        {error ? (
+          <p className="text-xs text-center py-10 px-6" style={{ color: "var(--heart)" }}>{error}</p>
+        ) : loading ? (
+          <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : posts.length === 0 ? (
+          <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Nothing here</p>
+        ) : (
+          posts.map((post) => (
+            <div
+              key={post.id}
+              ref={(el) => (itemRefs.current[post.id] = el)}
+              className="pb-3 mb-3"
+              style={{ borderBottom: "1px solid var(--border-subtle)" }}
+            >
+              <div className="flex items-center justify-between px-4 pt-3 pb-2.5">
+                <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2.5 min-w-0">
+                  <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
+                  <div className="flex flex-col leading-tight min-w-0 text-left">
+                    <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
+                    {post.location && (
+                      <span className="flex items-center gap-0.5 text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
+                        <MapPin size={9} /> {post.location}
+                      </span>
+                    )}
+                  </div>
+                </button>
+                <button onClick={() => onOpenReport?.(post.id)} className="p-1 -mr-1 shrink-0">
+                  <Ellipsis size={19} color="var(--text)" />
+                </button>
+              </div>
+
+              <div
+                className="w-full flex items-center justify-center"
+                style={{ background: "var(--bg-sunken)", aspectRatio: "4/5" }}
+                onDoubleClick={() => !post.liked && toggleLike(post)}
+              >
+                {post.media_type === "photo" ? (
+                  <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <video src={post.media_url} className="w-full h-full object-cover" controls playsInline preload="metadata" />
+                )}
+              </div>
+
+              <div className="flex items-center gap-5 px-4 pt-2.5">
+                <button onClick={() => toggleLike(post)} className="flex items-center gap-1.5 transition-transform active:scale-90">
+                  <Heart
+                    size={24}
+                    color={post.liked ? "var(--heart)" : "var(--text)"}
+                    fill={post.liked ? "var(--heart)" : "none"}
+                    strokeWidth={1.9}
+                  />
+                  {!post.hide_likes && post.likeCount > 0 && (
+                    <span className="text-[12px]" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{formatCount(post.likeCount)}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => !post.comments_disabled && setCommentFor(post)}
+                  disabled={post.comments_disabled}
+                  className="flex items-center gap-1.5 transition-transform active:scale-90"
+                >
+                  <MessageCircle
+                    size={24}
+                    color={post.comments_disabled ? "var(--toggle-off)" : "var(--text)"}
+                    strokeWidth={1.9}
+                    style={{ transform: "scaleX(-1)" }}
+                  />
+                  {!post.hide_comments && post.commentCount > 0 && (
+                    <span className="text-[12px]" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{formatCount(post.commentCount)}</span>
+                  )}
+                </button>
+                <button onClick={() => setShareFor(post)} className="transition-transform active:scale-90">
+                  <Send size={23} color="var(--text)" strokeWidth={1.9} />
+                </button>
+                <div className="flex-1" />
+                <button onClick={() => toggleSave(post)} className="transition-transform active:scale-90">
+                  <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
+                </button>
+              </div>
+
+              <div className="px-4 pt-1.5">
+                <CaptionText
+                  username={post.username}
+                  caption={post.caption}
+                  onOpenProfile={() => onOpenProfile?.(post.user_id)}
+                />
+                <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
+                  {timeAgo(post.created_at)} ago
+                </span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {commentFor && (
+        <ReelCommentsSheet
+          postId={commentFor.id}
+          postOwnerId={commentFor.user_id}
+          currentUserId={currentUserId}
+          postUsername={commentFor.username}
+          postCaption={commentFor.caption}
+          commentsDisabled={commentFor.comments_disabled}
+          onOpenProfile={onOpenProfile}
+          onClose={() => setCommentFor(null)}
+          onCommentPosted={() => {
+            const id = commentFor.id;
+            setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, commentCount: p.commentCount + 1 } : p)));
+          }}
+        />
+      )}
+
+      {shareFor && (
+        <ShareSheet item={shareFor} currentUserId={currentUserId} onClose={() => setShareFor(null)} />
+      )}
+    </div>
+  );
+}
+
+// ---- Story highlights on the profile ----
+// The rows come from story_highlights / story_highlight_items, which the
+// story viewer has been writing into all along — this is the shelf that
+// was missing.
+function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    const { data: hs } = await supabase
+      .from("story_highlights")
+      .select("id, title, cover_url")
+      .eq("user_id", profileId)
+      .order("created_at", { ascending: false });
+
+    const ids = (hs || []).map((h) => h.id);
+    let firstStory = {};
+    if (ids.length > 0) {
+      const { data: links } = await supabase
+        .from("story_highlight_items")
+        .select("highlight_id, story_id")
+        .in("highlight_id", ids);
+      const storyIds = [...new Set((links || []).map((l) => l.story_id))];
+      if (storyIds.length > 0) {
+        const { data: stories } = await supabase
+          .from("stories")
+          .select("id, media_url, media_type")
+          .in("id", storyIds);
+        const byId = {};
+        (stories || []).forEach((st) => (byId[st.id] = st));
+        (links || []).forEach((l) => {
+          if (!firstStory[l.highlight_id] && byId[l.story_id]) firstStory[l.highlight_id] = byId[l.story_id];
+        });
+      }
+    }
+
+    setItems(
+      (hs || []).map((h) => ({
+        ...h,
+        preview: h.cover_url || (firstStory[h.id]?.media_type === "photo" ? firstStory[h.id].media_url : null),
+      }))
+    );
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+  }, [profileId]);
+
+  if (loading) return null;
+  if (items.length === 0 && !isOwn) return null;
+
+  return (
+    <div className="flex gap-4 px-4 pb-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+      {isOwn && (
+        <button onClick={onNew} className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95" style={{ width: 64 }}>
+          <div
+            className="rounded-full flex items-center justify-center"
+            style={{ width: 64, height: 64, background: "var(--surface)", border: "1.5px dashed var(--border)" }}
+          >
+            <Plus size={22} color="var(--text-muted)" strokeWidth={2.2} />
+          </div>
+          <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>New</span>
+        </button>
+      )}
+      {items.map((h) => (
+        <button
+          key={h.id}
+          onClick={() => onOpen(h)}
+          className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95"
+          style={{ width: 64 }}
+        >
+          <div
+            className="rounded-full flex items-center justify-center"
+            style={{ width: 64, height: 64, background: "var(--border)", padding: 2 }}
+          >
+            <div
+              className="w-full h-full rounded-full overflow-hidden flex items-center justify-center"
+              style={{ background: "var(--surface)", border: "2px solid var(--bg)" }}
+            >
+              {h.preview ? (
+                <img src={h.preview} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <Star size={20} color="var(--text-muted)" />
+              )}
+            </div>
+          </div>
+          <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>{h.title}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Build a highlight out of stories you've already posted — including
+// expired and archived ones, which is the whole point of a highlight.
+function NewHighlightSheet({ currentUserId, onClose, onCreated }) {
+  const [stories, setStories] = useState([]);
+  const [picked, setPicked] = useState([]);
+  const [title, setTitle] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      // RLS lets owners read their own stories whatever the expiry, so this
+      // is the archive: everything you've ever posted that still exists.
+      const { data, error: err } = await supabase
+        .from("stories")
+        .select("id, media_url, media_type, created_at")
+        .eq("user_id", currentUserId || "")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (err) setError(err.message);
+      setStories(data || []);
+      setLoading(false);
+    })();
+  }, [currentUserId]);
+
+  const toggle = (id) => setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const create = async () => {
+    const name = title.trim();
+    if (!name || picked.length === 0) return;
+    setBusy(true);
+    setError("");
+    const coverStory = stories.find((st) => st.id === picked[0] && st.media_type === "photo");
+    const { data: created, error: err } = await supabase
+      .from("story_highlights")
+      .insert({ user_id: currentUserId, title: name, cover_url: coverStory?.media_url || null })
+      .select("id, title, cover_url")
+      .single();
+    if (err) {
+      setBusy(false);
+      setError(err.message);
+      return;
+    }
+    const { error: itemErr } = await supabase
+      .from("story_highlight_items")
+      .insert(picked.map((sid) => ({ highlight_id: created.id, story_id: sid })));
+    setBusy(false);
+    if (itemErr) {
+      setError(itemErr.message);
+      return;
+    }
+    onCreated(created);
+  };
+
+  return (
+    <StorySheetShell title="New highlight" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      <div className="px-4 pb-3">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Highlight name — Travel, Food, Work..."
+          maxLength={24}
+          className="w-full rounded-full px-4 h-11 text-sm outline-none"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+      </div>
+
+      <p className="text-[11px] px-4 pb-2" style={{ color: "var(--text-muted)" }}>
+        {picked.length > 0 ? `${picked.length} selected` : "Pick the stories to keep"}
+      </p>
+
+      {loading ? (
+        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+      ) : stories.length === 0 ? (
+        <p className="text-xs text-center py-8 px-8" style={{ color: "var(--text-muted)" }}>
+          You haven't posted any stories yet. Post one and it can live here afterwards.
+        </p>
+      ) : (
+        <div className="grid grid-cols-4 gap-1.5 px-4">
+          {stories.map((st) => {
+            const on = picked.includes(st.id);
+            return (
+              <button
+                key={st.id}
+                onClick={() => toggle(st.id)}
+                className="aspect-square rounded-xl overflow-hidden relative"
+                style={{ border: on ? "2px solid var(--accent-solid)" : "1px solid var(--border)", background: "var(--bg-sunken)" }}
+              >
+                {st.media_type === "photo" ? (
+                  <img src={st.media_url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <video src={st.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                )}
+                {on && (
+                  <span className="absolute bottom-1 right-1 rounded-full flex items-center justify-center" style={{ width: 18, height: 18, background: ACCENT }}>
+                    <Check size={11} color="var(--on-accent)" strokeWidth={3} />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="px-4 pt-4 pb-6">
+        <button
+          onClick={create}
+          disabled={busy || !title.trim() || picked.length === 0}
+          className="w-full rounded-full h-11 text-sm transition-transform active:scale-95"
+          style={{
+            background: ACCENT,
+            color: "var(--on-accent)",
+            fontWeight: 700,
+            opacity: busy || !title.trim() || picked.length === 0 ? 0.5 : 1,
+          }}
+        >
+          {busy ? "Creating..." : "Create highlight"}
+        </button>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Profile note ----
+// 60 characters, 24 hours, sits in a bubble above the avatar.
+function NoteBubble({ note, noteAt, isOwn, onEdit }) {
+  const fresh = note && noteAt && Date.now() - new Date(noteAt).getTime() < 24 * 60 * 60 * 1000;
+  if (!fresh && !isOwn) return null;
+
+  return (
+    <button
+      onClick={isOwn ? onEdit : undefined}
+      disabled={!isOwn}
+      className="absolute text-left"
+      style={{ top: -14, left: 46, maxWidth: 170 }}
+    >
+      <div
+        className="rounded-2xl px-3 py-1.5"
+        style={{
+          background: "var(--surface-raised)",
+          border: "1px solid var(--border)",
+          boxShadow: "0 3px 10px rgba(0,0,0,0.25)",
+        }}
+      >
+        <span
+          className="text-[11px] block"
+          style={{ color: fresh ? "var(--text)" : "var(--text-muted)", lineHeight: 1.3, wordBreak: "break-word" }}
+        >
+          {fresh ? note : "Leave a note..."}
+        </span>
+      </div>
+      {/* the two little tails that make it read as a thought bubble */}
+      <span className="block rounded-full" style={{ width: 7, height: 7, background: "var(--surface-raised)", border: "1px solid var(--border)", marginLeft: 10, marginTop: 2 }} />
+      <span className="block rounded-full" style={{ width: 4, height: 4, background: "var(--surface-raised)", border: "1px solid var(--border)", marginLeft: 6, marginTop: 1 }} />
+    </button>
+  );
+}
+
+function NoteEditSheet({ initial, onClose, onSaved, currentUserId }) {
+  const [text, setText] = useState(initial || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async (clear) => {
+    setBusy(true);
+    setError("");
+    const value = clear ? null : text.trim();
+    const { error: err } = await supabase
+      .from("profiles")
+      .update({ note: value || null, note_created_at: value ? new Date().toISOString() : null })
+      .eq("id", currentUserId);
+    setBusy(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    onSaved(value || null);
+  };
+
+  return (
+    <StorySheetShell title="Leave a note" onClose={onClose}>
+      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+      <div className="px-4 pb-3">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="What's on your mind?"
+          maxLength={60}
+          autoFocus
+          className="w-full rounded-2xl px-4 h-12 text-sm outline-none"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+        <div className="flex items-center justify-between mt-1.5">
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Disappears after 24 hours</span>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{text.length}/60</span>
+        </div>
+      </div>
+      <div className="flex gap-2.5 px-4 pb-6">
+        {initial && (
+          <button
+            onClick={() => save(true)}
+            disabled={busy}
+            className="flex-1 rounded-full h-11 text-sm transition-transform active:scale-95"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--heart)", fontWeight: 600 }}
+          >
+            Delete note
+          </button>
+        )}
+        <button
+          onClick={() => save(false)}
+          disabled={busy || !text.trim()}
+          className="flex-1 rounded-full h-11 text-sm transition-transform active:scale-95"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy || !text.trim() ? 0.5 : 1 }}
+        >
+          {busy ? "Saving..." : "Share note"}
+        </button>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Profile tab icons ----
+// Hand-drawn rather than lucide so all four share one stroke weight and
+// optical size. Lucide's Grid3x3 / UserSquare2 sat at different visual
+// weights next to each other, which is what made the old row look cheap.
+function ProfileTabIcon({ kind, active }) {
+  const c = active ? "var(--text)" : "var(--text-muted)";
+  const w = active ? 1.9 : 1.5;
+  const common = {
+    width: 24,
+    height: 24,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: c,
+    strokeWidth: w,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+  };
+
+  if (kind === "posts") {
+    return (
+      <svg {...common}>
+        <rect x="3" y="3" width="5.6" height="5.6" rx="1.4" />
+        <rect x="9.2" y="3" width="5.6" height="5.6" rx="1.4" />
+        <rect x="15.4" y="3" width="5.6" height="5.6" rx="1.4" />
+        <rect x="3" y="9.2" width="5.6" height="5.6" rx="1.4" />
+        <rect x="9.2" y="9.2" width="5.6" height="5.6" rx="1.4" />
+        <rect x="15.4" y="9.2" width="5.6" height="5.6" rx="1.4" />
+        <rect x="3" y="15.4" width="5.6" height="5.6" rx="1.4" />
+        <rect x="9.2" y="15.4" width="5.6" height="5.6" rx="1.4" />
+        <rect x="15.4" y="15.4" width="5.6" height="5.6" rx="1.4" />
+      </svg>
+    );
+  }
+
+  if (kind === "reels") {
+    return (
+      <svg {...common}>
+        <rect x="2.8" y="2.8" width="18.4" height="18.4" rx="4.4" />
+        <path d="M2.9 8.2h18.2" />
+        <path d="M8.4 2.9 11.4 8.1" />
+        <path d="M14.6 2.9 17.6 8.1" />
+        <path d="M10.4 11.9v5.4l4.6-2.7z" fill={c} stroke="none" />
+      </svg>
+    );
+  }
+
+  if (kind === "reposts") {
+    return (
+      <svg {...common}>
+        <path d="M4 8.4a3 3 0 0 1 3-3h10.4" />
+        <path d="M14.8 2.9 17.9 5.4 14.8 7.9" />
+        <path d="M20 15.6a3 3 0 0 1-3 3H6.6" />
+        <path d="M9.2 21.1 6.1 18.6 9.2 16.1" />
+      </svg>
+    );
+  }
+
+  // tagged — a person inside a frame
+  return (
+    <svg {...common}>
+      <rect x="2.8" y="2.8" width="18.4" height="18.4" rx="4.4" />
+      <circle cx="12" cy="10" r="2.9" />
+      <path d="M6.9 18.6a5.6 5.6 0 0 1 10.2 0" />
+    </svg>
+  );
+}
+
+// ---- Follower / following list ----
+function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpenProfile }) {
+  const [people, setPeople] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // followers = rows pointing AT this person; following = rows they own.
+      const column = mode === "followers" ? "following_id" : "follower_id";
+      const other = mode === "followers" ? "follower_id" : "following_id";
+
+      const { data: rows, error: err } = await supabase
+        .from("follows")
+        .select(`${other}`)
+        .eq(column, targetId);
+
+      if (err) {
+        if (!cancelled) {
+          setError(err.message);
+          setLoading(false);
+        }
+        return;
+      }
+
+      const ids = (rows || []).map((r) => r[other]);
+      if (ids.length === 0) {
+        if (!cancelled) {
+          setPeople([]);
+          setLoading(false);
+        }
+        return;
+      }
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, username, full_name, avatar_url")
+        .in("id", ids);
+      if (!cancelled) {
+        setPeople(profiles || []);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [targetId, mode]);
+
+  const q = query.trim().toLowerCase();
+  const shown = people.filter(
+    (p) => p.username.toLowerCase().includes(q) || (p.full_name || "").toLowerCase().includes(q)
+  );
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-4">
+      <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}>
+        <div className="flex items-center gap-2 mb-3">
+          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+            <ChevronLeft size={24} color="var(--text)" />
+          </button>
+          <h1 className="text-lg truncate" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
+            {title}
+          </h1>
+        </div>
+        <div className="flex items-center gap-2.5 rounded-full px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <Search size={16} color="var(--text-muted)" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search"
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "var(--text)" }}
+          />
+          {query && (
+            <button onClick={() => setQuery("")}><X size={15} color="var(--text-muted)" /></button>
+          )}
+        </div>
+      </div>
+
+      {error ? (
+        <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
+      ) : loading ? (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+      ) : shown.length === 0 ? (
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>
+          {q ? "No one matches that" : mode === "followers" ? "No followers yet" : "Not following anyone yet"}
+        </p>
+      ) : (
+        shown.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => onOpenProfile(p.id)}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors active:bg-[var(--active-highlight)]"
+          >
+            <Avatar username={p.username} avatarUrl={p.avatar_url} size={46} />
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</p>
+              {p.full_name && (
+                <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>
+              )}
+            </div>
+            {p.id === currentUserId && (
+              <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>You</span>
+            )}
+          </button>
+        ))
+      )}
+    </div>
+  );
+}
+
+function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory }) {
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -4996,10 +5745,20 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
   const [followingCount, setFollowingCount] = useState(0);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
+  const [tagged, setTagged] = useState([]);
+  const [followList, setFollowList] = useState(null); // "followers" | "following"
+  const [sheet, setSheet] = useState(null); // note | newHighlight | avatar
+  const [highlightsKey, setHighlightsKey] = useState(0);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInputRef = React.useRef(null);
+  const avatarPressRef = React.useRef(null);
+  const avatarLongRef = React.useRef(false);
 
-  const tabOrder = ["posts", "reposts", "tagged"];
-  const mockTagged = Array.from({ length: 6 }, (_, i) => i);
-  const gridFor = tab === "posts" ? posts : tab === "reposts" ? reposts : mockTagged;
+  const tabOrder = ["posts", "reels", "reposts", "tagged"];
+  // Reels are just video posts — no separate table, so split by media_type.
+  const reels = posts.filter((p) => p.media_type !== "photo");
+  const photos = posts;
+  const gridFor = tab === "posts" ? photos : tab === "reels" ? reels : tab === "reposts" ? reposts : tagged;
   const isOwnProfile = myId && profile && myId === profile.id;
 
   const touchStartX = React.useRef(0);
@@ -5026,7 +5785,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url")
+      .select("id, username, full_name, bio, avatar_url, note, note_created_at")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -5063,6 +5822,24 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
       setReposts([]);
     }
 
+    // Tagged: posts other people tagged this person in.
+    const { data: tagRows } = await supabase
+      .from("post_tags")
+      .select("post_id")
+      .eq("tagged_user_id", targetId);
+    const tagIds = [...new Set((tagRows || []).map((r) => r.post_id))];
+    if (tagIds.length > 0) {
+      const { data: taggedPosts } = await supabase
+        .from("posts")
+        .select("id, media_url, media_type")
+        .in("id", tagIds)
+        .eq("archived", false)
+        .order("created_at", { ascending: false });
+      setTagged(taggedPosts || []);
+    } else {
+      setTagged([]);
+    }
+
     const { count: followers } = await supabase
       .from("follows")
       .select("*", { count: "exact", head: true })
@@ -5086,6 +5863,43 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
     }
 
     setLoading(false);
+  };
+
+  const changeAvatar = async (file) => {
+    if (!file || !myId) return;
+    setAvatarBusy(true);
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${myId}/${Date.now()}-${safeName}`;
+    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file);
+    if (upErr) {
+      setAvatarBusy(false);
+      alert(upErr.message);
+      return;
+    }
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("avatars").getPublicUrl(path);
+    const { error: dbErr } = await supabase.from("profiles").update({ avatar_url: publicUrl }).eq("id", myId);
+    setAvatarBusy(false);
+    if (dbErr) {
+      alert(dbErr.message);
+      return;
+    }
+    setProfile((prev) => ({ ...prev, avatar_url: publicUrl }));
+    setSheet(null);
+  };
+
+  const removeAvatar = async () => {
+    if (!myId) return;
+    setAvatarBusy(true);
+    const { error } = await supabase.from("profiles").update({ avatar_url: null }).eq("id", myId);
+    setAvatarBusy(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setProfile((prev) => ({ ...prev, avatar_url: null }));
+    setSheet(null);
   };
 
   const toggleFollow = async () => {
@@ -5125,6 +5939,22 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
     );
   }
 
+  if (followList) {
+    return (
+      <FollowListScreen
+        targetId={profile.id}
+        mode={followList}
+        title={followList === "followers" ? "Followers" : "Following"}
+        currentUserId={myId}
+        onBack={() => setFollowList(null)}
+        onOpenProfile={(id) => {
+          setFollowList(null);
+          onOpenProfile?.(id);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
@@ -5158,34 +5988,69 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
         )}
       </div>
 
-      <div className="flex items-center gap-6 px-4 mb-3">
-        <div
-          className="shrink-0 rounded-full flex items-center justify-center"
-          style={{ width: 88, height: 88, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 3 }}
-        >
-          <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center" style={{ background: "var(--surface)", border: "3px solid var(--bg)" }}>
-            {profile.avatar_url ? (
-              <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-3xl" style={{ color: "var(--text)", fontWeight: 700 }}>
-                {profile.username[0].toUpperCase()}
-              </span>
-            )}
-          </div>
+      <div className="flex items-center gap-6 px-4 mb-3 mt-3">
+        <div className="shrink-0 relative">
+          <NoteBubble
+            note={profile.note}
+            noteAt={profile.note_created_at}
+            isOwn={isOwnProfile}
+            onEdit={() => setSheet("note")}
+          />
+          <button
+            onClick={() => {
+              // Long press already opened the photo menu; ignore the click
+              // that follows lifting the finger.
+              if (avatarLongRef.current) {
+                avatarLongRef.current = false;
+                return;
+              }
+              if (isOwnProfile) onAddStory?.();
+              else onOpenProfileStory?.(profile.id);
+            }}
+            onTouchStart={() => {
+              if (!isOwnProfile) return;
+              avatarLongRef.current = false;
+              avatarPressRef.current = setTimeout(() => {
+                avatarLongRef.current = true;
+                setSheet("avatar");
+              }, 500);
+            }}
+            onTouchEnd={() => clearTimeout(avatarPressRef.current)}
+            onTouchMove={() => clearTimeout(avatarPressRef.current)}
+            onContextMenu={(e) => {
+              if (!isOwnProfile) return;
+              e.preventDefault();
+              avatarLongRef.current = true;
+              setSheet("avatar");
+            }}
+            className="rounded-full flex items-center justify-center transition-transform active:scale-95"
+            style={{ width: 88, height: 88, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 3 }}
+          >
+            <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center" style={{ background: "var(--surface)", border: "3px solid var(--bg)" }}>
+              {profile.avatar_url ? (
+                <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-3xl" style={{ color: "var(--text)", fontWeight: 700 }}>
+                  {profile.username[0].toUpperCase()}
+                </span>
+              )}
+            </div>
+          </button>
         </div>
+
         <div className="flex-1 flex justify-around">
           <div className="flex flex-col items-center">
             <span className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>{posts.length}</span>
             <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Posts</span>
           </div>
-          <div className="flex flex-col items-center">
+          <button onClick={() => setFollowList("followers")} className="flex flex-col items-center transition-transform active:scale-95">
             <span className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(followerCount)}</span>
             <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Followers</span>
-          </div>
-          <div className="flex flex-col items-center">
+          </button>
+          <button onClick={() => setFollowList("following")} className="flex flex-col items-center transition-transform active:scale-95">
             <span className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(followingCount)}</span>
             <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>Following</span>
-          </div>
+          </button>
         </div>
       </div>
 
@@ -5210,31 +6075,28 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
         </div>
       )}
 
+      <HighlightsRow
+        key={`${profile.id}-${highlightsKey}`}
+        profileId={profile.id}
+        isOwn={isOwnProfile}
+        onNew={() => setSheet("newHighlight")}
+        onOpen={(h) => onOpenHighlight?.(h)}
+      />
+
       <div
         className="flex items-center justify-around mb-0.5"
         style={{ borderTop: "1px solid var(--border)" }}
       >
-        <button
-          onClick={() => setTab("posts")}
-          className="flex-1 flex items-center justify-center py-2.5"
-          style={{ borderBottom: tab === "posts" ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
-        >
-          <Grid3x3 size={23} color={tab === "posts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "posts" ? 2.2 : 1.8} />
-        </button>
-        <button
-          onClick={() => setTab("reposts")}
-          className="flex-1 flex items-center justify-center py-2.5"
-          style={{ borderBottom: tab === "reposts" ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
-        >
-          <Repeat2 size={24} color={tab === "reposts" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "reposts" ? 2.2 : 1.8} />
-        </button>
-        <button
-          onClick={() => setTab("tagged")}
-          className="flex-1 flex items-center justify-center py-2.5"
-          style={{ borderBottom: tab === "tagged" ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
-        >
-          <UserSquare2 size={23} color={tab === "tagged" ? "var(--text)" : "var(--text-muted)"} strokeWidth={tab === "tagged" ? 2.2 : 1.8} />
-        </button>
+        {tabOrder.map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className="flex-1 flex items-center justify-center py-3 transition-transform active:scale-95"
+            style={{ borderBottom: tab === t ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
+          >
+            <ProfileTabIcon kind={t} active={tab === t} />
+          </button>
+        ))}
       </div>
 
       <div
@@ -5243,28 +6105,23 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {tab === "tagged" ? (
-          mockTagged.map((i) => (
-            <div
-              key={i}
-              className="aspect-square flex items-center justify-center relative"
-              style={{ background: i % 3 === 0 ? "var(--surface)" : "var(--border-subtle)" }}
-            >
-              <ImageIcon size={18} color="var(--toggle-off)" />
-              <UserSquare2 size={12} color="var(--accent-end)" className="absolute top-1.5 right-1.5" />
-            </div>
-          ))
-        ) : gridFor.length === 0 ? (
-          <div className="col-span-3 py-10 text-center">
+        {gridFor.length === 0 ? (
+          <div className="col-span-3 py-12 text-center px-8">
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {tab === "posts" ? "No posts yet" : "No reposts yet"}
+              {tab === "posts"
+                ? "No posts yet"
+                : tab === "reels"
+                ? "No reels yet"
+                : tab === "reposts"
+                ? "No reposts yet"
+                : "No tagged posts yet"}
             </span>
           </div>
         ) : (
-          gridFor.map((p) => (
+          gridFor.map((p, i) => (
             <button
               key={p.id}
-              onClick={() => onOpenPost?.(p.id)}
+              onClick={() => onOpenProfileFeed?.({ posts: gridFor, index: i, title: tab })}
               className="aspect-square flex items-center justify-center relative overflow-hidden"
               style={{ background: "var(--surface)" }}
             >
@@ -5275,6 +6132,16 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
               )}
               {tab === "reposts" && (
                 <Repeat2 size={12} color="var(--accent-end)" className="absolute top-1.5 right-1.5" />
+              )}
+              {tab === "tagged" && (
+                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                  <UserSquare2 size={12} color="#FFFFFF" />
+                </span>
+              )}
+              {(tab === "reels" || (tab === "posts" && p.media_type !== "photo")) && (
+                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                  <Play size={12} color="#FFFFFF" fill="#FFFFFF" />
+                </span>
               )}
               {tab === "posts" && p.pinned && (
                 <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
@@ -5293,6 +6160,63 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack }) {
           ))
         )}
       </div>
+
+      <input
+        ref={avatarInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files[0]) changeAvatar(e.target.files[0]);
+          e.target.value = "";
+        }}
+      />
+
+      {sheet === "note" && (
+        <NoteEditSheet
+          initial={profile.note}
+          currentUserId={myId}
+          onClose={() => setSheet(null)}
+          onSaved={(value) => {
+            setProfile((prev) => ({
+              ...prev,
+              note: value,
+              note_created_at: value ? new Date().toISOString() : null,
+            }));
+            setSheet(null);
+          }}
+        />
+      )}
+
+      {sheet === "newHighlight" && (
+        <NewHighlightSheet
+          currentUserId={myId}
+          onClose={() => setSheet(null)}
+          onCreated={() => {
+            setSheet(null);
+            setHighlightsKey((k) => k + 1);
+          }}
+        />
+      )}
+
+      {sheet === "avatar" && (
+        <StorySheetShell title="Profile photo" onClose={() => setSheet(null)}>
+          <div className="pb-6">
+            <StoryMenuRow
+              icon={<ImagePlus size={17} color="var(--text)" />}
+              label={avatarBusy ? "Uploading..." : "Choose from library"}
+              busy={avatarBusy}
+              onClick={() => avatarInputRef.current?.click()}
+            />
+            <StoryMenuRow
+              icon={<Sparkles size={17} color="var(--text)" />}
+              label="Use a letter avatar"
+              busy={avatarBusy}
+              onClick={removeAvatar}
+            />
+          </div>
+        </StorySheetShell>
+      )}
     </div>
   );
 }
@@ -9777,6 +10701,12 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewPostId, setViewPostId] = useState(null);
   const [savedOpen, setSavedOpen] = useState(false);
+  const [profileFeed, setProfileFeed] = useState(null); // { postIds, index, title }
+  const [meId, setMeId] = useState(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMeId(data?.user?.id ?? null));
+  }, []);
   const [theme, setThemeState] = useState(() => {
     try {
       return localStorage.getItem("loop_theme") || "dark";
@@ -9835,7 +10765,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null;
 
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -9887,8 +10817,21 @@ export default function App() {
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen)}>
-          {savedOpen ? (
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null)}>
+          {profileFeed ? (
+            <ProfileFeedScreen
+              postIds={profileFeed.postIds}
+              startIndex={profileFeed.index}
+              title={profileFeed.title}
+              currentUserId={meId}
+              onBack={() => setProfileFeed(null)}
+              onOpenProfile={(id) => {
+                setProfileFeed(null);
+                setViewProfileId(id);
+              }}
+              onOpenReport={(postId) => setReportPostId(postId)}
+            />
+          ) : savedOpen ? (
             <SavedScreen
               onBack={() => setSavedOpen(false)}
               onOpenPost={(postId) => {
@@ -9931,7 +10874,15 @@ export default function App() {
               onDeleted={() => {}}
             />
           ) : viewProfileId !== null ? (
-            <ProfileScreen userId={viewProfileId} onOpenPost={(postId) => setViewPostId(postId)} onBack={() => setViewProfileId(null)} />
+            <ProfileScreen
+              userId={viewProfileId}
+              onOpenPost={(postId) => setViewPostId(postId)}
+              onBack={() => setViewProfileId(null)}
+              onOpenProfile={(id) => setViewProfileId(id)}
+              onOpenProfileFeed={({ posts, index, title }) =>
+                setProfileFeed({ postIds: posts.map((x) => x.id), index, title })
+              }
+            />
           ) : active === "feed" ? (
             <FeedScreen
               onOpenMessages={() => setInboxOpen(true)}
@@ -9955,7 +10906,14 @@ export default function App() {
               onOpenPost={(postId) => setViewPostId(postId)}
             />
           ) : active === "profile" ? (
-            <ProfileScreen onOpenSettings={() => setSettingsOpen(true)} onOpenPost={(postId) => setViewPostId(postId)} />
+            <ProfileScreen
+              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenPost={(postId) => setViewPostId(postId)}
+              onOpenProfile={(id) => setViewProfileId(id)}
+              onOpenProfileFeed={({ posts, index, title }) =>
+                setProfileFeed({ postIds: posts.map((x) => x.id), index, title })
+              }
+            />
           ) : (
             <ActiveScreen />
           )}
