@@ -5067,7 +5067,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
     setError("");
     const { data, error: err } = await supabase
       .from("comments")
-      .select("id, post_id, body, created_at")
+      .select("id, post_id, content, created_at")
       .eq("user_id", currentUserId)
       .order("created_at", { ascending: false })
       .limit(100);
@@ -5110,7 +5110,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
               className="w-full text-left px-4 py-3"
               style={{ borderBottom: "1px solid var(--border-subtle)" }}
             >
-              <p className="text-sm" style={{ color: "var(--text)", wordBreak: "break-word" }}>{c.body}</p>
+              <p className="text-sm" style={{ color: "var(--text)", wordBreak: "break-word" }}>{c.content}</p>
               <span className="text-[11px] mt-1 block" style={{ color: "var(--text-muted)" }}>{timeAgo(c.created_at)} ago</span>
             </button>
           ))
