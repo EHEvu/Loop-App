@@ -60,6 +60,7 @@ import {
   UserMinus,
   LogOut,
   Shield,
+  Layers,
 } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -1972,6 +1973,85 @@ function StoriesBar({ onOpenProfile }) {
   );
 }
 
+// ---- Carousel posts (multiple photos/videos in one post) ----
+// Renders a swipeable strip. Deliberately has no double-tap-to-like of its
+// own — the surrounding media box in every caller already carries that
+// handler, and letting it bubble up here avoids firing the like twice.
+function PostMediaCarousel({ media }) {
+  const [index, setIndex] = useState(0);
+  const trackRef = React.useRef(null);
+
+  const onScroll = () => {
+    const el = trackRef.current;
+    if (!el || el.clientWidth === 0) return;
+    const i = Math.round(el.scrollLeft / el.clientWidth);
+    if (i !== index) setIndex(i);
+  };
+
+  return (
+    <div className="relative w-full h-full">
+      <div
+        ref={trackRef}
+        onScroll={onScroll}
+        className="w-full h-full flex overflow-x-auto"
+        style={{ scrollSnapType: "x mandatory", scrollbarWidth: "none" }}
+      >
+        {media.map((m) => (
+          <div key={m.id} className="w-full h-full shrink-0" style={{ scrollSnapAlign: "start" }}>
+            {m.media_type === "photo" ? (
+              <img src={m.media_url} alt="" className="w-full h-full object-cover" draggable={false} />
+            ) : (
+              <video src={m.media_url} className="w-full h-full object-cover" controls playsInline preload="metadata" />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {media.length > 1 && (
+        <>
+          <span
+            className="absolute top-2.5 right-2.5 rounded-full px-2 py-0.5 text-[11px]"
+            style={{ background: "rgba(0,0,0,0.55)", color: "#FFFFFF", fontWeight: 600 }}
+          >
+            {index + 1}/{media.length}
+          </span>
+          <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex gap-1">
+            {media.map((_, i) => (
+              <span
+                key={i}
+                className="rounded-full"
+                style={{
+                  width: i === index ? 5 : 4,
+                  height: i === index ? 5 : 4,
+                  background: i === index ? "#FFFFFF" : "rgba(255,255,255,0.5)",
+                }}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// One query, shared by every screen that renders full posts (Feed,
+// PostDetail, ProfileFeed). Returns a map of postId -> ordered media
+// array, or {} for ids that have none (plain single-media posts).
+async function fetchPostMediaMap(postIds) {
+  if (!postIds || postIds.length === 0) return {};
+  const { data } = await supabase
+    .from("post_media")
+    .select("id, post_id, media_url, media_type, position")
+    .in("post_id", postIds)
+    .order("position", { ascending: true });
+  const map = {};
+  (data || []).forEach((row) => {
+    if (!map[row.post_id]) map[row.post_id] = [];
+    map[row.post_id].push(row);
+  });
+  return map;
+}
+
 function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport, onOpenProfile }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2015,7 +2095,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
+      .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
       .eq("archived", false)
       .order("created_at", { ascending: false });
 
@@ -2024,6 +2104,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       setLoading(false);
       return;
     }
+
+    const mediaMap = await fetchPostMediaMap((postsData || []).map((p) => p.id));
 
     const { data: profilesData, error: profilesError } = await supabase
       .from("profiles")
@@ -2085,6 +2167,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         saveCount: postSaves.length,
         commentCount: postComments.length,
         tags: postTags,
+        media: mediaMap[p.id] || null,
       };
     });
 
@@ -2279,7 +2362,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               style={{ background: "var(--bg-sunken)" }}
               onDoubleClick={() => toggleLike(post)}
             >
-              {post.media_type === "photo" ? (
+              {post.media && post.media.length > 1 ? (
+                <PostMediaCarousel media={post.media} />
+              ) : post.media_type === "photo" ? (
                 <img src={post.media_url} alt="" className="w-full h-full object-cover" />
               ) : (
                 <video src={post.media_url} className="w-full h-full object-cover" controls />
@@ -3692,7 +3777,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
     setExploreLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption")
+      .select("id, media_url, media_type, media_count, caption")
       .eq("archived", false)
       .order("created_at", { ascending: false })
       .limit(48);
@@ -3809,10 +3894,16 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
               ) : (
                 <video src={p.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
               )}
-              {p.media_type !== "photo" && (
+              {p.media_count > 1 ? (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-                  <Video size={13} color="#FFFFFF" />
+                  <Layers size={13} color="#FFFFFF" />
                 </span>
+              ) : (
+                p.media_type !== "photo" && (
+                  <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                    <Video size={13} color="#FFFFFF" />
+                  </span>
+                )
               )}
             </button>
           ))}
@@ -3826,6 +3917,10 @@ function UploadScreen() {
   const [mode, setMode] = useState("photo");
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  // "photo" mode carries a carousel: 1-20 photos and/or videos, mixed.
+  // "reel" mode stays single-video, using `file`/`previewUrl` above unchanged.
+  const [items, setItems] = useState([]); // [{ file, url, type }]
+  const [limitNotice, setLimitNotice] = useState("");
   const [caption, setCaption] = useState("");
   const [location, setLocation] = useState("");
   const [hideLikes, setHideLikes] = useState(false);
@@ -3839,6 +3934,7 @@ function UploadScreen() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const carouselInputRef = React.useRef(null);
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -3848,9 +3944,47 @@ function UploadScreen() {
     setError("");
   };
 
+  // Each pick is appended to whatever's already chosen — picking again
+  // doesn't replace the set, it adds to it — capped at 20 total, matching
+  // Instagram's own carousel limit.
+  const handleCarouselFilesChange = (e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (picked.length === 0) return;
+    setError("");
+    setItems((prev) => {
+      const combined = [
+        ...prev,
+        ...picked.map((f) => ({
+          file: f,
+          url: URL.createObjectURL(f),
+          type: f.type.startsWith("video") ? "video" : "photo",
+        })),
+      ];
+      if (combined.length > 20) {
+        setLimitNotice("Only the first 20 are kept — that's the most a single post can hold.");
+        return combined.slice(0, 20);
+      }
+      setLimitNotice("");
+      return combined;
+    });
+  };
+
+  const removeItem = (index) => {
+    setItems((prev) => {
+      const target = prev[index];
+      if (target) URL.revokeObjectURL(target.url);
+      return prev.filter((_, i) => i !== index);
+    });
+    setLimitNotice("");
+  };
+
   const resetForm = () => {
     setFile(null);
     setPreviewUrl(null);
+    items.forEach((it) => URL.revokeObjectURL(it.url));
+    setItems([]);
+    setLimitNotice("");
     setCaption("");
     setLocation("");
     setHideLikes(false);
@@ -3866,10 +4000,17 @@ function UploadScreen() {
 
   const handleShare = async () => {
     setError("");
-    if (!file) {
-      setError("Choose a photo or video first");
+
+    if (mode === "reel") {
+      if (!file) {
+        setError("Choose a video first");
+        return;
+      }
+    } else if (items.length === 0) {
+      setError("Choose at least one photo or video");
       return;
     }
+
     if (pollEnabled) {
       const filledOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
       if (!pollQuestion.trim() || filledOptions.length < 2) {
@@ -3889,27 +4030,67 @@ function UploadScreen() {
       return;
     }
 
-    const filePath = `${user.id}/${Date.now()}-${file.name}`;
+    let coverUrl;
+    let carouselUploads = null; // set only when items.length > 1
 
-    const { error: uploadError } = await supabase.storage
-      .from("posts")
-      .upload(filePath, file);
-
-    if (uploadError) {
-      setUploading(false);
-      setError(uploadError.message);
-      return;
+    if (mode === "reel") {
+      const filePath = `${user.id}/${Date.now()}-${file.name}`;
+      const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, file);
+      if (uploadError) {
+        setUploading(false);
+        setError(uploadError.message);
+        return;
+      }
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("posts").getPublicUrl(filePath);
+      coverUrl = publicUrl;
+    } else if (items.length === 1) {
+      // The overwhelming common case — identical to the original single-post
+      // path, so it never touches post_media at all.
+      const only = items[0];
+      const filePath = `${user.id}/${Date.now()}-${only.file.name}`;
+      const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, only.file);
+      if (uploadError) {
+        setUploading(false);
+        setError(uploadError.message);
+        return;
+      }
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("posts").getPublicUrl(filePath);
+      coverUrl = publicUrl;
+    } else {
+      // Carousel: upload every item in parallel. Promise.all keeps results
+      // in the original selection order regardless of which finishes first.
+      try {
+        carouselUploads = await Promise.all(
+          items.map(async (it, i) => {
+            const filePath = `${user.id}/${Date.now()}-${i}-${it.file.name}`;
+            const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, it.file);
+            if (uploadError) throw uploadError;
+            const {
+              data: { publicUrl },
+            } = supabase.storage.from("posts").getPublicUrl(filePath);
+            return { url: publicUrl, type: it.type };
+          })
+        );
+      } catch (e) {
+        setUploading(false);
+        setError(e.message || "One of the files failed to upload");
+        return;
+      }
+      coverUrl = carouselUploads[0].url;
     }
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("posts").getPublicUrl(filePath);
 
     const { data: insertedPost, error: insertError } = await supabase
       .from("posts")
       .insert({
         user_id: user.id,
-        media_url: publicUrl,
+        media_url: coverUrl,
+        // A carousel is a feed post regardless of what its individual slides
+        // are — only single-video uploads through Reel mode ever get tagged
+        // "reel", matching how Reels actually work on Instagram.
         media_type: mode,
         caption,
         location: location.trim() || null,
@@ -3926,6 +4107,24 @@ function UploadScreen() {
       setUploading(false);
       setError(insertError.message);
       return;
+    }
+
+    if (carouselUploads) {
+      const { error: mediaError } = await supabase.from("post_media").insert(
+        carouselUploads.map((u, i) => ({
+          post_id: insertedPost.id,
+          media_url: u.url,
+          media_type: u.type,
+          position: i,
+        }))
+      );
+      if (mediaError) {
+        // The post row exists with just its cover image at this point —
+        // rather than claim success while slides 2+ never attached, say so.
+        setUploading(false);
+        setError(`Post created, but the rest of the carousel didn't save: ${mediaError.message}`);
+        return;
+      }
     }
 
     // Best-effort: tag people — from the dedicated field AND any @username
@@ -4017,13 +4216,14 @@ function UploadScreen() {
               border: mode === "photo" ? "none" : "1px solid var(--border)",
             }}
           >
-            <ImageIcon size={16} /> Photo
+            <Layers size={16} /> Post
           </button>
           <button
             onClick={() => {
               setMode("reel");
-              setFile(null);
-              setPreviewUrl(null);
+              items.forEach((it) => URL.revokeObjectURL(it.url));
+              setItems([]);
+              setLimitNotice("");
             }}
             className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm transition"
             style={{
@@ -4037,31 +4237,97 @@ function UploadScreen() {
           </button>
         </div>
 
-        <label
-          className="rounded-2xl aspect-square flex flex-col items-center justify-center gap-2 mb-4 overflow-hidden"
-          style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)" }}
-        >
-          <input
-            type="file"
-            accept={mode === "photo" ? "image/*" : "video/*"}
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          {previewUrl ? (
-            mode === "photo" ? (
-              <img src={previewUrl} alt="preview" className="w-full h-full object-cover" />
-            ) : (
+        {mode === "reel" ? (
+          <label
+            className="rounded-2xl aspect-square flex flex-col items-center justify-center gap-2 mb-4 overflow-hidden"
+            style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)" }}
+          >
+            <input type="file" accept="video/*" onChange={handleFileChange} className="hidden" />
+            {previewUrl ? (
               <video src={previewUrl} className="w-full h-full object-cover" controls />
-            )
-          ) : (
-            <>
-              {mode === "photo" ? <ImageIcon size={28} color="var(--text-muted)" /> : <Video size={28} color="var(--text-muted)" />}
-              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                {mode === "photo" ? "Choose a photo" : "Choose a video"}
-              </span>
-            </>
-          )}
-        </label>
+            ) : (
+              <>
+                <Video size={28} color="var(--text-muted)" />
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>Choose a video</span>
+              </>
+            )}
+          </label>
+        ) : (
+          <div className="mb-4">
+            <input
+              ref={carouselInputRef}
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              onChange={handleCarouselFilesChange}
+              className="hidden"
+            />
+
+            {items.length === 0 ? (
+              <label
+                onClick={() => carouselInputRef.current?.click()}
+                className="rounded-2xl aspect-square flex flex-col items-center justify-center gap-2 overflow-hidden cursor-pointer"
+                style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)" }}
+              >
+                <Layers size={28} color="var(--text-muted)" />
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>Choose photos and videos</span>
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Up to 20, mixed however you like</span>
+              </label>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    {items.length === 1 ? "1 item" : `${items.length} items — swipe through them like a post`}
+                  </span>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{items.length}/20</span>
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+                  {items.map((it, i) => (
+                    <div key={i} className="relative shrink-0 rounded-xl overflow-hidden" style={{ width: 84, height: 84, background: "var(--surface)" }}>
+                      {it.type === "photo" ? (
+                        <img src={it.url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <video src={it.url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                      )}
+                      {it.type === "video" && (
+                        <span className="absolute bottom-1 left-1" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.8))" }}>
+                          <Video size={12} color="#FFFFFF" />
+                        </span>
+                      )}
+                      {i === 0 && (
+                        <span
+                          className="absolute top-1 left-1 rounded-full px-1.5 py-0.5 text-[9px]"
+                          style={{ background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontWeight: 700 }}
+                        >
+                          Cover
+                        </span>
+                      )}
+                      <button
+                        onClick={() => removeItem(i)}
+                        className="absolute top-1 right-1 rounded-full flex items-center justify-center"
+                        style={{ width: 18, height: 18, background: "rgba(0,0,0,0.65)" }}
+                      >
+                        <X size={11} color="#FFFFFF" />
+                      </button>
+                    </div>
+                  ))}
+                  {items.length < 20 && (
+                    <button
+                      onClick={() => carouselInputRef.current?.click()}
+                      className="shrink-0 rounded-xl flex items-center justify-center"
+                      style={{ width: 84, height: 84, background: "var(--surface)", border: "1.5px dashed var(--toggle-off)" }}
+                    >
+                      <Plus size={22} color="var(--text-muted)" />
+                    </button>
+                  )}
+                </div>
+                {limitNotice && (
+                  <p className="text-[11px] mt-1.5" style={{ color: "var(--heart)" }}>{limitNotice}</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <textarea
           placeholder="Write a caption... (use @username to tag someone)"
@@ -4733,7 +4999,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
     const { data: p, error } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count")
+      .select("id, media_url, media_type, media_count, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count")
       .eq("id", postId)
       .single();
 
@@ -4743,6 +5009,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       return;
     }
 
+    const mediaMap = await fetchPostMediaMap([p.id]);
     const { data: profile } = await supabase.from("profiles").select("id, username").eq("id", p.user_id).single();
     const { data: likes } = await supabase.from("likes").select("user_id").eq("post_id", postId);
     const { data: reposts } = await supabase.from("reposts").select("user_id").eq("post_id", postId);
@@ -4761,6 +5028,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       saved: (allSaves || []).some((s) => s.user_id === user?.id),
       commentCount: (comments || []).length,
       tags: tagsData || [],
+      media: mediaMap[p.id] || null,
     });
     setLoading(false);
   };
@@ -4859,7 +5127,9 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
         style={{ background: "var(--bg-sunken)", aspectRatio: "4/5" }}
         onDoubleClick={toggleLike}
       >
-        {post.media_type === "photo" ? (
+        {post.media && post.media.length > 1 ? (
+          <PostMediaCarousel media={post.media} />
+        ) : post.media_type === "photo" ? (
           <img src={post.media_url} alt="" className="w-full h-full object-cover" />
         ) : (
           <video src={post.media_url} className="w-full h-full object-cover" controls />
@@ -5054,7 +5324,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
     }
     const { data: rows } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, created_at")
+      .select("id, media_url, media_type, media_count, created_at")
       .in("id", ids)
       .order("created_at", { ascending: false });
     setItems(rows || []);
@@ -5195,7 +5465,7 @@ function ArchiveScreen({ currentUserId, onBack, onOpenPost }) {
     (async () => {
       const { data: p, error: pe } = await supabase
         .from("posts")
-        .select("id, media_url, media_type, created_at")
+      .select("id, media_url, media_type, media_count, created_at")
         .eq("user_id", currentUserId)
         .eq("archived", true)
         .order("created_at", { ascending: false });
@@ -5996,7 +6266,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
       }
       const { data: rows, error: err } = await supabase
         .from("posts")
-        .select("id, user_id, media_url, media_type, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled")
+        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled")
         .in("id", postIds);
 
       if (err) {
@@ -6006,6 +6276,8 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
         }
         return;
       }
+
+      const mediaMap = await fetchPostMediaMap((rows || []).map((r) => r.id));
 
       const byId = {};
       (rows || []).forEach((r) => (byId[r.id] = r));
@@ -6061,6 +6333,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 tagged_user_id: t.tagged_user_id,
                 username: tagProfiles.find((tp) => tp.id === t.tagged_user_id)?.username || "unknown",
               })),
+            media: mediaMap[p.id] || null,
           };
         })
       );
@@ -6188,7 +6461,9 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 style={{ background: "var(--bg-sunken)", aspectRatio: "4/5" }}
                 onDoubleClick={() => !post.liked && toggleLike(post)}
               >
-                {post.media_type === "photo" ? (
+                {post.media && post.media.length > 1 ? (
+                  <PostMediaCarousel media={post.media} />
+                ) : post.media_type === "photo" ? (
                   <img src={post.media_url} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <video src={post.media_url} className="w-full h-full object-cover" controls playsInline preload="metadata" />
@@ -6815,7 +7090,9 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
 
   const tabOrder = ["posts", "reels", "reposts", "tagged"];
   // Reels are just video posts — no separate table, so split by media_type.
-  const reels = posts.filter((p) => p.media_type !== "photo");
+  // A carousel is never a Reel, even if its cover happens to be a video —
+  // the media_count guard keeps carousels out of this split.
+  const reels = posts.filter((p) => p.media_type !== "photo" && (p.media_count || 1) <= 1);
   const photos = posts;
   const gridFor = tab === "posts" ? photos : tab === "reels" ? reels : tab === "reposts" ? reposts : tagged;
   const isOwnProfile = myId && profile && myId === profile.id;
@@ -6853,7 +7130,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
 
     let postsQuery = supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, location, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived")
+      .select("id, media_url, media_type, media_count, caption, location, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived")
       .eq("user_id", targetId);
     if (!isViewingOwnPosts) {
       postsQuery = postsQuery.eq("archived", false);
@@ -7252,10 +7529,16 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
                   <UserSquare2 size={12} color="#FFFFFF" />
                 </span>
               )}
-              {(tab === "reels" || (tab === "posts" && p.media_type !== "photo")) && (
+              {tab === "posts" && p.media_count > 1 ? (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-                  <Play size={12} color="#FFFFFF" fill="#FFFFFF" />
+                  <Layers size={12} color="#FFFFFF" />
                 </span>
+              ) : (
+                (tab === "reels" || (tab === "posts" && p.media_type !== "photo")) && (
+                  <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                    <Play size={12} color="#FFFFFF" fill="#FFFFFF" />
+                  </span>
+                )
               )}
               {tab === "posts" && p.pinned && (
                 <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
@@ -9271,10 +9554,16 @@ function MediaTile({ post, onClick, selected, selectable, badge }) {
       ) : (
         <video src={post.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
       )}
-      {post.media_type !== "photo" && (
+      {post.media_count > 1 ? (
         <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-          <Video size={13} color="#FFFFFF" />
+          <Layers size={13} color="#FFFFFF" />
         </span>
+      ) : (
+        post.media_type !== "photo" && (
+          <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+            <Video size={13} color="#FFFFFF" />
+          </span>
+        )
       )}
       {badge}
       {selectable && (
@@ -9756,7 +10045,7 @@ function SavedScreen({ onBack, onOpenPost }) {
     }
     const { data: rows, error: postsErr } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, caption, created_at")
+      .select("id, media_url, media_type, media_count, caption, created_at")
       .in("id", ids)
       .order("created_at", { ascending: false });
 
@@ -9836,7 +10125,7 @@ function SavedScreen({ onBack, onOpenPost }) {
     }
     const { data: rows } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, created_at")
+      .select("id, media_url, media_type, media_count, created_at")
       .in("id", ids)
       .order("created_at", { ascending: false });
     setCollectionPosts(rows || []);
