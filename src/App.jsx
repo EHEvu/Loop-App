@@ -61,6 +61,7 @@ import {
   LogOut,
   Shield,
   Layers,
+  Clock,
 } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -1866,7 +1867,8 @@ function StoriesBar({ onOpenProfile }) {
       return 0;
     });
 
-    setGroups(list);
+    const rel = await getRelations();
+    setGroups(list.filter((g) => g.isSelf || !isHiddenFromFeed(rel, g.userId)));
     setLoading(false);
   };
 
@@ -2052,6 +2054,54 @@ async function fetchPostMediaMap(postIds) {
   return map;
 }
 
+// ---- Block / mute / restrict ----
+// One fetch, shared by every screen, cached for the session. Lists change
+// only from the profile menu or the people-list screens, and both of those
+// call invalidateRelations() so the next read picks the change up.
+let relationsPromise = null;
+
+function invalidateRelations() {
+  relationsPromise = null;
+}
+
+function getRelations() {
+  if (!relationsPromise) {
+    relationsPromise = (async () => {
+      const empty = { blocked: new Set(), blockedBy: new Set(), muted: new Set(), restricted: new Set() };
+      const { data, error } = await supabase.rpc("my_relations");
+      // If safety-setup.sql hasn't been run yet, behave as if every list is
+      // empty rather than breaking the feed.
+      if (error || !data) return empty;
+      data.forEach((r) => {
+        if (r.kind === "blocked") empty.blocked.add(r.user_id);
+        else if (r.kind === "blocked_by") empty.blockedBy.add(r.user_id);
+        else if (r.kind === "muted") empty.muted.add(r.user_id);
+        else if (r.kind === "restricted") empty.restricted.add(r.user_id);
+      });
+      return empty;
+    })();
+  }
+  return relationsPromise;
+}
+
+// Blocked in either direction: gone everywhere.
+const isBlockedEither = (rel, uid) => rel.blocked.has(uid) || rel.blockedBy.has(uid);
+// Muted people are still followed, just kept out of feeds and stories.
+const isHiddenFromFeed = (rel, uid) => isBlockedEither(rel, uid) || rel.muted.has(uid);
+
+// Comments to leave out for this viewer on one post: anyone blocked either
+// way, plus anyone the post owner restricted (unless you are that person or
+// the owner — they still see them).
+async function hiddenCommenterSet(postOwnerId) {
+  const rel = await getRelations();
+  const hidden = new Set([...rel.blocked, ...rel.blockedBy]);
+  if (postOwnerId) {
+    const { data } = await supabase.rpc("hidden_commenters", { p_owner: postOwnerId });
+    (data || []).forEach((r) => hidden.add(r.user_id));
+  }
+  return hidden;
+}
+
 function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport, onOpenProfile }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2109,7 +2159,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
     const { data: profilesData, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, username");
+      .select("id, username, avatar_url");
 
     if (profilesError) {
       setLoadError(profilesError.message);
@@ -2159,6 +2209,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       return {
         ...p,
         username: profile?.username || "unknown",
+        avatarUrl: profile?.avatar_url || null,
         likeCount: postLikes.length,
         liked: postLikes.some((l) => l.user_id === user?.id),
         repostCount: postReposts.length,
@@ -2171,7 +2222,10 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       };
     });
 
-    setPosts(merged);
+    const rel = await getRelations();
+    // Your own scheduled posts stay off the feed until their time — the
+    // database already hides everyone else's.
+    setPosts(merged.filter((p) => !isHiddenFromFeed(rel, p.user_id) && new Date(p.created_at).getTime() <= Date.now()));
     setLoading(false);
   };
 
@@ -2294,8 +2348,12 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 className="shrink-0"
                 style={{ width: 36, height: 36, borderRadius: "9999px", background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
               >
-                <div className="w-full h-full rounded-full flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
-                  {post.username[0].toUpperCase()}
+                <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
+                  {post.avatarUrl ? (
+                    <img src={post.avatarUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    post.username[0].toUpperCase()
+                  )}
                 </div>
               </button>
               <div className="flex flex-col leading-tight flex-1 min-w-0">
@@ -2609,7 +2667,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       return;
     }
 
-    const { data: profilesData } = await supabase.from("profiles").select("id, username");
+    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url");
     const { data: likesData } = await supabase.from("likes").select("post_id, user_id");
     const { data: repostsData } = await supabase.from("reposts").select("post_id, user_id");
     const { data: savesData } = await supabase
@@ -2641,6 +2699,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       return {
         ...p,
         username: profile?.username || "unknown",
+        avatarUrl: profile?.avatar_url || null,
         likeCount: postLikes.length,
         liked: postLikes.some((l) => l.user_id === user?.id),
         repostCount: postReposts.length,
@@ -2652,7 +2711,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       };
     });
 
-    setReels(merged);
+    const rel = await getRelations();
+    setReels(merged.filter((r) => !isHiddenFromFeed(rel, r.user_id) && new Date(r.created_at).getTime() <= Date.now()));
     setIndex(0);
     setLoading(false);
   };
@@ -3057,8 +3117,12 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         <div className="flex items-center gap-2.5 mb-2.5">
           <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2.5 min-w-0">
             <div className="w-9 h-9 rounded-full shrink-0" style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}>
-              <div className="w-full h-full rounded-full flex items-center justify-center text-[11px]" style={{ background: "rgba(20,20,20,0.9)", color: "#FFFFFF", fontWeight: 600 }}>
-                {reel.username[0].toUpperCase()}
+              <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center text-[11px]" style={{ background: "rgba(20,20,20,0.9)", color: "#FFFFFF", fontWeight: 600 }}>
+                {reel.avatarUrl ? (
+                  <img src={reel.avatarUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  reel.username[0].toUpperCase()
+                )}
               </div>
             </div>
             <span className="text-[13px] truncate" style={{ color: "#FFFFFF", fontWeight: 600 }}>{reel.username}</span>
@@ -3315,6 +3379,8 @@ function ReelCommentsSheet({
   const [menuFor, setMenuFor] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
+  const [attachment, setAttachment] = useState(null); // { file, url }
+  const attachRef = React.useRef(null);
 
   useEffect(() => {
     loadComments();
@@ -3324,25 +3390,34 @@ function ReelCommentsSheet({
     setLoading(true);
     const { data: commentsData } = await supabase
       .from("comments")
-      .select("id, user_id, content, created_at, parent_id")
+      .select("id, user_id, content, image_url, created_at, parent_id")
       .eq("post_id", postId)
       .order("created_at", { ascending: true });
 
-    const { data: profilesData } = await supabase.from("profiles").select("id, username");
+    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url");
     const { data: reactionsData } = await supabase.from("comment_reactions").select("comment_id, user_id, type");
+    const hidden = await hiddenCommenterSet(postOwnerId);
+    const rel = await getRelations();
+    const iAmOwner = currentUserId && currentUserId === postOwnerId;
 
-    const merged = (commentsData || []).map((c) => {
-      const profile = (profilesData || []).find((p) => p.id === c.user_id);
-      const reactions = (reactionsData || []).filter((r) => r.comment_id === c.id);
-      const myReaction = reactions.find((r) => r.user_id === currentUserId)?.type ?? null;
-      return {
-        ...c,
-        username: profile?.username || "unknown",
-        likeCount: reactions.filter((r) => r.type === "like").length,
-        dislikeCount: reactions.filter((r) => r.type === "dislike").length,
-        myReaction,
-      };
-    });
+    const merged = (commentsData || [])
+      .filter((c) => !hidden.has(c.user_id))
+      .map((c) => {
+        const profile = (profilesData || []).find((p) => p.id === c.user_id);
+        const reactions = (reactionsData || []).filter((r) => r.comment_id === c.id);
+        const myReaction = reactions.find((r) => r.user_id === currentUserId)?.type ?? null;
+        return {
+          ...c,
+          username: profile?.username || "unknown",
+          avatarUrl: profile?.avatar_url || null,
+          likeCount: reactions.filter((r) => r.type === "like").length,
+          dislikeCount: reactions.filter((r) => r.type === "dislike").length,
+          myReaction,
+          // Only the post owner is told a comment comes from someone they
+          // restricted — everyone else simply never sees it.
+          restricted: iAmOwner && rel.restricted.has(c.user_id),
+        };
+      });
 
     setComments(merged);
     setLoading(false);
@@ -3350,17 +3425,39 @@ function ReelCommentsSheet({
 
   const submitComment = async () => {
     const trimmed = text.trim();
-    if (!trimmed || !currentUserId || posting) return;
+    if ((!trimmed && !attachment) || !currentUserId || posting) return;
     setPosting(true);
+
+    let imageUrl = null;
+    if (attachment) {
+      const safeName = attachment.file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `${currentUserId}/${Date.now()}-${safeName}`;
+      const { error: upErr } = await supabase.storage.from("comments").upload(path, attachment.file);
+      if (upErr) {
+        setPosting(false);
+        alert(upErr.message);
+        return;
+      }
+      imageUrl = supabase.storage.from("comments").getPublicUrl(path).data.publicUrl;
+    }
 
     const { error } = await supabase.from("comments").insert({
       post_id: postId,
       user_id: currentUserId,
       content: trimmed,
+      image_url: imageUrl,
       parent_id: replyingTo?.id ?? null,
     });
+    if (!error && attachment) {
+      URL.revokeObjectURL(attachment.url);
+      setAttachment(null);
+    }
 
     setPosting(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     if (!error) {
       setText("");
       setReplyingTo(null);
@@ -3573,6 +3670,38 @@ function ReelCommentsSheet({
                   <button onClick={() => setReplyingTo(null)}><X size={12} color="var(--text-muted)" /></button>
                 </div>
               )}
+              {attachment && (
+                <div className="relative mb-2" style={{ width: 72, height: 72 }}>
+                  <img src={attachment.url} alt="" className="w-full h-full object-cover rounded-xl" style={{ border: "1px solid var(--border)" }} />
+                  <button
+                    onClick={() => {
+                      URL.revokeObjectURL(attachment.url);
+                      setAttachment(null);
+                    }}
+                    className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center"
+                    style={{ width: 20, height: 20, background: "var(--text)", border: "2px solid var(--bg)" }}
+                  >
+                    <X size={11} color="var(--bg)" />
+                  </button>
+                </div>
+              )}
+              <input
+                ref={attachRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!f) return;
+                  if (f.size > 8 * 1024 * 1024) {
+                    alert("That file is over 8 MB — pick a smaller photo or GIF.");
+                    return;
+                  }
+                  if (attachment) URL.revokeObjectURL(attachment.url);
+                  setAttachment({ file: f, url: URL.createObjectURL(f) });
+                }}
+              />
               <div className="flex items-end gap-2">
                 <textarea
                   value={text}
@@ -3584,15 +3713,15 @@ function ReelCommentsSheet({
                 />
                 <button
                   disabled={posting}
-                  onClick={() => showCommentUploadHint()}
-                  title="Photo/GIF upload — coming soon"
-                  className="pb-2"
+                  onClick={() => attachRef.current?.click()}
+                  title="Add a photo or GIF"
+                  className="pb-2 transition-transform active:scale-90"
                 >
-                  <ImagePlus size={19} color="var(--text-muted)" />
+                  <ImagePlus size={19} color={attachment ? "var(--accent-solid)" : "var(--text-muted)"} />
                 </button>
                 <button
                   onClick={submitComment}
-                  disabled={posting || !text.trim()}
+                  disabled={posting || (!text.trim() && !attachment)}
                   className="text-sm pb-2"
                   style={{ color: text.trim() ? "var(--accent-start)" : "var(--text-muted)", fontWeight: 700 }}
                 >
@@ -3605,10 +3734,6 @@ function ReelCommentsSheet({
       </div>
     </>
   );
-}
-
-function showCommentUploadHint() {
-  alert("Photo/GIF upload in comments — coming soon");
 }
 
 function CommentRow({
@@ -3654,9 +3779,13 @@ function CommentRow({
         onOpenMenu();
       }}
     >
-      <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-        <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
-          {comment.username[0].toUpperCase()}
+      <div className="w-7 h-7 rounded-full shrink-0 overflow-hidden" style={{ background: ACCENT, padding: 1.5 }}>
+        <div className="w-full h-full rounded-full overflow-hidden bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
+          {comment.avatarUrl ? (
+            <img src={comment.avatarUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            comment.username[0].toUpperCase()
+          )}
         </div>
       </div>
       <div className="flex-1">
@@ -3665,6 +3794,11 @@ function CommentRow({
           <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{timeAgo(comment.created_at)}</span>
           {isPinned && (
             <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)" }}>Author</span>
+          )}
+          {comment.restricted && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)" }}>
+              Restricted · only you and them
+            </span>
           )}
         </div>
 
@@ -3684,7 +3818,18 @@ function CommentRow({
           </div>
         ) : (
           <>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{comment.content}</p>
+            {comment.content && (
+              <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{comment.content}</p>
+            )}
+            {comment.image_url && (
+              <img
+                src={comment.image_url}
+                alt=""
+                loading="lazy"
+                className="mt-1.5 rounded-xl object-cover"
+                style={{ maxWidth: 180, maxHeight: 220, border: "1px solid var(--border)" }}
+              />
+            )}
             <div className="flex items-center gap-3 mt-1">
               <button onClick={onReply} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Reply</button>
               {isOwn && (
@@ -3777,11 +3922,12 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
     setExploreLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption")
+      .select("id, user_id, media_url, media_type, media_count, caption, created_at")
       .eq("archived", false)
       .order("created_at", { ascending: false })
       .limit(48);
-    setExplore(data || []);
+    const rel = await getRelations();
+    setExplore((data || []).filter((p) => !isHiddenFromFeed(rel, p.user_id) && new Date(p.created_at).getTime() <= Date.now()));
     setExploreLoading(false);
   };
 
@@ -3803,7 +3949,10 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
       .select("id, username, full_name, avatar_url")
       .or(`username.ilike.%${q}%,full_name.ilike.%${q}%`)
       .limit(20);
-    setResults(data || []);
+    const rel = await getRelations();
+    // Someone who blocked you can't be found; someone you blocked still can,
+    // so you can open their profile and unblock them.
+    setResults((data || []).filter((a) => !rel.blockedBy.has(a.id)));
     setSearching(false);
   };
 
@@ -3913,6 +4062,51 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
   );
 }
 
+// ---- Post drafts ----
+// Kept on this device in IndexedDB, the way Instagram keeps drafts on the
+// phone. IndexedDB can hold the actual photo/video files, which localStorage
+// can't, so a draft reopens with its media intact.
+const DRAFT_DB = "loop-drafts";
+
+function openDraftDb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("Drafts aren't supported in this browser"));
+      return;
+    }
+    const req = indexedDB.open(DRAFT_DB, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore("drafts", { keyPath: "id" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function draftTx(mode, fn) {
+  const db = await openDraftDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("drafts", mode);
+    const store = tx.objectStore("drafts");
+    const req = fn(store);
+    tx.oncomplete = () => resolve(req ? req.result : undefined);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("Draft save was cancelled — the device may be out of space"));
+  });
+}
+
+const listDrafts = () => draftTx("readonly", (st) => st.getAll());
+const putDraft = (draft) => draftTx("readwrite", (st) => st.put(draft));
+const deleteDraft = (id) => draftTx("readwrite", (st) => st.delete(id));
+
+// Instagram lets you schedule up to 75 days ahead.
+const SCHEDULE_MAX_DAYS = 75;
+
+function toLocalInputValue(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function UploadScreen() {
   const [mode, setMode] = useState("photo");
   const [file, setFile] = useState(null);
@@ -3935,6 +4129,104 @@ function UploadScreen() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const carouselInputRef = React.useRef(null);
+  const [scheduleOn, setScheduleOn] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState(""); // datetime-local value
+  const [drafts, setDrafts] = useState([]);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [draftId, setDraftId] = useState(null); // set when editing a saved draft
+  const [draftNote, setDraftNote] = useState("");
+  const [postedScheduled, setPostedScheduled] = useState(null); // Date when last share was scheduled
+
+  const refreshDrafts = () =>
+    listDrafts()
+      .then((d) => setDrafts((d || []).sort((a, b) => b.savedAt - a.savedAt)))
+      .catch(() => setDrafts([]));
+
+  useEffect(() => {
+    refreshDrafts();
+  }, []);
+
+  const hasContent = mode === "reel" ? !!file : items.length > 0;
+
+  const saveDraft = async () => {
+    if (!hasContent && !caption.trim()) {
+      setDraftNote("Add a photo, video or caption first.");
+      return;
+    }
+    const id = draftId || `d${Date.now()}`;
+    try {
+      await putDraft({
+        id,
+        savedAt: Date.now(),
+        mode,
+        reelFile: mode === "reel" ? file : null,
+        files: mode === "reel" ? [] : items.map((it) => it.file),
+        caption,
+        location,
+        hideLikes,
+        hideComments,
+        hideRepostsSaves,
+        turnOffComments,
+        tagInput,
+        pollEnabled,
+        pollQuestion,
+        pollOptions,
+        scheduleOn,
+        scheduleAt,
+      });
+    } catch (e) {
+      setDraftNote(e.message || "Couldn't save the draft");
+      return;
+    }
+    setDraftId(id);
+    setDraftNote("Saved to drafts on this device");
+    setTimeout(() => setDraftNote(""), 2000);
+    refreshDrafts();
+  };
+
+  const openDraft = (d) => {
+    items.forEach((it) => URL.revokeObjectURL(it.url));
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setMode(d.mode);
+    if (d.mode === "reel" && d.reelFile) {
+      setFile(d.reelFile);
+      setPreviewUrl(URL.createObjectURL(d.reelFile));
+      setItems([]);
+    } else {
+      setFile(null);
+      setPreviewUrl(null);
+      setItems(
+        (d.files || []).map((f) => ({
+          file: f,
+          url: URL.createObjectURL(f),
+          type: (f.type || "").startsWith("video") ? "video" : "photo",
+        }))
+      );
+    }
+    setCaption(d.caption || "");
+    setLocation(d.location || "");
+    setHideLikes(!!d.hideLikes);
+    setHideComments(!!d.hideComments);
+    setHideRepostsSaves(!!d.hideRepostsSaves);
+    setTurnOffComments(!!d.turnOffComments);
+    setTagInput(d.tagInput || "");
+    setPollEnabled(!!d.pollEnabled);
+    setPollQuestion(d.pollQuestion || "");
+    setPollOptions(d.pollOptions && d.pollOptions.length >= 2 ? d.pollOptions : ["", ""]);
+    setScheduleOn(!!d.scheduleOn);
+    setScheduleAt(d.scheduleAt || "");
+    setDraftId(d.id);
+    setDraftsOpen(false);
+    setError("");
+  };
+
+  const removeDraft = async (id) => {
+    try {
+      await deleteDraft(id);
+    } catch {}
+    if (draftId === id) setDraftId(null);
+    refreshDrafts();
+  };
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -3995,6 +4287,11 @@ function UploadScreen() {
     setPollEnabled(false);
     setPollQuestion("");
     setPollOptions(["", ""]);
+    setScheduleOn(false);
+    setScheduleAt("");
+    setDraftId(null);
+    setDraftNote("");
+    setPostedScheduled(null);
     setSuccess(false);
   };
 
@@ -4017,6 +4314,24 @@ function UploadScreen() {
         setError("A poll needs a question and at least 2 options");
         return;
       }
+    }
+
+    let scheduledFor = null;
+    if (scheduleOn) {
+      const when = scheduleAt ? new Date(scheduleAt) : null;
+      if (!when || isNaN(when.getTime())) {
+        setError("Pick a date and time to schedule for");
+        return;
+      }
+      if (when.getTime() < Date.now() + 5 * 60 * 1000) {
+        setError("Schedule at least 5 minutes from now");
+        return;
+      }
+      if (when.getTime() > Date.now() + SCHEDULE_MAX_DAYS * 24 * 60 * 60 * 1000) {
+        setError(`You can schedule up to ${SCHEDULE_MAX_DAYS} days ahead`);
+        return;
+      }
+      scheduledFor = when;
     }
     setUploading(true);
 
@@ -4099,6 +4414,10 @@ function UploadScreen() {
         hide_reposts: hideRepostsSaves,
         hide_saves: hideRepostsSaves,
         comments_disabled: turnOffComments,
+        // A scheduled post is simply one whose time is in the future. The
+        // database keeps it hidden from everyone else until then, and it
+        // lands in the feed in the right place when that moment arrives.
+        ...(scheduledFor ? { created_at: scheduledFor.toISOString() } : {}),
       })
       .select("id")
       .single();
@@ -4170,6 +4489,15 @@ function UploadScreen() {
       }
     }
 
+    if (draftId) {
+      try {
+        await deleteDraft(draftId);
+      } catch {}
+      setDraftId(null);
+      refreshDrafts();
+    }
+
+    setPostedScheduled(scheduledFor);
     setUploading(false);
     setSuccess(true);
   };
@@ -4183,9 +4511,16 @@ function UploadScreen() {
         >
           <PlusSquare size={24} color="var(--on-accent)" />
         </div>
-        <p className="text-sm mb-4" style={{ color: "var(--text)", fontWeight: 600 }}>
-          Posted!
+        <p className="text-sm mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>
+          {postedScheduled ? "Scheduled!" : "Posted!"}
         </p>
+        {postedScheduled && (
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
+            It goes live {postedScheduled.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}. Until
+            then only you can see it, on your profile.
+          </p>
+        )}
+        {!postedScheduled && <div className="mb-3" />}
         <button
           onClick={resetForm}
           className="rounded-xl px-5 py-2.5 text-sm"
@@ -4201,6 +4536,20 @@ function UploadScreen() {
     <div className="flex-1 overflow-y-auto pb-4">
       <TopBar title="New Post" />
       <div className="px-4">
+        {drafts.length > 0 && (
+          <button
+            onClick={() => setDraftsOpen(true)}
+            className="w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 mb-3 transition-transform active:scale-[0.99]"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+          >
+            <span className="flex items-center gap-2 text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>
+              <Pencil size={14} /> Drafts
+            </span>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+              {drafts.length} saved on this device
+            </span>
+          </button>
+        )}
         <div className="flex gap-2 mb-4">
           <button
             onClick={() => {
@@ -4439,21 +4788,257 @@ function UploadScreen() {
           ))}
         </div>
 
+        <div className="rounded-xl mb-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <button
+            onClick={() => {
+              const next = !scheduleOn;
+              setScheduleOn(next);
+              if (next && !scheduleAt) {
+                // Default to the next round hour, at least an hour out.
+                const d = new Date(Date.now() + 60 * 60 * 1000);
+                d.setMinutes(0, 0, 0);
+                setScheduleAt(toLocalInputValue(d));
+              }
+            }}
+            className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
+            style={{ color: "var(--text)", textAlign: "left" }}
+          >
+            <span className="flex items-center gap-2">
+              <Clock size={15} color="var(--text-muted)" /> Schedule this post
+            </span>
+            <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: scheduleOn ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+              <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: scheduleOn ? 17 : 2, transition: "left 0.15s" }} />
+            </span>
+          </button>
+          {scheduleOn && (
+            <div className="px-3 pb-3" style={{ borderTop: "1px solid var(--border)" }}>
+              <input
+                type="datetime-local"
+                value={scheduleAt}
+                min={toLocalInputValue(new Date(Date.now() + 5 * 60 * 1000))}
+                max={toLocalInputValue(new Date(Date.now() + SCHEDULE_MAX_DAYS * 24 * 60 * 60 * 1000))}
+                onChange={(e) => setScheduleAt(e.target.value)}
+                className="w-full rounded-lg px-3 h-10 text-sm outline-none mt-2.5"
+                style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", colorScheme: "dark light" }}
+              />
+              <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+                Hidden from everyone but you until then. Up to {SCHEDULE_MAX_DAYS} days ahead.
+              </p>
+            </div>
+          )}
+        </div>
+
         {error && (
-          <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>
+          <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>
             {error}
           </p>
         )}
 
-        <button
-          onClick={handleShare}
-          disabled={uploading}
-          className="w-full rounded-xl py-3 text-sm"
-          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: uploading ? 0.7 : 1 }}
-        >
-          {uploading ? "Uploading..." : "Share"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={saveDraft}
+            disabled={uploading}
+            className="rounded-xl px-4 py-3 text-sm shrink-0 transition-transform active:scale-[0.98]"
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+          >
+            {draftId ? "Update draft" : "Save draft"}
+          </button>
+          <button
+            onClick={handleShare}
+            disabled={uploading}
+            className="flex-1 rounded-xl py-3 text-sm transition-transform active:scale-[0.98]"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: uploading ? 0.7 : 1 }}
+          >
+            {uploading ? "Uploading..." : scheduleOn ? "Schedule" : "Share"}
+          </button>
+        </div>
+        {draftNote && (
+          <p className="text-[11px] mt-2 text-center" style={{ color: "var(--text-muted)" }}>{draftNote}</p>
+        )}
       </div>
+
+      {draftsOpen && (
+        <StorySheetShell title="Drafts" onClose={() => setDraftsOpen(false)}>
+          <p className="text-[11px] px-4 pb-2" style={{ color: "var(--text-muted)" }}>
+            Saved on this device only. Clearing the browser's site data removes them.
+          </p>
+          <div className="pb-6">
+            {drafts.length === 0 ? (
+              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No drafts</p>
+            ) : (
+              drafts.map((d) => (
+                <DraftRow key={d.id} draft={d} onOpen={() => openDraft(d)} onDelete={() => removeDraft(d.id)} />
+              ))
+            )}
+          </div>
+        </StorySheetShell>
+      )}
+    </div>
+  );
+}
+
+// Thumbnail URLs are created and released per row, so opening the drafts
+// sheet repeatedly doesn't leak object URLs.
+function DraftRow({ draft, onOpen, onDelete }) {
+  const first = draft.mode === "reel" ? draft.reelFile : (draft.files || [])[0];
+  const [thumb, setThumb] = useState(null);
+
+  useEffect(() => {
+    if (!first) return;
+    const url = URL.createObjectURL(first);
+    setThumb(url);
+    return () => URL.revokeObjectURL(url);
+  }, [draft.id]);
+
+  const isVideo = first && (first.type || "").startsWith("video");
+  const count = draft.mode === "reel" ? (draft.reelFile ? 1 : 0) : (draft.files || []).length;
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <button onClick={onOpen} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+        <div className="rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 52, height: 52, background: "var(--surface)", border: "1px solid var(--border)" }}>
+          {thumb ? (
+            isVideo ? (
+              <video src={thumb} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+            ) : (
+              <img src={thumb} alt="" className="w-full h-full object-cover" />
+            )
+          ) : (
+            <ImageIcon size={18} color="var(--text-muted)" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>
+            {draft.caption?.trim() || (draft.mode === "reel" ? "Reel" : "Post")}
+          </p>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            {draft.mode === "reel" ? "Reel" : `${count} item${count === 1 ? "" : "s"}`} · saved {timeAgo(new Date(draft.savedAt).toISOString())} ago
+            {draft.scheduleOn ? " · scheduled" : ""}
+          </p>
+        </div>
+      </button>
+      <button onClick={onDelete} className="p-1.5 shrink-0 transition-transform active:scale-90">
+        <Trash2 size={17} color="var(--heart)" />
+      </button>
+    </div>
+  );
+}
+
+// ---- Push notifications ----
+// Public half of the VAPID key pair. It's safe in the app — browsers need it
+// to subscribe. The private half lives only in the send-push Edge Function's
+// secrets.
+const VAPID_PUBLIC_KEY = "BGN7-9SC7Z-eNS5Fd7OmiU-JbfcTkuPNsufSm_V9O7muxFrQDR2ir_GEr4BwnIZ-GBHYr35OqbjIVq3DlIUvRoE";
+
+function urlB64ToUint8Array(base64) {
+  const pad = "=".repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function pushSupported() {
+  return typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+// Returns { ok, reason } so the caller can say exactly what went wrong.
+async function enablePush(userId) {
+  if (!pushSupported()) return { ok: false, reason: "This browser can't receive push notifications." };
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    return {
+      ok: false,
+      reason:
+        permission === "denied"
+          ? "Notifications are blocked for this site. Allow them in your browser's site settings, then try again."
+          : "Permission wasn't granted.",
+    };
+  }
+  let reg;
+  try {
+    reg = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.ready;
+  } catch (e) {
+    return { ok: false, reason: "Couldn't start the notification worker — is sw.js in the repo's public folder?" };
+  }
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    try {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    } catch (e) {
+      return { ok: false, reason: e.message || "Subscribing failed." };
+    }
+  }
+  const json = sub.toJSON();
+  const { error } = await supabase.from("push_subscriptions").upsert(
+    { user_id: userId, endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth },
+    { onConflict: "endpoint" }
+  );
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
+async function disablePush() {
+  if (!pushSupported()) return;
+  const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+  const sub = reg ? await reg.pushManager.getSubscription() : null;
+  if (sub) {
+    await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+    await sub.unsubscribe();
+  }
+}
+
+async function pushIsOn() {
+  if (!pushSupported() || Notification.permission !== "granted") return false;
+  const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+  const sub = reg ? await reg.pushManager.getSubscription() : null;
+  return !!sub;
+}
+
+function PushToggleRow({ userId }) {
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    pushIsOn().then(setOn);
+  }, []);
+
+  const toggle = async () => {
+    if (!userId || busy) return;
+    setBusy(true);
+    setNote("");
+    if (on) {
+      await disablePush();
+      setOn(false);
+    } else {
+      const res = await enablePush(userId);
+      if (res.ok) setOn(true);
+      else setNote(res.reason);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div>
+      <button onClick={toggle} disabled={busy} className="w-full flex items-center gap-2.5 px-4 py-3 text-sm" style={{ color: "var(--text)", opacity: busy ? 0.6 : 1 }}>
+        <Bell size={16} color="var(--text-muted)" />
+        <span className="flex-1 text-left">Push notifications</span>
+        <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+          <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: on ? 17 : 2, transition: "left 0.15s" }} />
+        </span>
+      </button>
+      {note ? (
+        <p className="text-[11px] px-4 pb-3" style={{ color: "var(--heart)" }}>{note}</p>
+      ) : (
+        <p className="text-[11px] px-4 pb-3" style={{ color: "var(--text-muted)" }}>
+          Likes, comments, follows and messages, even when Loop is closed. Per device.
+        </p>
+      )}
     </div>
   );
 }
@@ -4941,6 +5526,11 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
           </button>
         </div>
 
+        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Notifications</div>
+        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <PushToggleRow userId={userId} />
+        </div>
+
         <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Your content</div>
         <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <button onClick={onOpenSaved} className="w-full flex items-center gap-2.5 px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
@@ -5010,7 +5600,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
     }
 
     const mediaMap = await fetchPostMediaMap([p.id]);
-    const { data: profile } = await supabase.from("profiles").select("id, username").eq("id", p.user_id).single();
+    const { data: profile } = await supabase.from("profiles").select("id, username, avatar_url").eq("id", p.user_id).single();
     const { data: likes } = await supabase.from("likes").select("user_id").eq("post_id", postId);
     const { data: reposts } = await supabase.from("reposts").select("user_id").eq("post_id", postId);
     const { data: allSaves } = await supabase.from("saves").select("user_id").eq("post_id", postId);
@@ -5020,6 +5610,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
     setPost({
       ...p,
       username: profile?.username || "unknown",
+      avatarUrl: profile?.avatar_url || null,
       likeCount: (likes || []).length,
       liked: (likes || []).some((l) => l.user_id === user?.id),
       repostCount: (reposts || []).length,
@@ -5103,8 +5694,12 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
               className="shrink-0"
               style={{ width: 36, height: 36, borderRadius: "9999px", background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
             >
-              <div className="w-full h-full rounded-full flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
-                {post.username[0].toUpperCase()}
+              <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
+                {post.avatarUrl ? (
+                  <img src={post.avatarUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  post.username[0].toUpperCase()
+                )}
               </div>
             </div>
             <div className="flex flex-col leading-tight min-w-0 text-left">
@@ -5786,6 +6381,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
       setError(err.message);
       return;
     }
+    invalidateRelations();
     setMembers((prev) => [...prev, person]);
   };
 
@@ -5805,6 +6401,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
       setError(err.message);
       return;
     }
+    invalidateRelations();
     setMembers((prev) => prev.filter((m) => m.id !== person.id));
   };
 
@@ -7084,6 +7681,9 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
   const [highlightsKey, setHighlightsKey] = useState(0);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [privacyBusy, setPrivacyBusy] = useState(false);
+  // How you relate to the person whose profile this is.
+  const [myRel, setMyRel] = useState({ blocked: false, blockedBy: false, muted: false, restricted: false });
+  const [relBusy, setRelBusy] = useState(null);
   const avatarInputRef = React.useRef(null);
   const avatarPressRef = React.useRef(null);
   const avatarLongRef = React.useRef(false);
@@ -7130,7 +7730,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
 
     let postsQuery = supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, location, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived")
+      .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived")
       .eq("user_id", targetId);
     if (!isViewingOwnPosts) {
       postsQuery = postsQuery.eq("archived", false);
@@ -7202,6 +7802,16 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
       rememberCurrentAccount(profileData);
     }
 
+    if (user && targetId !== user.id) {
+      const rel = await getRelations();
+      setMyRel({
+        blocked: rel.blocked.has(targetId),
+        blockedBy: rel.blockedBy.has(targetId),
+        muted: rel.muted.has(targetId),
+        restricted: rel.restricted.has(targetId),
+      });
+    }
+
     setLoading(false);
   };
 
@@ -7240,6 +7850,38 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
     }
     setProfile((prev) => ({ ...prev, avatar_url: null }));
     setSheet(null);
+  };
+
+  const toggleRelation = async (kind) => {
+    if (!myId || !profile) return;
+    const on = myRel[kind];
+    if (kind === "blocked" && !on) {
+      const ok = window.confirm(
+        `Block ${profile.username}? They won't be able to find your profile, see your posts or message you. They won't be told.`
+      );
+      if (!ok) return;
+    }
+    setRelBusy(kind);
+    const { error } = on
+      ? await supabase
+          .from("user_relations")
+          .delete()
+          .eq("user_id", myId)
+          .eq("target_id", profile.id)
+          .eq("kind", kind)
+      : await supabase.from("user_relations").insert({ user_id: myId, target_id: profile.id, kind });
+    setRelBusy(null);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    invalidateRelations();
+    setMyRel((prev) => ({ ...prev, [kind]: !on }));
+    if (kind === "blocked" && !on) {
+      // The server already removed the follow both ways; mirror it here.
+      setIsFollowing(false);
+      setSheet(null);
+    }
   };
 
   const togglePrivacy = async () => {
@@ -7292,6 +7934,26 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
     );
   }
 
+  // Someone who blocked you: Instagram shows nothing at all, not even that
+  // a block exists.
+  if (!isOwnProfile && myRel.blockedBy) {
+    return (
+      <div className="flex-1 flex flex-col" style={{ background: "var(--bg)" }}>
+        {onBack && (
+          <div className="px-4 pt-4 pb-3">
+            <button onClick={onBack} className="-ml-1.5 p-1 transition-transform active:scale-90">
+              <ChevronLeft size={24} color="var(--text)" />
+            </button>
+          </div>
+        )}
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-2">
+          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>This account isn't available</p>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>The link may be broken, or the profile may have been removed.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (followList) {
     return (
       <FollowListScreen
@@ -7339,20 +8001,27 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
             </button>
           </div>
         ) : (
-          <button
-            onClick={toggleFollow}
-            disabled={followBusy}
-            className="rounded-lg px-5 py-1.5 text-[13px] transition-transform active:scale-[0.98]"
-            style={{
-              background: isFollowing ? "var(--surface)" : ACCENT,
-              border: isFollowing ? "1px solid var(--border)" : "none",
-              color: isFollowing ? "var(--text)" : "var(--on-accent)",
-              fontWeight: 700,
-              opacity: followBusy ? 0.6 : 1,
-            }}
-          >
-            {isFollowing ? "Following" : "Follow"}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {!myRel.blocked && (
+              <button
+                onClick={toggleFollow}
+                disabled={followBusy}
+                className="rounded-lg px-5 py-1.5 text-[13px] transition-transform active:scale-[0.98]"
+                style={{
+                  background: isFollowing ? "var(--surface)" : ACCENT,
+                  border: isFollowing ? "1px solid var(--border)" : "none",
+                  color: isFollowing ? "var(--text)" : "var(--on-accent)",
+                  fontWeight: 700,
+                  opacity: followBusy ? 0.6 : 1,
+                }}
+              >
+                {isFollowing ? "Following" : "Follow"}
+              </button>
+            )}
+            <button onClick={() => setSheet("safety")} className="p-1 transition-transform active:scale-90">
+              <Ellipsis size={20} color="var(--text)" />
+            </button>
+          </div>
         )}
       </div>
 
@@ -7466,6 +8135,23 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
         </div>
       )}
 
+      {!isOwnProfile && myRel.blocked ? (
+        <div className="mx-4 mt-2 rounded-2xl px-4 py-5 text-center" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <p className="text-sm mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>You blocked {profile.username}</p>
+          <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+            You won't see their posts and they can't see yours or message you.
+          </p>
+          <button
+            onClick={() => toggleRelation("blocked")}
+            disabled={relBusy === "blocked"}
+            className="rounded-full px-5 h-9 text-xs transition-transform active:scale-95"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: relBusy === "blocked" ? 0.6 : 1 }}
+          >
+            Unblock
+          </button>
+        </div>
+      ) : (
+      <>
       <HighlightsRow
         key={`${profile.id}-${highlightsKey}`}
         profileId={profile.id}
@@ -7545,6 +8231,17 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
                   <Pin size={10} color="var(--accent-end)" />
                 </div>
               )}
+              {tab === "posts" && isOwnProfile && p.created_at && new Date(p.created_at).getTime() > Date.now() && (
+                <div
+                  className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 py-1"
+                  style={{ background: "rgba(0,0,0,0.6)" }}
+                >
+                  <Clock size={10} color="#FFFFFF" />
+                  <span className="text-[9px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>
+                    {new Date(p.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </span>
+                </div>
+              )}
               {tab === "posts" && p.archived && isOwnProfile && (
                 <div
                   className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5"
@@ -7557,6 +8254,8 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
           ))
         )}
       </div>
+      </>
+      )}
 
       <input
         ref={avatarInputRef}
@@ -7594,6 +8293,48 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
             setHighlightsKey((k) => k + 1);
           }}
         />
+      )}
+
+      {sheet === "safety" && !isOwnProfile && (
+        <StorySheetShell title={profile.username} onClose={() => setSheet(null)}>
+          <div className="pb-6">
+            <StoryMenuRow
+              icon={<VolumeX size={17} color="var(--text)" />}
+              label={myRel.muted ? "Unmute" : "Mute"}
+              busy={relBusy === "muted"}
+              onClick={() => toggleRelation("muted")}
+              trailing={
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  {myRel.muted ? "On" : "Hide posts & stories"}
+                </span>
+              }
+            />
+            <StoryMenuRow
+              icon={<Shield size={17} color="var(--text)" />}
+              label={myRel.restricted ? "Unrestrict" : "Restrict"}
+              busy={relBusy === "restricted"}
+              onClick={() => toggleRelation("restricted")}
+              trailing={
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  {myRel.restricted ? "On" : "Limit their comments"}
+                </span>
+              }
+            />
+            <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+            <StoryMenuRow
+              icon={<UserMinus size={17} color="var(--heart)" />}
+              label={myRel.blocked ? "Unblock" : "Block"}
+              danger
+              busy={relBusy === "blocked"}
+              onClick={() => toggleRelation("blocked")}
+            />
+            <StoryMenuRow
+              icon={<Share2 size={17} color="var(--text)" />}
+              label="Share this profile"
+              onClick={() => setSheet("shareProfile")}
+            />
+          </div>
+        </StorySheetShell>
       )}
 
       {sheet === "accounts" && (
@@ -7932,7 +8673,12 @@ function MessagesScreen({ onBack }) {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       return 0;
     });
-    setConversations(merged);
+    const rel = await getRelations();
+    setConversations(
+      merged
+        .filter((c) => c.isGroup || !c.otherUser || !rel.blockedBy.has(c.otherUser.id))
+        .map((c) => ({ ...c, blockedByMe: !c.isGroup && c.otherUser ? rel.blocked.has(c.otherUser.id) : false }))
+    );
   };
 
   const setConvoFlag = async (convo, patch) => {
@@ -10515,6 +11261,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const [sheet, setSheet] = useState(null); // customise | invite | nicknames
   const [convoMeta, setConvoMeta] = useState({ theme: "default", chat_font: "default", invite_code: null, avatar_url: null });
   const [nicknames, setNicknames] = useState({}); // userId -> nickname
+  const [rel, setRel] = useState(null); // block/mute lists, loaded once
   const [recording, setRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
   const [audioUploading, setAudioUploading] = useState(false);
@@ -10538,6 +11285,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     markRead();
     loadConvoMeta();
     loadMemberNames();
+    getRelations().then(setRel);
 
     const channel = supabase.channel(`chat:${conversationId}`, {
       config: { broadcast: { self: false } },
@@ -10937,9 +11685,12 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const seen = !isGroup && myLastMessage && otherLastRead && new Date(otherLastRead) >= new Date(myLastMessage.created_at);
 
   const q = searchQuery.trim().toLowerCase();
+  const blockedHere =
+    !isGroup && rel && otherUser?.id ? isBlockedEither(rel, otherUser.id) : false;
+  const afterBlocks = rel ? messages.filter((m) => !isBlockedEither(rel, m.sender_id)) : messages;
   const visibleMessages = q
-    ? messages.filter((m) => !m.deleted && (m.content || "").toLowerCase().includes(q))
-    : messages;
+    ? afterBlocks.filter((m) => !m.deleted && (m.content || "").toLowerCase().includes(q))
+    : afterBlocks;
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)", fontFamily: chatFont.stack }}>
@@ -11306,6 +12057,15 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       )}
 
       {/* composer */}
+      {blockedHere ? (
+        <div className="px-4 py-4 text-center" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            {rel.blocked.has(otherUser.id)
+              ? "You blocked this account. Unblock them from their profile to message again."
+              : "You can't message this account."}
+          </p>
+        </div>
+      ) : (
       <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
         {recording ? (
           <div className="flex-1 flex items-center gap-3 rounded-2xl px-4 h-11" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
@@ -11373,6 +12133,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </button>
         )}
       </div>
+      )}
 
       {emojiSheetFor && (
         <EmojiPickerSheet
@@ -11530,7 +12291,8 @@ function NotificationsScreen({ onBack }) {
       username: (profilesData || []).find((p) => p.id === n.actor_id)?.username || "unknown",
     }));
 
-    setNotifications(merged);
+    const rel = await getRelations();
+    setNotifications(merged.filter((n) => !isBlockedEither(rel, n.actor_id)));
     setLoading(false);
   };
 
@@ -11728,12 +12490,15 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
       .eq("post_id", postId)
       .order("created_at", { ascending: true });
 
-    const { data: profilesData } = await supabase.from("profiles").select("id, username");
+    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url");
+    const hidden = await hiddenCommenterSet(postOwnerId);
 
-    const merged = (commentsData || []).map((c) => ({
-      ...c,
-      username: (profilesData || []).find((p) => p.id === c.user_id)?.username || "unknown",
-    }));
+    const merged = (commentsData || [])
+      .filter((c) => !hidden.has(c.user_id))
+      .map((c) => {
+        const pr = (profilesData || []).find((p) => p.id === c.user_id);
+        return { ...c, username: pr?.username || "unknown", avatarUrl: pr?.avatar_url || null };
+      });
 
     setComments(merged);
     setLoading(false);
@@ -11862,7 +12627,170 @@ function AuthInput({ icon: Icon, type, placeholder, value, onChange, showToggle,
   );
 }
 
-function LoginScreen({ onLogin, onGoSignup }) {
+// ---- Password reset ----
+// Step 1: ask for the email and have Supabase send a reset link back to
+// this site. Step 2 happens when that link is opened — Supabase signs the
+// person in with a short-lived recovery session and fires PASSWORD_RECOVERY,
+// which App() catches to show SetNewPasswordScreen.
+function ForgotPasswordScreen({ onBack }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+
+  const send = async () => {
+    setError("");
+    const v = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+      setError("Enter the email you signed up with");
+      return;
+    }
+    setBusy(true);
+    const { error: err } = await supabase.auth.resetPasswordForEmail(v, {
+      redirectTo: window.location.origin,
+    });
+    setBusy(false);
+    if (err) {
+      // Supabase's built-in mailer is rate-limited; say so plainly rather
+      // than showing its raw message.
+      setError(
+        /rate|limit|seconds/i.test(err.message)
+          ? "Too many reset emails just now. Wait a few minutes and try again."
+          : err.message
+      );
+      return;
+    }
+    // Shown whether or not the address has an account, so this screen
+    // can't be used to find out who is signed up.
+    setSent(true);
+  };
+
+  if (sent) {
+    return (
+      <div className="flex-1 flex flex-col justify-center items-center px-6 text-center" style={{ background: "var(--bg)" }}>
+        <Mail size={32} color="var(--accent-solid)" className="mb-3" />
+        <p className="text-sm mb-2" style={{ color: "var(--text)", fontWeight: 600 }}>Check your email</p>
+        <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>
+          If an account uses {email.trim()}, a link to reset the password is on its way. Open it on this
+          device. Check spam if it doesn't arrive in a few minutes.
+        </p>
+        <button onClick={onBack} className="text-sm" style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+          Back to log in
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "var(--bg)" }}>
+      <div className="flex flex-col items-center mb-8">
+        <div className="rounded-full flex items-center justify-center mb-4" style={{ width: 72, height: 72, border: "2px solid var(--text)" }}>
+          <Lock size={30} color="var(--text)" />
+        </div>
+        <p className="text-base mb-1" style={{ color: "var(--text)", fontWeight: 700 }}>Trouble logging in?</p>
+        <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
+          Enter your email and we'll send you a link to get back into your account.
+        </p>
+      </div>
+
+      <AuthInput icon={Mail} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+
+      {error && (
+        <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>{error}</p>
+      )}
+
+      <button
+        onClick={send}
+        disabled={busy}
+        className="w-full rounded-2xl py-3.5 text-sm mt-2 mb-4 transition-transform active:scale-[0.98]"
+        style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.7 : 1 }}
+      >
+        {busy ? "Sending..." : "Send reset link"}
+      </button>
+
+      <button onClick={onBack} className="text-center text-xs" style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+        Back to log in
+      </button>
+    </div>
+  );
+}
+
+function SetNewPasswordScreen({ onDone }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    setError("");
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters");
+      return;
+    }
+    if (password !== confirm) {
+      setError("The two passwords don't match");
+      return;
+    }
+    setBusy(true);
+    const { error: err } = await supabase.auth.updateUser({ password });
+    setBusy(false);
+    if (err) {
+      setError(
+        /session|expired|invalid/i.test(err.message)
+          ? "This reset link has expired. Ask for a new one from the log-in screen."
+          : err.message
+      );
+      return;
+    }
+    onDone();
+  };
+
+  return (
+    <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "var(--bg)" }}>
+      <div className="flex flex-col items-center mb-8">
+        <LoopLogo size={96} />
+        <p className="text-base mt-3 mb-1" style={{ color: "var(--text)", fontWeight: 700 }}>Create a new password</p>
+        <p className="text-xs text-center" style={{ color: "var(--text-muted)" }}>
+          At least 6 characters. You'll stay logged in after this.
+        </p>
+      </div>
+
+      <AuthInput
+        icon={Lock}
+        type={show ? "text" : "password"}
+        placeholder="New password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        showToggle
+        onToggle={() => setShow((v) => !v)}
+        revealed={show}
+      />
+      <AuthInput
+        icon={Lock}
+        type={show ? "text" : "password"}
+        placeholder="Confirm new password"
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value)}
+      />
+
+      {error && (
+        <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>{error}</p>
+      )}
+
+      <button
+        onClick={save}
+        disabled={busy}
+        className="w-full rounded-2xl py-3.5 text-sm mt-2 transition-transform active:scale-[0.98]"
+        style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.7 : 1 }}
+      >
+        {busy ? "Saving..." : "Save password"}
+      </button>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin, onGoSignup, onForgot }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -11919,6 +12847,10 @@ function LoginScreen({ onLogin, onGoSignup }) {
         style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: loading ? 0.7 : 1 }}
       >
         {loading ? "Please wait..." : "Log In"}
+      </button>
+
+      <button onClick={onForgot} className="text-center text-xs mb-4" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+        Forgot password?
       </button>
 
       <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
@@ -12253,8 +13185,8 @@ const TABS = [
 const PEOPLE_LIST_META = {
   close_friends: { title: "Close friends", hint: "Only these people see stories you share with close friends." },
   blocked: { title: "Blocked", hint: "Blocked people can't find your profile, posts or story." },
-  restricted: { title: "Restricted", hint: "Their comments on your posts are only visible to them until you approve." },
-  muted: { title: "Muted", hint: "You stay following them, but their posts and stories stop appearing." },
+  restricted: { title: "Restricted", hint: "Their comments on your posts are only visible to them and you. They aren't told." },
+  muted: { title: "Muted", hint: "You stay following them, but their posts, reels and stories stop appearing. They aren't told." },
 };
 
 export default function App() {
@@ -12343,13 +13275,26 @@ export default function App() {
   const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null;
 
   React.useEffect(() => {
+    // A reset link lands here with "type=recovery" in the URL. Check it up
+    // front too — the PASSWORD_RECOVERY event and getSession() can resolve in
+    // either order, and getSession alone would just log the person straight in.
+    const isRecoveryLink = /type=recovery/.test(window.location.hash + window.location.search);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setAuthScreen(session ? null : "login");
+      setAuthScreen((prev) =>
+        prev === "newPassword" || (session && isRecoveryLink) ? "newPassword" : session ? null : "login"
+      );
       setCheckingSession(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthScreen(session ? null : "login");
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      // Opening a reset link signs you in with a recovery session — show the
+      // new-password screen instead of dropping straight into the app.
+      if (event === "PASSWORD_RECOVERY") {
+        setAuthScreen("newPassword");
+        return;
+      }
+      setAuthScreen((prev) => (prev === "newPassword" && session ? "newPassword" : session ? null : prev === "forgot" ? "forgot" : "login"));
     });
 
     return () => listener.subscription.unsubscribe();
@@ -12376,7 +13321,20 @@ export default function App() {
           style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
         >
           {authScreen === "login" ? (
-            <LoginScreen onLogin={() => setAuthScreen(null)} onGoSignup={() => setAuthScreen("signup")} />
+            <LoginScreen
+              onLogin={() => setAuthScreen(null)}
+              onGoSignup={() => setAuthScreen("signup")}
+              onForgot={() => setAuthScreen("forgot")}
+            />
+          ) : authScreen === "forgot" ? (
+            <ForgotPasswordScreen onBack={() => setAuthScreen("login")} />
+          ) : authScreen === "newPassword" ? (
+            <SetNewPasswordScreen
+              onDone={() => {
+                window.history.replaceState(null, "", window.location.pathname);
+                setAuthScreen(null);
+              }}
+            />
           ) : (
             <SignupScreen onSignup={() => setAuthScreen(null)} onGoLogin={() => setAuthScreen("login")} />
           )}
