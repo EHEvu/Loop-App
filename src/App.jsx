@@ -44,6 +44,8 @@ import {
   Trash2,
   MapPin,
   Pin,
+  RotateCcw,
+  RotateCw,
   Archive,
   Crop,
   Users,
@@ -163,6 +165,20 @@ const THEME_CSS = `
     --tag-bg: #7A1520;
     --tag-border: #A0202E;
     --tag-text: #FFD0D4;
+  }
+  @keyframes loopHeartBurst {
+    0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0; }
+    15% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
+    30% { transform: translate(-50%, -50%) scale(0.95); opacity: 1; }
+    45% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
+    80% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -60%) scale(0.9); opacity: 0; }
+  }
+  .loop-heart-burst {
+    position: absolute; left: 50%; top: 50%;
+    pointer-events: none;
+    animation: loopHeartBurst 0.9s ease-out forwards;
+    filter: drop-shadow(0 4px 14px rgba(0,0,0,0.45));
   }
 `;
 
@@ -300,104 +316,210 @@ function Avatar({ username, avatarUrl, size = 40 }) {
   );
 }
 
-// Caption with a real 2-line clamp and an Instagram-style more/less toggle.
-// "more" only appears when the text actually overflows two lines (measured).
-// `light` renders the toggle in a light colour for dark video overlays (Reels).
+// Caption the way Instagram shows it: one line, cut with "… more" at the very
+// end of that line; tapping it opens the whole caption with "less" at the end.
+// "more" only appears when there really is more (measured, or a line break).
+// `light` renders it for dark video overlays (Reels).
 function CaptionText({ username, caption, onOpenProfile, light = false }) {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const ref = React.useRef(null);
+  const firstLine = (caption || "").split("\n")[0];
+  const hasMoreLines = (caption || "").includes("\n");
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const el = ref.current;
-    if (!el) return;
-    // Compare full scroll height to the 2-line clamped height.
-    const clampedHeight = el.clientHeight;
-    const fullHeight = el.scrollHeight;
-    setOverflows(fullHeight - clampedHeight > 2);
-  }, [caption]);
+    if (!el || expanded) return;
+    const measure = () => setOverflows(el.scrollWidth - el.clientWidth > 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [caption, expanded]);
 
   if (!caption) return null;
 
   const nameColor = light ? "#FFFFFF" : "var(--text)";
   const bodyColor = light ? "rgba(255,255,255,0.92)" : "var(--text)";
-  const toggleColor = light ? "rgba(255,255,255,0.7)" : "var(--text-muted)";
+  const toggleColor = light ? "rgba(255,255,255,0.72)" : "var(--text-muted)";
+  const toggle = (e) => {
+    e.stopPropagation();
+    setExpanded((v) => !v);
+  };
+  const name = username ? (
+    <span
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenProfile?.();
+      }}
+      style={{ color: nameColor, fontWeight: 600, marginRight: 5 }}
+    >
+      {username}
+    </span>
+  ) : null;
 
-  return (
-    <div>
-      <p
-        ref={ref}
-        className="text-sm"
-        style={{
-          color: bodyColor,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          display: expanded ? "block" : "-webkit-box",
-          WebkitLineClamp: expanded ? "unset" : 2,
-          WebkitBoxOrient: "vertical",
-          overflow: expanded ? "visible" : "hidden",
-          lineHeight: 1.4,
-        }}
-      >
-        {username && (
-          <span
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenProfile?.();
-            }}
-            style={{ color: nameColor, fontWeight: 600, marginRight: 5 }}
-          >
-            {username}
-          </span>
-        )}
-        {caption}
+  if (expanded) {
+    return (
+      <p className="text-sm" onClick={toggle} style={{ color: bodyColor, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.4 }}>
+        {name}
+        {caption}{" "}
+        <button onClick={toggle} style={{ color: toggleColor, fontWeight: 500 }}>
+          less
+        </button>
       </p>
-      {(overflows || expanded) && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-          className="text-xs mt-0.5"
-          style={{ color: toggleColor, fontWeight: 600 }}
-        >
-          {expanded ? "less" : "more"}
+    );
+  }
+
+  const showMore = overflows || hasMoreLines;
+  return (
+    <div className="flex items-baseline text-sm" style={{ lineHeight: 1.4 }} onClick={showMore ? toggle : undefined}>
+      <span ref={ref} className="min-w-0" style={{ color: bodyColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {name}
+        {firstLine}
+        {hasMoreLines && !overflows ? "…" : ""}
+      </span>
+      {showMore && (
+        <button onClick={toggle} className="shrink-0 ml-1" style={{ color: toggleColor, fontWeight: 500 }}>
+          more
         </button>
       )}
     </div>
   );
 }
 
-// Long-press-triggered popup showing total Likes (and Views, for reels) —
-// replaces a permanently-visible number next to the Like icon.
-function LikesViewsPopup({ post, isOwner, onClose }) {
+// One repost icon and one share icon, used on every screen so the action
+// rows and the profile's repost tab all match.
+function RepostIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, active = false, ...rest }) {
   return (
-    <>
-      <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
-      <div
-        className="fixed left-1/2 top-1/2 z-50 rounded-2xl px-6 py-5 text-center"
-        style={{ background: "var(--surface)", border: "1px solid var(--border)", transform: "translate(-50%, -50%)", minWidth: 220 }}
-      >
-        <p className="text-sm mb-3" style={{ color: "var(--text)", fontWeight: 700 }}>Likes and Views</p>
-        <div className="flex items-center justify-center gap-6">
-          <div>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? strokeWidth + 0.5 : strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...rest}>
+      <path d="M4 10.2V8.4a3 3 0 0 1 3-3h10.4" />
+      <path d="M14.8 2.9 17.9 5.4 14.8 7.9" />
+      <path d="M20 13.8v1.8a3 3 0 0 1-3 3H6.6" />
+      <path d="M9.2 21.1 6.1 18.6 9.2 16.1" />
+    </svg>
+  );
+}
+
+function ShareIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, ...rest }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" {...rest}>
+      <path d="M21.4 2.6 9.7 10.4" />
+      <path d="M21.4 2.6 3 8.3l6.7 2.1 2.6 9.9 9.1-17.7Z" />
+    </svg>
+  );
+}
+
+// Long-press on a like button: counts on top, then everyone who liked it.
+// The list shows even when the creator hid the number — the same as Instagram.
+function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
+  const [likers, setLikers] = useState(null);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: likes } = await supabase
+        .from("likes")
+        .select("user_id, created_at")
+        .eq("post_id", post.id)
+        .order("created_at", { ascending: false })
+        .limit(300);
+      const ids = [...new Set((likes || []).map((l) => l.user_id))];
+      if (ids.length === 0) {
+        if (!cancelled) setLikers([]);
+        return;
+      }
+      const [{ data: profs }, rel, { data: { user } }] = await Promise.all([
+        supabase.from("profiles").select("id, username, full_name, avatar_url").in("id", ids),
+        getRelations(),
+        supabase.auth.getUser(),
+      ]);
+      const byId = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+      const list = ids.map((id) => byId[id]).filter((p) => p && !isBlockedEither(rel, p.id));
+      // Put yourself first, like Instagram does.
+      list.sort((a, b) => (a.id === user?.id ? -1 : b.id === user?.id ? 1 : 0));
+      if (!cancelled) setLikers(list);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [post.id]);
+
+  const shown = (likers || []).filter((p) => {
+    const q = query.trim().toLowerCase();
+    return !q || p.username?.toLowerCase().includes(q) || p.full_name?.toLowerCase().includes(q);
+  });
+  const countHidden = !isOwner && post.hide_likes;
+
+  return (
+    <StorySheetShell title="Likes" onClose={onClose}>
+      <div className="px-4 pb-6">
+        <div className="flex items-center justify-center gap-8 pb-3 mb-3" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="text-center">
             <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>
-              {isOwner || !post.hide_likes ? formatCount(post.likeCount) : "—"}
+              {countHidden ? "—" : formatCount(post.likeCount || 0)}
             </p>
             <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Likes</p>
           </div>
           {post.media_type === "reel" && (
-            <div>
-              <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(post.views_count)}</p>
+            <div className="text-center">
+              <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(post.views_count || 0)}</p>
               <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Views</p>
             </div>
           )}
         </div>
-        {!isOwner && post.hide_likes && (
-          <p className="text-[10px] mt-3" style={{ color: "var(--text-muted)" }}>The creator hid the like count on this post.</p>
+        {countHidden && (
+          <p className="text-[11px] text-center mb-3" style={{ color: "var(--text-muted)" }}>
+            {post.username ? `${post.username} hid` : "The creator hid"} the like count on this post.
+          </p>
         )}
+        {likers && likers.length > 6 && (
+          <div className="flex items-center gap-2 rounded-xl px-3 h-9 mb-3" style={{ background: "var(--bg-sunken)" }}>
+            <Search size={14} color="var(--text-muted)" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search"
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "var(--text)" }}
+            />
+          </div>
+        )}
+        <div style={{ maxHeight: "50vh", overflowY: "auto" }}>
+          {likers === null ? (
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          ) : likers.length === 0 ? (
+            <div className="flex flex-col items-center py-8">
+              <Heart size={34} color="var(--text-muted)" strokeWidth={1.5} />
+              <p className="text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>No likes yet</p>
+            </div>
+          ) : (
+            shown.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => {
+                  if (onOpenProfile) {
+                    onClose();
+                    onOpenProfile(p.id);
+                  }
+                }}
+                className="w-full flex items-center gap-3 py-2 text-left"
+              >
+                <Avatar username={p.username} avatarUrl={p.avatar_url} size={44} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</p>
+                  {p.full_name && (
+                    <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>
+                  )}
+                </div>
+                <Heart size={14} color="var(--heart)" fill="var(--heart)" />
+              </button>
+            ))
+          )}
+        </div>
       </div>
-    </>
+    </StorySheetShell>
   );
 }
 
@@ -595,6 +717,31 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
 
         {view === "menu" ? (
           <div className="pb-6">
+            {post.created_at && new Date(post.created_at).getTime() > Date.now() && (
+              <div className="mx-4 mb-2 rounded-xl px-3 py-2.5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+                <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--text)", fontWeight: 600 }}>
+                  <Clock size={13} /> Scheduled for{" "}
+                  {new Date(post.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => patchPost({ created_at: new Date().toISOString() })}
+                    disabled={busyField === "created_at"}
+                    className="flex-1 rounded-full h-9 text-xs transition-transform active:scale-95"
+                    style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busyField === "created_at" ? 0.6 : 1 }}
+                  >
+                    Post now
+                  </button>
+                  <button
+                    onClick={handleDelete}
+                    className="flex-1 rounded-full h-9 text-xs transition-transform active:scale-95"
+                    style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--heart)", fontWeight: 700 }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
             {menuError && (
               <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-start)" }}>{menuError}</p>
             )}
@@ -1588,7 +1735,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
                   />
                 </button>
                 <button onClick={() => setSheet("send")} className="p-1.5 shrink-0 transition-transform active:scale-90">
-                  <SendHorizontal size={25} color="#FFFFFF" strokeWidth={1.9} />
+                  <ShareIcon size={25} color="#FFFFFF" strokeWidth={1.9} />
                 </button>
               </>
             )}
@@ -1631,7 +1778,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
               }
             />
             <StoryMenuRow
-              icon={<SendHorizontal size={17} color="var(--text)" />}
+              icon={<ShareIcon size={17} color="var(--text)" />}
               label="Send"
               onClick={() => setSheet("send")}
             />
@@ -2102,7 +2249,183 @@ async function hiddenCommenterSet(postOwnerId) {
   return hidden;
 }
 
-function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport, onOpenProfile }) {
+// "Suggested for you" accounts on Home, ranked by how many people you follow
+// already follow them — the same signal Instagram leads with.
+function SuggestedAccountsStrip({ people, onOpenProfile, onFollow, onDismiss }) {
+  if (!people || people.length === 0) return null;
+  return (
+    <div className="py-3 mb-1" style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}>
+      <div className="flex items-center justify-between px-4 mb-2.5">
+        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Suggested for you</span>
+      </div>
+      <div className="flex gap-2.5 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
+        {people.map((p) => (
+          <div
+            key={p.id}
+            className="relative shrink-0 rounded-2xl flex flex-col items-center px-3 pt-4 pb-3"
+            style={{ width: 150, background: "var(--surface)", border: "1px solid var(--border)" }}
+          >
+            <button onClick={() => onDismiss(p.id)} className="absolute top-2 right-2" aria-label="Remove suggestion">
+              <X size={14} color="var(--text-muted)" />
+            </button>
+            <button onClick={() => onOpenProfile(p.id)} className="flex flex-col items-center w-full">
+              <Avatar username={p.username} avatarUrl={p.avatar_url} size={74} />
+              <span className="text-[13px] mt-2 truncate w-full text-center" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
+              <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text-muted)", minHeight: 16 }}>
+                {p.mutualName ? (p.mutualCount > 1 ? `Followed by ${p.mutualName} + ${p.mutualCount - 1}` : `Followed by ${p.mutualName}`) : p.followsYou ? "Follows you" : "Suggested for you"}
+              </span>
+            </button>
+            <button
+              onClick={() => onFollow(p)}
+              className="w-full h-8 rounded-lg text-xs mt-2.5 transition-transform active:scale-95"
+              style={
+                p.followed
+                  ? { background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }
+                  : { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }
+              }
+            >
+              {p.followed ? (p.requested ? "Requested" : "Following") : p.followsYou ? "Follow back" : "Follow"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// "Suggested reels" row on Home; a tap opens Reels on that reel.
+function SuggestedReelsStrip({ reels, onOpenReel }) {
+  if (!reels || reels.length === 0) return null;
+  return (
+    <div className="py-3 mb-1" style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}>
+      <div className="flex items-center gap-1.5 px-4 mb-2.5">
+        <Clapperboard size={16} color="var(--text)" />
+        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Suggested reels</span>
+      </div>
+      <div className="flex gap-2 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
+        {reels.map((r) => (
+          <button
+            key={r.id}
+            onClick={() => onOpenReel?.(r.id)}
+            className="relative shrink-0 rounded-xl overflow-hidden"
+            style={{ width: 128, aspectRatio: "9 / 16", background: "var(--bg-sunken)" }}
+          >
+            <video src={r.media_url + "#t=0.5"} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+            <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 45%)" }} />
+            <div className="absolute left-2 right-2 bottom-2 flex flex-col items-start">
+              <span className="flex items-center gap-1 text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>
+                <Play size={10} color="#FFFFFF" fill="#FFFFFF" /> {formatCount(r.views_count || 0)}
+              </span>
+              <span className="text-[11px] truncate w-full text-left" style={{ color: "#FFFFFF", fontWeight: 600 }}>{r.username}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Mute choice shared by every video on Home, so unmuting one keeps sound on
+// as you scroll — the way Instagram's feed works.
+let feedMutedPref = true;
+
+// A video on Home: plays muted while on screen, pauses when scrolled away.
+// One tap opens it in Reels (reels) or toggles play (plain videos);
+// two taps like it. Mute sits in the corner.
+function FeedVideo({ post, onOpenReel, onLike }) {
+  const ref = React.useRef(null);
+  const [muted, setMuted] = useState(feedMutedPref);
+  const [burst, setBurst] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  React.useEffect(() => {
+    const v = ref.current;
+    if (!v || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+          v.play().catch(() => {});
+          setPaused(false);
+        } else {
+          v.pause();
+        }
+      },
+      { threshold: [0, 0.6, 1] }
+    );
+    io.observe(v);
+    return () => io.disconnect();
+  }, []);
+
+  const onTap = useTapDetector(
+    () => {
+      if (post.media_type === "reel" && onOpenReel) {
+        onOpenReel(post.id);
+        return;
+      }
+      const v = ref.current;
+      if (!v) return;
+      if (v.paused) {
+        v.play().catch(() => {});
+        setPaused(false);
+      } else {
+        v.pause();
+        setPaused(true);
+      }
+    },
+    () => {
+      setBurst(Date.now());
+      onLike();
+    }
+  );
+
+  return (
+    <div className="relative w-full h-full" onClick={onTap}>
+      <video ref={ref} src={post.media_url} className="w-full h-full object-cover" muted={muted} loop playsInline preload="metadata" />
+      <HeartBurst burstKey={burst} size={84} />
+      {paused && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(6px)" }}>
+            <Play size={26} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
+          </div>
+        </div>
+      )}
+      {post.media_type === "reel" && (
+        <div className="absolute top-2.5 right-2.5 pointer-events-none" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+          <Clapperboard size={18} color="#FFFFFF" />
+        </div>
+      )}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          feedMutedPref = !muted;
+          setMuted(!muted);
+        }}
+        aria-label={muted ? "Unmute" : "Mute"}
+        className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-full flex items-center justify-center"
+        style={{ background: "rgba(0,0,0,0.55)" }}
+      >
+        {muted ? <VolumeX size={15} color="#fff" /> : <Volume2 size={15} color="#fff" />}
+      </button>
+    </div>
+  );
+}
+
+// Photos on Home: two taps like (never un-like), with the heart pop.
+function FeedPhotoTap({ onLike, children }) {
+  const [burst, setBurst] = useState(0);
+  const onTap = useTapDetector(null, () => {
+    setBurst(Date.now());
+    onLike();
+  });
+  return (
+    <div className="relative w-full h-full" onClick={onTap}>
+      {children}
+      <HeartBurst burstKey={burst} size={84} />
+    </div>
+  );
+}
+
+function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport, onOpenProfile, onOpenReel }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -2112,6 +2435,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [commentSheetFor, setCommentSheetFor] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasNotifications, setHasNotifications] = useState(false);
+  const [suggestedPeople, setSuggestedPeople] = useState([]);
+  const [suggestedReels, setSuggestedReels] = useState([]);
+  const [followingCount, setFollowingCount] = useState(0); // posts from people you follow, at the top
   const pressTimers = React.useRef({});
   const [countPrefs] = useCountPrefs();
 
@@ -2145,7 +2471,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
+      .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, aspect_ratio")
       .eq("archived", false)
       .order("created_at", { ascending: false });
 
@@ -2225,8 +2551,114 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     const rel = await getRelations();
     // Your own scheduled posts stay off the feed until their time — the
     // database already hides everyone else's.
-    setPosts(merged.filter((p) => !isHiddenFromFeed(rel, p.user_id) && new Date(p.created_at).getTime() <= Date.now()));
+    const visible = merged.filter((p) => !isHiddenFromFeed(rel, p.user_id) && new Date(p.created_at).getTime() <= Date.now());
+
+    // Instagram's order: people you follow (and you) first, newest first;
+    // then "Suggested for you" posts from everyone else, best-performing and
+    // recent first.
+    const { data: myFollows } = await supabase
+      .from("follows")
+      .select("following_id")
+      .eq("follower_id", user?.id ?? "");
+    const followingIds = new Set((myFollows || []).map((f) => f.following_id));
+    const fromFollowing = visible.filter((p) => p.user_id === user?.id || followingIds.has(p.user_id));
+    const score = (p) => {
+      const ageHours = (Date.now() - new Date(p.created_at).getTime()) / 3600000;
+      return (p.likeCount * 2 + p.commentCount * 3 + p.saveCount * 3 + p.repostCount * 2 + 1) / Math.pow(ageHours + 2, 1.2);
+    };
+    const suggestedPosts = visible
+      .filter((p) => !(p.user_id === user?.id || followingIds.has(p.user_id)))
+      .sort((a, b) => score(b) - score(a))
+      .map((p) => ({ ...p, suggested: true }));
+    setFollowingCount(fromFollowing.length);
+    setPosts([...fromFollowing, ...suggestedPosts]);
+
+    // Suggested reels: from accounts you don't follow, most viewed first.
+    setSuggestedReels(
+      suggestedPosts
+        .filter((p) => p.media_type === "reel")
+        .sort((a, b) => (b.views_count || 0) - (a.views_count || 0))
+        .slice(0, 10)
+    );
+
     setLoading(false);
+    loadSuggestedPeople(user?.id, followingIds, rel, profilesData || []);
+  };
+
+  const loadSuggestedPeople = async (meId, followingIds, rel, profilesData) => {
+    if (!meId) return;
+    let dismissed = [];
+    try {
+      dismissed = JSON.parse(localStorage.getItem("loop_dismissed_suggestions") || "[]");
+    } catch (e) {
+      dismissed = [];
+    }
+    const skip = new Set([meId, ...followingIds, ...dismissed]);
+    const ids = [...followingIds];
+    const [{ data: theirFollows }, { data: followsMe }] = await Promise.all([
+      ids.length
+        ? supabase.from("follows").select("follower_id, following_id").in("follower_id", ids.slice(0, 200))
+        : Promise.resolve({ data: [] }),
+      supabase.from("follows").select("follower_id").eq("following_id", meId),
+    ]);
+    const followsMeSet = new Set((followsMe || []).map((f) => f.follower_id));
+    const byId = Object.fromEntries(profilesData.map((p) => [p.id, p]));
+    const tally = {};
+    (theirFollows || []).forEach((f) => {
+      if (skip.has(f.following_id)) return;
+      const t = (tally[f.following_id] = tally[f.following_id] || { count: 0, via: f.follower_id });
+      t.count += 1;
+    });
+    // Anyone who follows you but you don't follow back, too.
+    followsMeSet.forEach((id) => {
+      if (!skip.has(id) && !tally[id]) tally[id] = { count: 0, via: null };
+    });
+    let ranked = Object.entries(tally)
+      .map(([id, t]) => ({ id, ...t }))
+      .filter((t) => byId[t.id] && !isBlockedEither(rel, t.id))
+      .sort((a, b) => b.count - a.count || Number(followsMeSet.has(b.id)) - Number(followsMeSet.has(a.id)));
+    // New accounts with no network yet: fill with anyone else.
+    if (ranked.length < 6) {
+      profilesData
+        .filter((p) => !skip.has(p.id) && !tally[p.id] && !isBlockedEither(rel, p.id))
+        .slice(0, 12 - ranked.length)
+        .forEach((p) => ranked.push({ id: p.id, count: 0, via: null }));
+    }
+    setSuggestedPeople(
+      ranked.slice(0, 15).map((t) => ({
+        ...byId[t.id],
+        mutualCount: t.count,
+        mutualName: t.count > 0 ? byId[t.via]?.username : null,
+        followsYou: followsMeSet.has(t.id),
+        followed: false,
+      }))
+    );
+  };
+
+  const followSuggested = async (p) => {
+    if (!userId) return;
+    if (p.followed) {
+      setSuggestedPeople((prev) => prev.map((x) => (x.id === p.id ? { ...x, followed: false, requested: false } : x)));
+      await supabase.from("follows").delete().eq("follower_id", userId).eq("following_id", p.id);
+      return;
+    }
+    setSuggestedPeople((prev) => prev.map((x) => (x.id === p.id ? { ...x, followed: true } : x)));
+    const { error } = await supabase.from("follows").insert({ follower_id: userId, following_id: p.id });
+    if (error) {
+      setSuggestedPeople((prev) => prev.map((x) => (x.id === p.id ? { ...x, followed: false } : x)));
+      return;
+    }
+    await supabase.from("notifications").insert({ user_id: p.id, actor_id: userId, type: "follow" });
+  };
+
+  const dismissSuggested = (id) => {
+    setSuggestedPeople((prev) => prev.filter((x) => x.id !== id));
+    try {
+      const list = JSON.parse(localStorage.getItem("loop_dismissed_suggestions") || "[]");
+      localStorage.setItem("loop_dismissed_suggestions", JSON.stringify([...new Set([...list, id])].slice(-200)));
+    } catch (e) {
+      // fine — it just comes back next time
+    }
   };
 
   const toggleLike = async (post) => {
@@ -2336,12 +2768,30 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           {loadError}
         </p>
       ) : posts.length === 0 ? (
-        <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
-          No posts yet — be the first to post!
-        </p>
+        <>
+          <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
+          <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
+            No posts yet — be the first to post!
+          </p>
+        </>
       ) : (
-        posts.map((post) => (
-          <div key={post.id} className="mb-1">
+        posts.map((post, postIndex) => (
+          <React.Fragment key={post.id}>
+          {/* accounts strip after the 3rd post from people you follow (or at the top) */}
+          {postIndex === Math.min(3, followingCount) && (
+            <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
+          )}
+          {postIndex === followingCount && followingCount > 0 && (
+            <div className="flex flex-col items-center py-6 px-4">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center mb-2" style={{ background: ACCENT }}>
+                <Check size={28} color="var(--on-accent)" strokeWidth={2.4} />
+              </div>
+              <p className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>You're all caught up</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>You've seen all new posts from accounts you follow.</p>
+            </div>
+          )}
+          {postIndex === followingCount + 4 && <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />}
+          <div className="mb-1">
             <div className="flex items-center gap-2.5 px-4 py-2.5">
               <button
                 onClick={() => onOpenProfile(post.user_id)}
@@ -2358,6 +2808,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               </button>
               <div className="flex flex-col leading-tight flex-1 min-w-0">
                 <button onClick={() => onOpenProfile(post.user_id)} className="text-[13px] text-left truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</button>
+                {post.suggested && (
+                  <span className="text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>Suggested for you</span>
+                )}
                 {post.location && (
                   <span className="flex items-center gap-0.5 text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
                     <MapPin size={9} /> {post.location}
@@ -2379,16 +2832,6 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                       className="absolute right-0 top-8 z-20 rounded-2xl overflow-hidden py-1"
                       style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 190, boxShadow: "0 8px 28px rgba(0,0,0,0.35)" }}
                     >
-                      <button
-                        onClick={() => {
-                          setMenuOpenFor(null);
-                          setCollectionPost(post);
-                        }}
-                        className="w-full flex items-center gap-2 px-4 py-3 text-sm"
-                        style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}
-                      >
-                        <Bookmark size={16} /> Save to collection
-                      </button>
                       {post.user_id === userId ? (
                         <button
                           onClick={() => deletePost(post)}
@@ -2416,16 +2859,19 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             </div>
 
             <div
-              className="w-full aspect-[4/5] overflow-hidden flex items-center justify-center"
-              style={{ background: "var(--bg-sunken)" }}
-              onDoubleClick={() => toggleLike(post)}
+              className="w-full overflow-hidden flex items-center justify-center"
+              style={{ background: "var(--bg-sunken)", aspectRatio: postAspectCss(post) }}
             >
               {post.media && post.media.length > 1 ? (
-                <PostMediaCarousel media={post.media} />
+                <FeedPhotoTap onLike={() => !post.liked && toggleLike(post)}>
+                  <PostMediaCarousel media={post.media} />
+                </FeedPhotoTap>
               ) : post.media_type === "photo" ? (
-                <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+                <FeedPhotoTap onLike={() => !post.liked && toggleLike(post)}>
+                  <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+                </FeedPhotoTap>
               ) : (
-                <video src={post.media_url} className="w-full h-full object-cover" controls />
+                <FeedVideo post={post} onOpenReel={onOpenReel} onLike={() => !post.liked && toggleLike(post)} />
               )}
             </div>
 
@@ -2438,7 +2884,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                     onClick={() => setSharePost(post)}
                     className="h-7 flex items-center justify-center transition-transform active:scale-90"
                   >
-                    <Send size={23} color="var(--text)" strokeWidth={1.9} />
+                    <ShareIcon size={23} color="var(--text)" strokeWidth={1.9} />
                   </button>
                   <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
                 </div>
@@ -2510,7 +2956,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                   <button onClick={() => toggleRepost(post)} className="h-7 flex items-center justify-center">
-                    <Repeat2 size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 1.9} />
+                    <RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} />
                   </button>
                   <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                     {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
@@ -2520,7 +2966,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             </div>
 
             {likesPopupFor === post.id && (
-              <LikesViewsPopup post={post} isOwner={post.user_id === userId} onClose={() => setLikesPopupFor(null)} />
+              <LikesViewsPopup post={post} isOwner={post.user_id === userId} onClose={() => setLikesPopupFor(null)} onOpenProfile={onOpenProfile} />
             )}
 
             <div className="px-4 pt-1.5">
@@ -2546,7 +2992,11 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
             <div className="h-px mx-4 mt-3" style={{ background: "var(--border-subtle)" }} />
           </div>
+          </React.Fragment>
         ))
+      )}
+      {!loading && posts.length > 0 && posts.length <= followingCount + 4 && (
+        <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />
       )}
 
       {commentSheetFor && (
@@ -2588,14 +3038,68 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   );
 }
 
-function ReelsScreen({ onOpenReport, onOpenProfile }) {
+// Tells one tap from two. Single taps wait a moment in case a second tap
+// follows; a double tap cancels the pending single.
+function useTapDetector(onSingle, onDouble, delay = 260) {
+  const timer = React.useRef(null);
+  const last = React.useRef(0);
+  React.useEffect(() => () => clearTimeout(timer.current), []);
+  return React.useCallback(
+    (e) => {
+      const now = Date.now();
+      if (now - last.current < delay) {
+        clearTimeout(timer.current);
+        last.current = 0;
+        onDouble?.(e);
+      } else {
+        last.current = now;
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => onSingle?.(e), delay);
+      }
+    },
+    [onSingle, onDouble, delay]
+  );
+}
+
+// The big heart that pops up on a double-tap like.
+function HeartBurst({ burstKey, size = 96 }) {
+  if (!burstKey) return null;
+  return (
+    <div key={burstKey} className="loop-heart-burst">
+      <Heart size={size} color="#FFFFFF" fill="#FFFFFF" strokeWidth={0} />
+    </div>
+  );
+}
+
+const REEL_RAIL_PIN_KEY = "loop_reel_rail_pinned";
+const readRailPinned = () => {
+  try {
+    return localStorage.getItem(REEL_RAIL_PIN_KEY) === "1";
+  } catch (e) {
+    return false;
+  }
+};
+const writeRailPinned = (v) => {
+  try {
+    localStorage.setItem(REEL_RAIL_PIN_KEY, v ? "1" : "0");
+  } catch (e) {
+    // private mode — the pin just won't survive a reload
+  }
+};
+
+function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
   const [reels, setReels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [userId, setUserId] = useState(null);
   const [followingSet, setFollowingSet] = useState(new Set());
   const [index, setIndex] = useState(0);
-  const [expanded, setExpanded] = useState(false);
+  const [expandedRaw, setExpanded] = useState(false);
+  const [railPinned, setRailPinned] = useState(readRailPinned);
+  const expanded = expandedRaw || railPinned;
+  const [heartBurst, setHeartBurst] = useState(0);
+  const railPressRef = React.useRef(null);
+  const railLongRef = React.useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [muted, setMuted] = useState(true);
@@ -2712,8 +3216,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
     });
 
     const rel = await getRelations();
-    setReels(merged.filter((r) => !isHiddenFromFeed(rel, r.user_id) && new Date(r.created_at).getTime() <= Date.now()));
-    setIndex(0);
+    const visible = merged.filter((r) => !isHiddenFromFeed(rel, r.user_id) && new Date(r.created_at).getTime() <= Date.now());
+    setReels(visible);
+    // Opened from a reel on Home: start on that reel.
+    const startAt = startReelId ? visible.findIndex((r) => r.id === startReelId) : -1;
+    setIndex(startAt > 0 ? startAt : 0);
     setLoading(false);
   };
 
@@ -2734,10 +3241,29 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       setMenuOpen(false);
       setCommentSheetOpen(false);
     } else {
-      // treat as a tap, not a swipe -> Instagram-style play/pause toggle
-      togglePlay();
+      // A tap: one = play/pause, two = like.
+      onScreenTap();
     }
   };
+
+  // Double-tap only ever likes (never un-likes), like Instagram.
+  const likeFromDoubleTap = () => {
+    setHeartBurst(Date.now());
+    if (reel && !reel.liked) toggleLike();
+  };
+  const onScreenTap = useTapDetector(
+    () => togglePlay(),
+    () => likeFromDoubleTap()
+  );
+
+  const seekBy = (secs) => {
+    const v = videoRef.current;
+    if (!v) return;
+    const end = isFinite(v.duration) ? v.duration : v.currentTime + secs;
+    v.currentTime = Math.max(0, Math.min(end - 0.05, v.currentTime + secs));
+  };
+
+  const stop = (e) => e.stopPropagation();
 
   const togglePlay = () => {
     if (!videoRef.current) return;
@@ -2917,7 +3443,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
       onTouchEnd={handleTouchEnd}
     >
       {/* Reel video */}
-      <div className="absolute inset-0" onDoubleClick={toggleLike}>
+      <div className="absolute inset-0">
         <video
           key={reel.id}
           ref={videoRef}
@@ -2928,16 +3454,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           muted={muted}
           onEnded={handleEnded}
         />
-        {!playing && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div
-              className="w-[72px] h-[72px] rounded-full flex items-center justify-center"
-              style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
-            >
-              <Play size={30} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
-            </div>
-          </div>
-        )}
+        <HeartBurst burstKey={heartBurst} />
         {/* readability scrims — keeps white text legible over any video */}
         <div
           className="absolute top-0 left-0 right-0 pointer-events-none"
@@ -2949,17 +3466,55 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
         />
       </div>
 
-      {/* mute toggle — only shown while paused, per request */}
+      {/* Paused: seek back · play · seek forward, with mute underneath */}
       {!playing && (
-        <button
-          onClick={() => setMuted((m) => !m)}
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
-          className="absolute top-14 right-3 w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-90"
-          style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.12)" }}
-        >
-          {muted ? <VolumeX size={19} color="#fff" /> : <Volume2 size={19} color="#fff" />}
-        </button>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 pointer-events-none z-10">
+          <div className="flex items-center gap-7">
+            <button
+              onClick={() => seekBy(-5)}
+              onTouchStart={stop}
+              onTouchEnd={stop}
+              aria-label="Back 5 seconds"
+              className="pointer-events-auto w-12 h-12 rounded-full flex items-center justify-center transition-transform active:scale-90"
+              style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.15)" }}
+            >
+              <RotateCcw size={20} color="#fff" />
+              <span className="absolute text-[8px]" style={{ color: "#fff", fontWeight: 700, marginTop: 1 }}>5</span>
+            </button>
+            <button
+              onClick={togglePlay}
+              onTouchStart={stop}
+              onTouchEnd={stop}
+              aria-label="Play"
+              className="pointer-events-auto w-[72px] h-[72px] rounded-full flex items-center justify-center transition-transform active:scale-90"
+              style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(6px)", border: "1px solid rgba(255,255,255,0.15)" }}
+            >
+              <Play size={30} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
+            </button>
+            <button
+              onClick={() => seekBy(5)}
+              onTouchStart={stop}
+              onTouchEnd={stop}
+              aria-label="Forward 5 seconds"
+              className="pointer-events-auto w-12 h-12 rounded-full flex items-center justify-center transition-transform active:scale-90"
+              style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.15)" }}
+            >
+              <RotateCw size={20} color="#fff" />
+              <span className="absolute text-[8px]" style={{ color: "#fff", fontWeight: 700, marginTop: 1 }}>5</span>
+            </button>
+          </div>
+          <button
+            onClick={() => setMuted((m) => !m)}
+            onTouchStart={stop}
+            onTouchEnd={stop}
+            aria-label={muted ? "Unmute" : "Mute"}
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full px-3.5 h-9 transition-transform active:scale-95"
+            style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.15)" }}
+          >
+            {muted ? <VolumeX size={16} color="#fff" /> : <Volume2 size={16} color="#fff" />}
+            <span className="text-xs" style={{ color: "#fff", fontWeight: 600 }}>{muted ? "Unmute" : "Mute"}</span>
+          </button>
+        </div>
       )}
 
       {toast && (
@@ -3195,7 +3750,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 <MessageCircle size={27} color="rgba(255,255,255,0.35)" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }} />
               )}
               <button onClick={toggleRepost} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
-                <Repeat2 size={28} color="#FFFFFF" strokeWidth={reel.reposted ? 2.8 : 2} />
+                <RepostIcon size={28} color={reel.reposted ? "var(--accent-end)" : "#FFFFFF"} strokeWidth={2} active={reel.reposted} />
                 {countPrefs.reposts && !reel.hide_reposts && reel.repostCount > 0 && (
                   <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.repostCount)}</span>
                 )}
@@ -3205,7 +3760,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
                 className="flex flex-col items-center gap-1 transition-transform active:scale-90"
                 style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
               >
-                <SendHorizontal size={26} color="#FFFFFF" strokeWidth={2} />
+                <ShareIcon size={26} color="#FFFFFF" strokeWidth={2} />
               </button>
               <button
                 onClick={() => {
@@ -3243,7 +3798,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           )}
 
           {likesPopupOpen && (
-            <LikesViewsPopup post={reel} isOwner={reel.user_id === userId} onClose={() => setLikesPopupOpen(false)} />
+            <LikesViewsPopup post={reel} isOwner={reel.user_id === userId} onClose={() => setLikesPopupOpen(false)} onOpenProfile={onOpenProfile} />
           )}
 
           {/* audio / sound-source shortcut, sits just above the main heart button */}
@@ -3256,8 +3811,39 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           </button>
 
           <button
-            onClick={() => setExpanded((v) => !v)}
-            className="w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90"
+            onClick={() => {
+              if (railLongRef.current) {
+                railLongRef.current = false;
+                return;
+              }
+              if (railPinned) {
+                setRailPinned(false);
+                writeRailPinned(false);
+                setExpanded(false);
+                showToast("Unpinned");
+                return;
+              }
+              setExpanded((v) => !v);
+            }}
+            onTouchStart={() => {
+              railLongRef.current = false;
+              railPressRef.current = setTimeout(() => {
+                railLongRef.current = true;
+                setRailPinned(true);
+                writeRailPinned(true);
+                showToast("Pinned — stays open on every reel");
+              }, 500);
+            }}
+            onTouchEnd={() => clearTimeout(railPressRef.current)}
+            onTouchMove={() => clearTimeout(railPressRef.current)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              railLongRef.current = true;
+              setRailPinned(true);
+              writeRailPinned(true);
+              showToast("Pinned — stays open on every reel");
+            }}
+            className="relative w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90"
             style={{
               background: reel.liked ? ACCENT : "rgba(0,0,0,0.4)",
               backdropFilter: reel.liked ? "none" : "blur(8px)",
@@ -3265,6 +3851,14 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
               boxShadow: reel.liked ? "0 4px 16px rgba(0,0,0,0.35)" : "none",
             }}
           >
+            {railPinned && (
+              <span
+                className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center"
+                style={{ background: "#FFFFFF" }}
+              >
+                <Pin size={9} color="#000000" fill="#000000" />
+              </span>
+            )}
             {expanded ? (
               <Ellipsis size={20} color={reel.liked ? "var(--on-accent)" : "#FFFFFF"} />
             ) : (
@@ -3273,37 +3867,6 @@ function ReelsScreen({ onOpenReport, onOpenProfile }) {
           </button>
         </div>
       </div>
-
-      {/* swipe progress — a slim windowed indicator on the right edge.
-          Only ~7 dots are ever drawn so a long reel list can't run off screen,
-          and it sits mid-height so it never collides with the mute button. */}
-      {reels.length > 1 && (
-        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1 pointer-events-none">
-          {(() => {
-            const WINDOW = 7;
-            const half = Math.floor(WINDOW / 2);
-            let start = Math.max(0, Math.min(index - half, reels.length - WINDOW));
-            if (start < 0) start = 0;
-            const end = Math.min(reels.length, start + WINDOW);
-            return reels.slice(start, end).map((_, k) => {
-              const i = start + k;
-              const active = i === index;
-              return (
-                <div
-                  key={i}
-                  className="rounded-full"
-                  style={{
-                    width: 3,
-                    height: active ? 16 : 5,
-                    background: active ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.35)",
-                    transition: "height 0.22s ease, background 0.22s ease",
-                  }}
-                />
-              );
-            });
-          })()}
-        </div>
-      )}
 
       {commentSheetOpen && (
         <ReelCommentsSheet
@@ -4107,6 +4670,151 @@ function toLocalInputValue(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// Instagram's shapes: feed posts are portrait 4:5, square 1:1 or landscape
+// 16:9; Reels and Stories are always 9:16. Posts from before this was saved
+// show as 4:5.
+const POST_ASPECTS = [
+  { key: "4:5", label: "Portrait", css: "4 / 5", value: 4 / 5 },
+  { key: "1:1", label: "Square", css: "1 / 1", value: 1 },
+  { key: "16:9", label: "Landscape", css: "16 / 9", value: 16 / 9 },
+];
+function postAspectCss(post) {
+  if (post?.aspect_ratio === "9:16") return "9 / 16";
+  const found = POST_ASPECTS.find((a) => a.key === post?.aspect_ratio);
+  return found ? found.css : "4 / 5";
+}
+// Pick the closest of the three for a file's natural shape.
+function detectAspect(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const done = (w, h) => {
+      URL.revokeObjectURL(url);
+      if (!w || !h) return resolve("4:5");
+      const ratio = w / h;
+      let best = POST_ASPECTS[0];
+      POST_ASPECTS.forEach((a) => {
+        if (Math.abs(Math.log(ratio / a.value)) < Math.abs(Math.log(ratio / best.value))) best = a;
+      });
+      resolve(best.key);
+    };
+    if ((file.type || "").startsWith("video")) {
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.onloadedmetadata = () => done(v.videoWidth, v.videoHeight);
+      v.onerror = () => done(0, 0);
+      v.src = url;
+    } else {
+      const img = new Image();
+      img.onload = () => done(img.naturalWidth, img.naturalHeight);
+      img.onerror = () => done(0, 0);
+      img.src = url;
+    }
+  });
+}
+
+// Tag people: search by username, pick from the list, shown as chips.
+function TagPeoplePicker({ value, onChange }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [me, setMe] = useState(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMe(data?.user?.id || null));
+  }, []);
+
+  useEffect(() => {
+    const term = q.trim().replace(/^@/, "");
+    if (!term) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const safe = term.replace(/[%_,()]/g, "");
+      const [{ data }, rel] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, username, full_name, avatar_url")
+          .or(`username.ilike.%${safe}%,full_name.ilike.%${safe}%`)
+          .limit(12),
+        getRelations(),
+      ]);
+      if (cancelled) return;
+      const picked = new Set(value.map((p) => p.id));
+      setResults((data || []).filter((p) => p.id !== me && !picked.has(p.id) && !isBlockedEither(rel, p.id)).slice(0, 8));
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [q, value, me]);
+
+  const add = (p) => {
+    if (value.length >= 20) return;
+    onChange([...value, p]);
+    setQ("");
+    setResults([]);
+  };
+
+  return (
+    <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <UserPlus size={15} color="var(--text-muted)" />
+        <span className="text-sm flex-1" style={{ color: "var(--text)", fontWeight: 600 }}>Tag people</span>
+        {value.length > 0 && (
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{value.length}</span>
+        )}
+      </div>
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+          {value.map((p) => (
+            <span key={p.id} className="flex items-center gap-1.5 rounded-full pl-1 pr-2 py-1" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+              <Avatar username={p.username} avatarUrl={p.avatar_url} size={20} />
+              <span className="text-xs" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
+              <button onClick={() => onChange(value.filter((x) => x.id !== p.id))} aria-label={`Remove ${p.username}`}>
+                <X size={12} color="var(--text-muted)" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="px-3 pb-2.5">
+        <div className="flex items-center gap-2 rounded-lg px-2.5 h-9" style={{ background: "var(--bg-sunken)" }}>
+          <Search size={14} color="var(--text-muted)" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search people"
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "var(--text)" }}
+          />
+          {q && (
+            <button onClick={() => setQ("")}>
+              <X size={13} color="var(--text-muted)" />
+            </button>
+          )}
+        </div>
+        {results.length > 0 && (
+          <div className="mt-1.5">
+            {results.map((p) => (
+              <button key={p.id} onClick={() => add(p)} className="w-full flex items-center gap-2.5 py-1.5 text-left">
+                <Avatar username={p.username} avatarUrl={p.avatar_url} size={34} />
+                <div className="min-w-0">
+                  <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</p>
+                  {p.full_name && <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        {q.trim() && results.length === 0 && (
+          <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>No matching accounts</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UploadScreen() {
   const [mode, setMode] = useState("photo");
   const [file, setFile] = useState(null);
@@ -4121,7 +4829,9 @@ function UploadScreen() {
   const [hideComments, setHideComments] = useState(false);
   const [hideRepostsSaves, setHideRepostsSaves] = useState(false);
   const [turnOffComments, setTurnOffComments] = useState(false);
-  const [tagInput, setTagInput] = useState("");
+  const [tagInput, setTagInput] = useState(""); // only read from old drafts
+  const [taggedPeople, setTaggedPeople] = useState([]); // [{id, username, avatar_url}]
+  const [aspect, setAspect] = useState("4:5");
   const [pollEnabled, setPollEnabled] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
   const [pollOptions, setPollOptions] = useState(["", ""]);
@@ -4168,6 +4878,8 @@ function UploadScreen() {
         hideRepostsSaves,
         turnOffComments,
         tagInput,
+        taggedPeople,
+        aspect,
         pollEnabled,
         pollQuestion,
         pollOptions,
@@ -4210,6 +4922,8 @@ function UploadScreen() {
     setHideRepostsSaves(!!d.hideRepostsSaves);
     setTurnOffComments(!!d.turnOffComments);
     setTagInput(d.tagInput || "");
+    setTaggedPeople(Array.isArray(d.taggedPeople) ? d.taggedPeople : []);
+    setAspect(d.aspect || "4:5");
     setPollEnabled(!!d.pollEnabled);
     setPollQuestion(d.pollQuestion || "");
     setPollOptions(d.pollOptions && d.pollOptions.length >= 2 ? d.pollOptions : ["", ""]);
@@ -4244,6 +4958,8 @@ function UploadScreen() {
     e.target.value = "";
     if (picked.length === 0) return;
     setError("");
+    // The first pick decides the shape (you can still change it).
+    if (items.length === 0) detectAspect(picked[0]).then(setAspect);
     setItems((prev) => {
       const combined = [
         ...prev,
@@ -4284,6 +5000,8 @@ function UploadScreen() {
     setHideRepostsSaves(false);
     setTurnOffComments(false);
     setTagInput("");
+    setTaggedPeople([]);
+    setAspect("4:5");
     setPollEnabled(false);
     setPollQuestion("");
     setPollOptions(["", ""]);
@@ -4407,6 +5125,7 @@ function UploadScreen() {
         // are — only single-video uploads through Reel mode ever get tagged
         // "reel", matching how Reels actually work on Instagram.
         media_type: mode,
+        aspect_ratio: mode === "reel" ? "9:16" : aspect,
         caption,
         location: location.trim() || null,
         hide_likes: hideLikes,
@@ -4454,20 +5173,25 @@ function UploadScreen() {
       ...captionMentions,
     ].filter(Boolean);
     const uniqueUsernames = [...new Set(usernames)];
-    if (uniqueUsernames.length > 0) {
-      try {
-        const { data: matchedProfiles } = await supabase
-          .from("profiles")
-          .select("id, username")
-          .in("username", uniqueUsernames);
-        if (matchedProfiles && matchedProfiles.length > 0) {
-          await supabase.from("post_tags").insert(
-            matchedProfiles.map((p) => ({ post_id: insertedPost.id, tagged_user_id: p.id }))
-          );
-        }
-      } catch (e) {
-        // Tagging is best-effort — never block publishing over it
+    try {
+      const ids = new Set(taggedPeople.map((p) => p.id));
+      if (uniqueUsernames.length > 0) {
+        const { data: matchedProfiles } = await supabase.from("profiles").select("id").in("username", uniqueUsernames);
+        (matchedProfiles || []).forEach((p) => ids.add(p.id));
       }
+      ids.delete(user.id);
+      if (ids.size > 0) {
+        const rows = [...ids].map((id) => ({ post_id: insertedPost.id, tagged_user_id: id }));
+        const { error: tagErr } = await supabase.from("post_tags").insert(rows);
+        // Tell people they were tagged — but not before a scheduled post is out.
+        if (!tagErr && !scheduledFor) {
+          await supabase
+            .from("notifications")
+            .insert([...ids].map((id) => ({ user_id: id, actor_id: user.id, type: "tag", post_id: insertedPost.id })));
+        }
+      }
+    } catch (e) {
+      // Tagging is best-effort — never block publishing over it
     }
 
     // Best-effort: create the poll
@@ -4588,8 +5312,8 @@ function UploadScreen() {
 
         {mode === "reel" ? (
           <label
-            className="rounded-2xl aspect-square flex flex-col items-center justify-center gap-2 mb-4 overflow-hidden"
-            style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)" }}
+            className="rounded-2xl flex flex-col items-center justify-center gap-2 mb-4 overflow-hidden mx-auto"
+            style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)", aspectRatio: "9 / 16", width: "62%" }}
           >
             <input type="file" accept="video/*" onChange={handleFileChange} className="hidden" />
             {previewUrl ? (
@@ -4624,6 +5348,34 @@ function UploadScreen() {
               </label>
             ) : (
               <>
+                <div className="rounded-2xl overflow-hidden mb-2 mx-auto" style={{ background: "var(--bg-sunken)", aspectRatio: POST_ASPECTS.find((a) => a.key === aspect)?.css || "4 / 5", width: aspect === "16:9" ? "100%" : "82%" }}>
+                  {items[0].type === "photo" ? (
+                    <img src={items[0].url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <video src={items[0].url} className="w-full h-full object-cover" muted playsInline autoPlay loop />
+                  )}
+                </div>
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  {POST_ASPECTS.map((a) => (
+                    <button
+                      key={a.key}
+                      onClick={() => setAspect(a.key)}
+                      className="flex items-center gap-1.5 rounded-full px-3 h-8 text-xs"
+                      style={{
+                        background: aspect === a.key ? "var(--text)" : "var(--surface)",
+                        color: aspect === a.key ? "var(--bg)" : "var(--text)",
+                        border: "1px solid var(--border)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      <span
+                        className="inline-block rounded-[3px]"
+                        style={{ border: `1.5px solid ${aspect === a.key ? "var(--bg)" : "var(--text)"}`, width: a.key === "16:9" ? 14 : a.key === "1:1" ? 11 : 10, height: a.key === "16:9" ? 8 : a.key === "1:1" ? 11 : 12.5 }}
+                      />
+                      {a.key}
+                    </button>
+                  ))}
+                </div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                     {items.length === 1 ? "1 item" : `${items.length} items — swipe through them like a post`}
@@ -4679,7 +5431,7 @@ function UploadScreen() {
         )}
 
         <textarea
-          placeholder="Write a caption... (use @username to tag someone)"
+          placeholder="Write a caption..."
           rows={3}
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
@@ -4702,20 +5454,7 @@ function UploadScreen() {
           />
         </div>
 
-        <div
-          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-4"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-        >
-          <span className="text-sm" style={{ color: "var(--text-muted)", fontWeight: 700 }}>@</span>
-          <input
-            type="text"
-            placeholder="Tag people (e.g. nilufar.k, rafiq.tech)"
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            className="flex-1 bg-transparent text-sm outline-none"
-            style={{ color: "var(--text)" }}
-          />
-        </div>
+        <TagPeoplePicker value={taggedPeople} onChange={setTaggedPeople} />
 
         {/* Poll */}
         <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -4769,18 +5508,28 @@ function UploadScreen() {
         {/* Per-post privacy settings */}
         <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           {[
-            ["Hide Like Count For This Post", hideLikes, setHideLikes],
-            ["Hide Comment Count For This Post", hideComments, setHideComments],
-            ["Hide Repost/Share/Save Count For This Post", hideRepostsSaves, setHideRepostsSaves],
-            ["Turn Off Comments", turnOffComments, setTurnOffComments],
-          ].map(([label, value, setValue], i) => (
+            [
+              "Hide counts",
+              hideLikes && hideComments && hideRepostsSaves,
+              (v) => {
+                setHideLikes(v);
+                setHideComments(v);
+                setHideRepostsSaves(v);
+              },
+              "Only you will see the like, comment, repost and save counts on this post.",
+            ],
+            ["Turn off commenting", turnOffComments, setTurnOffComments, "You can change this later from the ⋯ menu on your post."],
+          ].map(([label, value, setValue, hint], i) => (
             <button
               key={label}
               onClick={() => setValue(!value)}
               className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
               style={{ color: "var(--text)", borderTop: i > 0 ? "1px solid var(--border)" : "none", textAlign: "left" }}
             >
-              <span style={{ textAlign: "left" }}>{label}</span>
+              <span style={{ textAlign: "left" }}>
+                <span className="block">{label}</span>
+                {hint && <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{hint}</span>}
+              </span>
               <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: value ? ACCENT : "var(--toggle-off)", position: "relative" }}>
                 <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: value ? 17 : 2, transition: "left 0.15s" }} />
               </span>
@@ -4999,51 +5748,222 @@ async function pushIsOn() {
   return !!sub;
 }
 
-function PushToggleRow({ userId }) {
-  const [on, setOn] = useState(false);
+// ---- Notification preferences (server side) ----
+// Stored on the profile so the send-push function can honour them for every
+// device. Missing keys mean "on", so older accounts behave as before.
+const NOTIF_CATEGORIES = [
+  { key: "likes", label: "Likes", hint: "When someone likes your post, reel or comment" },
+  { key: "comments", label: "Comments, mentions and tags", hint: "Comments on your posts, replies, @mentions and photo tags" },
+  { key: "follows", label: "New followers", hint: "When someone starts following you" },
+  { key: "messages", label: "Messages", hint: "New direct and group messages" },
+  { key: "collections", label: "Shared collections", hint: "When someone adds to a collection you share" },
+];
+
+const NOTIF_PROMPT_KEY = "loop_notif_prompt_snooze";
+
+// Instagram's website asks once after login: Turn On / Not Now. Browsers
+// only allow the permission prompt after a tap, so this card is that tap.
+function NotificationPrompt({ userId }) {
+  const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    pushIsOn().then(setOn);
-  }, []);
+    if (!userId || !pushSupported() || Notification.permission !== "default") return;
+    let snoozedUntil = 0;
+    try {
+      snoozedUntil = Number(localStorage.getItem(NOTIF_PROMPT_KEY) || 0);
+    } catch {}
+    if (Date.now() < snoozedUntil) return;
+    // Let the feed load first, the way Instagram waits a beat.
+    const t = setTimeout(() => setShow(true), 2500);
+    return () => clearTimeout(t);
+  }, [userId]);
 
-  const toggle = async () => {
-    if (!userId || busy) return;
-    setBusy(true);
-    setNote("");
-    if (on) {
-      await disablePush();
-      setOn(false);
-    } else {
-      const res = await enablePush(userId);
-      if (res.ok) setOn(true);
-      else setNote(res.reason);
-    }
-    setBusy(false);
+  const notNow = () => {
+    try {
+      localStorage.setItem(NOTIF_PROMPT_KEY, String(Date.now() + 7 * 24 * 60 * 60 * 1000));
+    } catch {}
+    setShow(false);
   };
 
+  const turnOn = async () => {
+    setBusy(true);
+    setError("");
+    const res = await enablePush(userId);
+    setBusy(false);
+    if (res.ok || Notification.permission === "denied") {
+      if (!res.ok) notNow();
+      else setShow(false);
+      return;
+    }
+    setError(res.reason);
+  };
+
+  if (!show) return null;
+
   return (
-    <div>
-      <button onClick={toggle} disabled={busy} className="w-full flex items-center gap-2.5 px-4 py-3 text-sm" style={{ color: "var(--text)", opacity: busy ? 0.6 : 1 }}>
-        <Bell size={16} color="var(--text-muted)" />
-        <span className="flex-1 text-left">Push notifications</span>
-        <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
-          <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: on ? 17 : 2, transition: "left 0.15s" }} />
-        </span>
-      </button>
-      {note ? (
-        <p className="text-[11px] px-4 pb-3" style={{ color: "var(--heart)" }}>{note}</p>
+    <>
+      <div className="fixed inset-0 z-[80]" style={{ background: "rgba(0,0,0,0.6)" }} />
+      <div
+        className="fixed left-1/2 top-1/2 z-[81] rounded-3xl text-center overflow-hidden"
+        style={{ transform: "translate(-50%, -50%)", width: 290, background: "var(--surface-raised)", border: "1px solid var(--border)" }}
+      >
+        <div className="px-6 pt-7 pb-5">
+          <div className="mx-auto mb-4 rounded-full flex items-center justify-center" style={{ width: 64, height: 64, border: "2px solid var(--text)" }}>
+            <Bell size={28} color="var(--text)" />
+          </div>
+          <p className="text-base mb-1.5" style={{ color: "var(--text)", fontWeight: 700 }}>Turn on notifications</p>
+          <p className="text-xs" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+            Know right away when people follow you, message you, or like and comment on your posts.
+          </p>
+          {error && <p className="text-[11px] mt-2" style={{ color: "var(--heart)" }}>{error}</p>}
+        </div>
+        <button
+          onClick={turnOn}
+          disabled={busy}
+          className="w-full py-3.5 text-sm"
+          style={{ borderTop: "1px solid var(--border)", color: "var(--accent-solid)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? "Turning on..." : "Turn On"}
+        </button>
+        <button onClick={notNow} className="w-full py-3.5 text-sm" style={{ borderTop: "1px solid var(--border)", color: "var(--text)" }}>
+          Not Now
+        </button>
+      </div>
+    </>
+  );
+}
+
+function NotificationsSettings({ userId, onBack }) {
+  const [prefs, setPrefs] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(null);
+  const [deviceOn, setDeviceOn] = useState(false);
+  const [deviceBusy, setDeviceBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: err } = await supabase
+        .from("profiles")
+        .select("notification_prefs")
+        .eq("id", userId)
+        .maybeSingle();
+      if (err) setError(err.message);
+      setPrefs((data && data.notification_prefs) || {});
+      setDeviceOn(await pushIsOn());
+      setLoading(false);
+    })();
+  }, [userId]);
+
+  const save = async (patch, key) => {
+    const next = { ...prefs, ...patch };
+    setPrefs(next);
+    setSaving(key);
+    setError("");
+    const { error: err } = await supabase.from("profiles").update({ notification_prefs: next }).eq("id", userId);
+    setSaving(null);
+    if (err) {
+      setPrefs(prefs);
+      setError(err.message);
+    }
+  };
+
+  const turnOnDevice = async () => {
+    setDeviceBusy(true);
+    setError("");
+    const res = await enablePush(userId);
+    setDeviceBusy(false);
+    if (res.ok) setDeviceOn(true);
+    else setError(res.reason);
+  };
+
+  const Switch = ({ on }) => (
+    <span className="rounded-full shrink-0" style={{ width: 38, height: 21, background: on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+      <span className="rounded-full bg-white absolute" style={{ width: 17, height: 17, top: 2, left: on ? 19 : 2, transition: "left 0.15s" }} />
+    </span>
+  );
+
+  const paused = !!prefs.paused;
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Notifications</h1>
+      </div>
+
+      {error && <p className="text-xs px-4 pt-3" style={{ color: "var(--heart)" }}>{error}</p>}
+
+      {loading ? (
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading...</p>
       ) : (
-        <p className="text-[11px] px-4 pb-3" style={{ color: "var(--text-muted)" }}>
-          Likes, comments, follows and messages, even when Loop is closed. Per device.
-        </p>
+        <div className="px-4 pt-4">
+          {/* On the web each device must opt in once; this is that switch,
+              shown only until it's done. */}
+          {!deviceOn && pushSupported() && (
+            <div className="rounded-2xl px-4 py-3.5 mb-5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+              <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Notifications are off on this device</p>
+              <p className="text-[11px] mt-0.5 mb-3" style={{ color: "var(--text-muted)" }}>
+                {Notification.permission === "denied"
+                  ? "They're blocked in your browser. Allow notifications for this site in the browser's site settings."
+                  : "Turn them on to get alerts even when Loop is closed."}
+              </p>
+              {Notification.permission !== "denied" && (
+                <button
+                  onClick={turnOnDevice}
+                  disabled={deviceBusy}
+                  className="rounded-full px-5 h-9 text-xs transition-transform active:scale-95"
+                  style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: deviceBusy ? 0.6 : 1 }}
+                >
+                  {deviceBusy ? "Turning on..." : "Turn On"}
+                </button>
+              )}
+            </div>
+          )}
+
+          <p className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Push notifications</p>
+          <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <button onClick={() => save({ paused: !paused }, "paused")} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
+              <span className="flex-1">
+                <span className="text-sm block" style={{ color: "var(--text)" }}>Pause all</span>
+                <span className="text-[11px] block mt-0.5" style={{ color: "var(--text-muted)" }}>Temporarily stop every push notification</span>
+              </span>
+              <Switch on={paused} />
+            </button>
+          </div>
+
+          <p className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Notify me about</p>
+          <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)", opacity: paused ? 0.5 : 1 }}>
+            {NOTIF_CATEGORIES.map((c, i) => {
+              const on = prefs[c.key] !== false;
+              return (
+                <button
+                  key={c.key}
+                  onClick={() => !paused && save({ [c.key]: !on }, c.key)}
+                  disabled={paused || saving === c.key}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
+                  style={{ borderTop: i > 0 ? "1px solid var(--border)" : "none" }}
+                >
+                  <span className="flex-1">
+                    <span className="text-sm block" style={{ color: "var(--text)" }}>{c.label}</span>
+                    <span className="text-[11px] block mt-0.5" style={{ color: "var(--text-muted)" }}>{c.hint}</span>
+                  </span>
+                  <Switch on={on && !paused} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, onAccentChange, onOpenSaved }) {
+function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, onAccentChange, onOpenSaved, onOpenEditProfile }) {
   const [view, setView] = useState("menu"); // "menu" | "editProfile" | "changeEmail" | "changePassword" | "appearance"
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
@@ -5340,6 +6260,10 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
     );
   }
 
+  if (view === "notifications") {
+    return <NotificationsSettings userId={userId} onBack={() => setView("menu")} />;
+  }
+
   if (view === "appearance") {
     const applyAccent = () => onAccentChange?.(pickerStart, pickerEnd);
     const resetAccent = () => {
@@ -5526,9 +6450,12 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
           </button>
         </div>
 
-        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Notifications</div>
+        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>How you use Loop</div>
         <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <PushToggleRow userId={userId} />
+          <button onClick={() => setView("notifications")} className="w-full flex items-center gap-2.5 px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
+            <Bell size={16} color="var(--text-muted)" />
+            <span>Notifications</span>
+          </button>
         </div>
 
         <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Your content</div>
@@ -5541,7 +6468,7 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
 
         <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Account</div>
         <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={() => setView("editProfile")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
+          <button onClick={() => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile"))} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
             Edit Profile
           </button>
           <button onClick={() => setView("changeEmail")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
@@ -5589,7 +6516,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
     const { data: p, error } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count")
+      .select("id, media_url, media_type, media_count, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count, aspect_ratio")
       .eq("id", postId)
       .single();
 
@@ -5719,7 +6646,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
       <div
         className="w-full flex items-center justify-center"
-        style={{ background: "var(--bg-sunken)", aspectRatio: "4/5" }}
+        style={{ background: "var(--bg-sunken)", aspectRatio: postAspectCss(post) }}
         onDoubleClick={toggleLike}
       >
         {post.media && post.media.length > 1 ? (
@@ -5738,7 +6665,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
               onClick={() => setShareOpen(true)}
               className="h-7 flex items-center justify-center transition-transform active:scale-90"
             >
-              <Send size={23} color="var(--text)" strokeWidth={1.9} />
+              <ShareIcon size={23} color="var(--text)" strokeWidth={1.9} />
             </button>
             <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
           </div>
@@ -5784,7 +6711,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
           </div>
           <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
             <button onClick={toggleRepost} className="h-7 flex items-center justify-center transition-transform active:scale-90">
-              <Repeat2 size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 1.9} />
+              <RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} />
             </button>
             <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
               {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
@@ -5794,7 +6721,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       </div>
 
       {likesPopupOpen && (
-        <LikesViewsPopup post={post} isOwner={isOwner} onClose={() => setLikesPopupOpen(false)} />
+        <LikesViewsPopup post={post} isOwner={isOwner} onClose={() => setLikesPopupOpen(false)} onOpenProfile={onOpenProfile} />
       )}
 
       <div className="px-4 pt-1.5 pb-8">
@@ -6320,7 +7247,7 @@ function ShareProfileSheet({ profile, currentUserId, onClose }) {
 
       <div className="pb-6">
         <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={copy} />
-        <StoryMenuRow icon={<SendHorizontal size={17} color="var(--text)" />} label="Send in Loop" onClick={() => setSendOpen(true)} />
+        <StoryMenuRow icon={<ShareIcon size={17} color="var(--text)" />} label="Send in Loop" onClick={() => setSendOpen(true)} />
         <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Share to..." onClick={share} />
       </div>
     </StorySheetShell>
@@ -6486,6 +7413,84 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
   );
 }
 
+// ---- Profile photo or short video ----
+// A video avatar (10 seconds or less) plays on the profile header. Everywhere
+// else in the app shows a still, so a frame is captured from the video at
+// upload time and stored as the normal avatar_url — no other screen needs
+// to know videos exist.
+const AVATAR_VIDEO_MAX_SECONDS = 10;
+
+function readVideoMeta(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.preload = "auto";
+    v.muted = true;
+    v.playsInline = true;
+    v.src = url;
+    const fail = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("That video couldn't be read. Try a different file."));
+    };
+    v.onerror = fail;
+    v.onloadedmetadata = () => {
+      const duration = v.duration;
+      // Grab a frame a little way in — the very first frame is often black.
+      v.currentTime = Math.min(0.5, (duration || 1) / 2);
+    };
+    v.onseeked = () => {
+      try {
+        const size = Math.min(v.videoWidth, v.videoHeight) || 480;
+        const out = 480;
+        const canvas = document.createElement("canvas");
+        canvas.width = out;
+        canvas.height = out;
+        const ctx = canvas.getContext("2d");
+        // Centre square crop, the same crop the round avatar shows.
+        const sx = (v.videoWidth - size) / 2;
+        const sy = (v.videoHeight - size) / 2;
+        ctx.drawImage(v, sx, sy, size, size, 0, 0, out, out);
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(url);
+            if (!blob) reject(new Error("Couldn't make a preview from that video."));
+            else resolve({ duration: v.duration, frame: blob });
+          },
+          "image/jpeg",
+          0.85
+        );
+      } catch (e) {
+        fail();
+      }
+    };
+  });
+}
+
+async function uploadAvatarMedia(userId, file) {
+  const safe = (name) => name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const put = async (path, body, contentType) => {
+    const { error } = await supabase.storage.from("avatars").upload(path, body, contentType ? { contentType } : undefined);
+    if (error) throw error;
+    return supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+  };
+
+  if ((file.type || "").startsWith("video")) {
+    const meta = await readVideoMeta(file);
+    if (!meta.duration || meta.duration > AVATAR_VIDEO_MAX_SECONDS + 0.5) {
+      throw new Error(`Profile videos can be up to ${AVATAR_VIDEO_MAX_SECONDS} seconds. This one is ${Math.round(meta.duration || 0)}s.`);
+    }
+    const stamp = Date.now();
+    const [videoUrl, frameUrl] = await Promise.all([
+      put(`${userId}/${stamp}-${safe(file.name)}`, file),
+      put(`${userId}/${stamp}-frame.jpg`, meta.frame, "image/jpeg"),
+    ]);
+    return { avatar_url: frameUrl, avatar_video_url: videoUrl };
+  }
+
+  const photoUrl = await put(`${userId}/${Date.now()}-${safe(file.name)}`, file);
+  return { avatar_url: photoUrl, avatar_video_url: null };
+}
+
 // ---- Edit profile ----
 
 // Instagram's username rules: lowercase letters, numbers, dots and
@@ -6513,6 +7518,8 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
   const [flash, setFlash] = useState("");
 
   const [avatarUrl, setAvatarUrl] = useState(null);
+  const [avatarVideoUrl, setAvatarVideoUrl] = useState(null);
+  const [birthday, setBirthday] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
@@ -6530,7 +7537,7 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
     (async () => {
       const { data, error: err } = await supabase
         .from("profiles")
-        .select("username, full_name, bio, avatar_url, links, gender")
+        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender")
         .eq("id", currentUserId)
         .maybeSingle();
       if (err) setError(err.message);
@@ -6540,6 +7547,14 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
         setFullName(data.full_name || "");
         setBio(data.bio || "");
         setAvatarUrl(data.avatar_url || null);
+        setAvatarVideoUrl(data.avatar_video_url || null);
+        // Birthday lives in its own owner-only table so nobody else can read it.
+        supabase
+          .from("profile_private")
+          .select("birthday")
+          .eq("user_id", currentUserId)
+          .maybeSingle()
+          .then(({ data: priv }) => setBirthday(priv?.birthday || ""));
         setGender(data.gender || null);
         setLinks(Array.isArray(data.links) ? data.links : []);
       }
@@ -6572,18 +7587,13 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
     if (!file) return;
     setAvatarBusy(true);
     setError("");
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const path = `${currentUserId}/${Date.now()}-${safeName}`;
-    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file);
-    if (upErr) {
-      setAvatarBusy(false);
-      setError(upErr.message);
-      return;
+    try {
+      const res = await uploadAvatarMedia(currentUserId, file);
+      setAvatarUrl(res.avatar_url);
+      setAvatarVideoUrl(res.avatar_video_url);
+    } catch (e) {
+      setError(e.message || "Upload failed");
     }
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("avatars").getPublicUrl(path);
-    setAvatarUrl(publicUrl);
     setAvatarBusy(false);
   };
 
@@ -6612,6 +7622,17 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
       setError("Please choose a gender — it's required");
       return;
     }
+    if (birthday) {
+      const b = new Date(birthday + "T00:00:00");
+      if (isNaN(b.getTime()) || b.getTime() > Date.now()) {
+        setError("Birthday can't be in the future");
+        return;
+      }
+      if (b.getFullYear() < new Date().getFullYear() - 120) {
+        setError("Please check the birthday year");
+        return;
+      }
+    }
     if (bio.length > 150) {
       setError("Bio can't be longer than 150 characters");
       return;
@@ -6635,15 +7656,25 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
         full_name: fullName.trim() || null,
         bio: bio.trim() || null,
         avatar_url: avatarUrl,
+        avatar_video_url: avatarVideoUrl,
         links: cleanLinks,
         gender,
       })
       .eq("id", currentUserId);
-    setSaving(false);
 
     if (err) {
+      setSaving(false);
       // The unique index fires here if someone took the name in between.
       setError(err.message.includes("profiles_username_lower_idx") ? "That username is taken" : err.message);
+      return;
+    }
+
+    const { error: privErr } = await supabase
+      .from("profile_private")
+      .upsert({ user_id: currentUserId, birthday: birthday || null }, { onConflict: "user_id" });
+    setSaving(false);
+    if (privErr) {
+      setError(`Saved, but the birthday didn't: ${privErr.message}`);
       return;
     }
     setFlash("Profile saved");
@@ -6695,7 +7726,9 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
             className="rounded-full overflow-hidden flex items-center justify-center"
             style={{ width: 88, height: 88, background: "var(--surface)", border: "1px solid var(--border)" }}
           >
-            {avatarUrl ? (
+            {avatarVideoUrl ? (
+              <video src={avatarVideoUrl} poster={avatarUrl || undefined} className="w-full h-full object-cover" autoPlay muted loop playsInline />
+            ) : avatarUrl ? (
               <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
             ) : (
               <span className="text-3xl" style={{ color: "var(--text)", fontWeight: 700 }}>
@@ -6711,12 +7744,15 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
           </span>
         </button>
         <span className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
-          {avatarBusy ? "Uploading..." : "Change photo"}
+          {avatarBusy ? "Uploading..." : "Change photo or video"}
+        </span>
+        <span className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+          Videos up to {AVATAR_VIDEO_MAX_SECONDS} seconds
         </span>
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           className="hidden"
           onChange={(e) => {
             if (e.target.files[0]) uploadAvatar(e.target.files[0]);
@@ -6815,6 +7851,19 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
           </button>
         )}
 
+        <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Birthday</label>
+        <input
+          type="date"
+          value={birthday}
+          max={new Date().toISOString().slice(0, 10)}
+          onChange={(e) => setBirthday(e.target.value)}
+          className="w-full rounded-2xl px-4 h-12 text-sm outline-none"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", colorScheme: "dark light" }}
+        />
+        <p className="text-[11px] mt-1 mb-4" style={{ color: "var(--text-muted)" }}>
+          Private — it won't appear on your profile.
+        </p>
+
         <div className="flex items-center justify-between mb-1.5">
           <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Gender</label>
           <span className="text-[11px]" style={{ color: gender ? "var(--text-muted)" : "var(--heart)" }}>Required</span>
@@ -6851,6 +7900,9 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
   const [error, setError] = useState("");
   const [commentFor, setCommentFor] = useState(null);
   const [shareFor, setShareFor] = useState(null);
+  const [optionsFor, setOptionsFor] = useState(null);
+  const [likesFor, setLikesFor] = useState(null);
+  const likePressRef = React.useRef(null);
   const containerRef = React.useRef(null);
   const itemRefs = React.useRef({});
 
@@ -6863,7 +7915,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
       }
       const { data: rows, error: err } = await supabase
         .from("posts")
-        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled")
+        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, aspect_ratio")
         .in("id", postIds);
 
       if (err) {
@@ -6969,6 +8021,15 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
           p.id === post.id ? { ...p, liked: was, likeCount: was ? p.likeCount + 1 : p.likeCount - 1 } : p
         )
       );
+      return;
+    }
+    if (!was && post.user_id !== currentUserId) {
+      await supabase.from("notifications").insert({
+        user_id: post.user_id,
+        actor_id: currentUserId,
+        type: "like",
+        post_id: post.id,
+      });
     }
   };
 
@@ -7048,14 +8109,17 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                     )}
                   </div>
                 </button>
-                <button onClick={() => onOpenReport?.(post.id)} className="p-1 -mr-1 shrink-0">
+                <button
+                  onClick={() => (post.user_id === currentUserId ? setOptionsFor(post) : onOpenReport?.(post.id))}
+                  className="p-1 -mr-1 shrink-0"
+                >
                   <Ellipsis size={19} color="var(--text)" />
                 </button>
               </div>
 
               <div
                 className="w-full flex items-center justify-center"
-                style={{ background: "var(--bg-sunken)", aspectRatio: "4/5" }}
+                style={{ background: "var(--bg-sunken)", aspectRatio: postAspectCss(post) }}
                 onDoubleClick={() => !post.liked && toggleLike(post)}
               >
                 {post.media && post.media.length > 1 ? (
@@ -7071,7 +8135,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 <div className="flex items-center gap-5">
                   <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                     <button onClick={() => setShareFor(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
-                      <Send size={23} color="var(--text)" strokeWidth={1.9} />
+                      <ShareIcon size={23} color="var(--text)" strokeWidth={1.9} />
                     </button>
                     <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
                   </div>
@@ -7086,7 +8150,19 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 </div>
 
                 <div className="flex flex-col items-center" style={{ minWidth: 34 }}>
-                  <button onClick={() => toggleLike(post)} className="h-8 flex items-center justify-center transition-transform active:scale-90">
+                  <button
+                    onClick={() => toggleLike(post)}
+                    onTouchStart={() => {
+                      likePressRef.current = setTimeout(() => setLikesFor(post), 500);
+                    }}
+                    onTouchEnd={() => clearTimeout(likePressRef.current)}
+                    onTouchMove={() => clearTimeout(likePressRef.current)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setLikesFor(post);
+                    }}
+                    className="h-8 flex items-center justify-center transition-transform active:scale-90"
+                  >
                     <Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} />
                   </button>
                   <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
@@ -7109,7 +8185,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                   </div>
                   <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                     <button onClick={() => toggleRepost(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
-                      <Repeat2 size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} strokeWidth={post.reposted ? 2.6 : 1.9} />
+                      <RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} />
                     </button>
                     <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                       {!post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
@@ -7134,9 +8210,15 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                     View all {formatCount(post.commentCount)} comments
                   </button>
                 )}
-                <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
-                  {timeAgo(post.created_at)} ago
-                </span>
+                {new Date(post.created_at).getTime() > Date.now() ? (
+                  <span className="text-[10px] mt-1.5 flex items-center gap-1 uppercase" style={{ color: "var(--accent-solid)", letterSpacing: "0.3px", fontWeight: 600 }}>
+                    <Clock size={10} /> Scheduled · {new Date(post.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                  </span>
+                ) : (
+                  <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
+                    {timeAgo(post.created_at)} ago
+                  </span>
+                )}
               </div>
             </div>
           ))
@@ -7162,6 +8244,36 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
 
       {shareFor && (
         <ShareSheet item={shareFor} currentUserId={currentUserId} onClose={() => setShareFor(null)} />
+      )}
+
+      {likesFor && (
+        <LikesViewsPopup
+          post={likesFor}
+          isOwner={likesFor.user_id === currentUserId}
+          onClose={() => setLikesFor(null)}
+          onOpenProfile={onOpenProfile}
+        />
+      )}
+
+      {optionsFor && (
+        <PostOptionsSheet
+          post={optionsFor}
+          onClose={() => setOptionsFor(null)}
+          onSaved={(patch) => {
+            const id = optionsFor.id;
+            setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+            setOptionsFor((prev) => (prev ? { ...prev, ...patch } : prev));
+          }}
+          onDeleted={() => {
+            const id = optionsFor.id;
+            setOptionsFor(null);
+            setPosts((prev) => {
+              const next = prev.filter((p) => p.id !== id);
+              if (next.length === 0) onBack();
+              return next;
+            });
+          }}
+        />
       )}
     </div>
   );
@@ -7397,8 +8509,8 @@ function NoteBubble({ note, noteAt, isOwn, onEdit }) {
     <button
       onClick={isOwn ? onEdit : undefined}
       disabled={!isOwn}
-      className="absolute text-left"
-      style={{ top: -14, left: 46, maxWidth: 170 }}
+      className="absolute text-left z-10"
+      style={{ top: -14, left: 46, width: "max-content", maxWidth: 170 }}
     >
       <div
         className="rounded-2xl px-3 py-1.5"
@@ -7532,14 +8644,7 @@ function ProfileTabIcon({ kind, active }) {
   }
 
   if (kind === "reposts") {
-    return (
-      <svg {...common}>
-        <path d="M4 8.4a3 3 0 0 1 3-3h10.4" />
-        <path d="M14.8 2.9 17.9 5.4 14.8 7.9" />
-        <path d="M20 15.6a3 3 0 0 1-3 3H6.6" />
-        <path d="M9.2 21.1 6.1 18.6 9.2 16.1" />
-      </svg>
-    );
+    return <RepostIcon size={24} color={c} strokeWidth={w} />;
   }
 
   // tagged — a person inside a frame
@@ -7721,7 +8826,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url, note, note_created_at, links, gender, is_private")
+      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -7818,37 +8923,34 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
   const changeAvatar = async (file) => {
     if (!file || !myId) return;
     setAvatarBusy(true);
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const path = `${myId}/${Date.now()}-${safeName}`;
-    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file);
-    if (upErr) {
+    let res;
+    try {
+      res = await uploadAvatarMedia(myId, file);
+    } catch (e) {
       setAvatarBusy(false);
-      alert(upErr.message);
+      alert(e.message || "Upload failed");
       return;
     }
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("avatars").getPublicUrl(path);
-    const { error: dbErr } = await supabase.from("profiles").update({ avatar_url: publicUrl }).eq("id", myId);
+    const { error: dbErr } = await supabase.from("profiles").update(res).eq("id", myId);
     setAvatarBusy(false);
     if (dbErr) {
       alert(dbErr.message);
       return;
     }
-    setProfile((prev) => ({ ...prev, avatar_url: publicUrl }));
+    setProfile((prev) => ({ ...prev, ...res }));
     setSheet(null);
   };
 
   const removeAvatar = async () => {
     if (!myId) return;
     setAvatarBusy(true);
-    const { error } = await supabase.from("profiles").update({ avatar_url: null }).eq("id", myId);
+    const { error } = await supabase.from("profiles").update({ avatar_url: null, avatar_video_url: null }).eq("id", myId);
     setAvatarBusy(false);
     if (error) {
       alert(error.message);
       return;
     }
-    setProfile((prev) => ({ ...prev, avatar_url: null }));
+    setProfile((prev) => ({ ...prev, avatar_url: null, avatar_video_url: null }));
     setSheet(null);
   };
 
@@ -8064,7 +9166,9 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
             style={{ width: 88, height: 88, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 3 }}
           >
             <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center" style={{ background: "var(--surface)", border: "3px solid var(--bg)" }}>
-              {profile.avatar_url ? (
+              {profile.avatar_video_url ? (
+                <video src={profile.avatar_video_url} poster={profile.avatar_url || undefined} className="w-full h-full object-cover" autoPlay muted loop playsInline />
+              ) : profile.avatar_url ? (
                 <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
               ) : (
                 <span className="text-3xl" style={{ color: "var(--text)", fontWeight: 700 }}>
@@ -8208,7 +9312,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
                 <video src={p.media_url} className="w-full h-full object-cover" />
               )}
               {tab === "reposts" && (
-                <Repeat2 size={12} color="var(--accent-end)" className="absolute top-1.5 right-1.5" />
+                <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
               )}
               {tab === "tagged" && (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
@@ -8260,7 +9364,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
       <input
         ref={avatarInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         className="hidden"
         onChange={(e) => {
           if (e.target.files[0]) changeAvatar(e.target.files[0]);
@@ -8498,7 +9602,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
       )}
 
       {sheet === "avatar" && (
-        <StorySheetShell title="Profile photo" onClose={() => setSheet(null)}>
+        <StorySheetShell title="Profile photo or video" onClose={() => setSheet(null)}>
           <div className="pb-6">
             <StoryMenuRow
               icon={<ImagePlus size={17} color="var(--text)" />}
@@ -9952,7 +11056,7 @@ function InviteSheet({ conversationId, code, title, currentUserId, onClose, onRe
 
       <div className="pb-6">
         <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={copy} />
-        <StoryMenuRow icon={<SendHorizontal size={17} color="var(--text)" />} label="Send in Loop" onClick={() => setSendOpen(true)} />
+        <StoryMenuRow icon={<ShareIcon size={17} color="var(--text)" />} label="Send in Loop" onClick={() => setSendOpen(true)} />
         <StoryMenuRow
           icon={<Hash size={17} color="var(--text)" />}
           label={showQR ? "Hide QR code" : "QR code"}
@@ -12305,6 +13409,8 @@ function NotificationsScreen({ onBack }) {
       ? "commented on your post"
       : type === "mention"
       ? "mentioned you in a comment"
+      : type === "tag"
+      ? "tagged you in a post"
       : type === "message"
       ? "sent you a message"
       : type === "collection"
@@ -12316,6 +13422,8 @@ function NotificationsScreen({ onBack }) {
       ? Heart
       : type === "comment" || type === "mention"
       ? MessageCircle
+      : type === "tag"
+      ? UserPlus
       : type === "message"
       ? SendHorizontal
       : type === "collection"
@@ -13193,6 +14301,8 @@ export default function App() {
   const [authScreen, setAuthScreen] = useState("login"); // "login" | "signup" | null
   const [checkingSession, setCheckingSession] = useState(true);
   const [active, setActive] = useState("feed");
+  // Set when a reel on Home is tapped, so Reels opens on that reel.
+  const [reelStartId, setReelStartId] = useState(null);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [interestsOpen, setInterestsOpen] = useState(false);
@@ -13351,7 +14461,9 @@ export default function App() {
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
         <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh)}>
-          {editProfileOpen ? (
+          {reportPostId !== null ? (
+            <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
+          ) : editProfileOpen ? (
             <EditProfileScreen
               currentUserId={meId}
               onBack={() => setEditProfileOpen(false)}
@@ -13419,8 +14531,6 @@ export default function App() {
             <InterestsScreen onBack={() => setInterestsOpen(false)} />
           ) : commentsPostId !== null ? (
             <CommentsScreen postId={commentsPostId} postOwnerId={commentsPostOwnerId} onBack={() => setCommentsPostId(null)} />
-          ) : reportPostId !== null ? (
-            <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
           ) : settingsOpen ? (
             <SettingsScreen
               onBack={() => setSettingsOpen(false)}
@@ -13432,6 +14542,10 @@ export default function App() {
               onOpenSaved={() => {
                 setSettingsOpen(false);
                 setSavedOpen(true);
+              }}
+              onOpenEditProfile={() => {
+                setSettingsOpen(false);
+                setEditProfileOpen(true);
               }}
             />
           ) : viewPostId !== null ? (
@@ -13465,9 +14579,15 @@ export default function App() {
               }}
               onOpenReport={(postId) => setReportPostId(postId)}
               onOpenProfile={(userId) => setViewProfileId(userId)}
+              onOpenReel={(postId) => {
+                setReelStartId(postId);
+                setActive("reels");
+              }}
             />
           ) : active === "reels" ? (
             <ReelsScreen
+              key={reelStartId || "reels"}
+              startReelId={reelStartId}
               onOpenReport={(postId) => setReportPostId(postId)}
               onOpenProfile={(userId) => setViewProfileId(userId)}
             />
@@ -13502,6 +14622,8 @@ export default function App() {
           )}
         </ErrorBoundary>
 
+        <NotificationPrompt userId={meId} />
+
         {/* Bottom nav */}
         {!overlayOpen && (
           <div
@@ -13514,7 +14636,10 @@ export default function App() {
               return (
                 <button
                   key={tab.key}
-                  onClick={() => setActive(tab.key)}
+                  onClick={() => {
+                    if (tab.key === "reels") setReelStartId(null);
+                    setActive(tab.key);
+                  }}
                   className="flex flex-col items-center justify-center gap-1"
                   style={{ width: 44, height: 36 }}
                 >
