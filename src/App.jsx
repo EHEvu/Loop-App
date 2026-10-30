@@ -20,8 +20,6 @@ import {
   Settings,
   Mail,
   Lock,
-  Eye,
-  EyeOff,
   Ellipsis,
   Bell,
   SlidersHorizontal,
@@ -51,6 +49,7 @@ import {
   Users,
   Check,
   Copy,
+  Flag,
   Pencil,
   ChevronLeft,
   Star,
@@ -270,6 +269,44 @@ function formatCount(n) {
 
 // The Loop brand logo. Expects /logo.png in the app's public folder.
 // If the image is missing it falls back to a clean wordmark so nothing breaks.
+// ---- Shrink photos before upload ----
+// Phone cameras take 4000-pixel, 5 MB photos, but a phone screen shows about
+// 1080 pixels. Resizing first (like Instagram does) makes uploads faster and
+// saves everyone's data. GIFs (animation) and already-small files are left
+// alone; if anything goes wrong the original file is used.
+const MAX_UPLOAD_VIDEO_BYTES = 50 * 1024 * 1024;
+
+async function compressImage(file, maxSide = 1440, quality = 0.82) {
+  try {
+    if (!file || !(file.type || "").startsWith("image/") || file.type === "image/gif") return file;
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    URL.revokeObjectURL(url);
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    if (scale === 1 && file.size < 400 * 1024) return file;
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff"; // transparent PNGs get a white background, not black
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (!blob || blob.size >= file.size) return file;
+    const base = (file.name || "photo").replace(/\.[^.]+$/, "");
+    return new File([blob], `${base}.jpg`, { type: "image/jpeg" });
+  } catch (e) {
+    return file;
+  }
+}
+
 function LoopLogo({ size = 72 }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -401,82 +438,138 @@ function RepostIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, acti
   );
 }
 
+// Share: a curved arrow heading out to the right.
 function ShareIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, ...rest }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" {...rest}>
-      <path d="M21.4 2.6 9.7 10.4" />
-      <path d="M21.4 2.6 3 8.3l6.7 2.1 2.6 9.9 9.1-17.7Z" />
+      <path d="M14 4.5 20.5 11 14 17.5" />
+      <path d="M20.5 11H11a7.5 7.5 0 0 0-7.5 7.5v1" />
     </svg>
   );
 }
 
-// Long-press on a like button: counts on top, then everyone who liked it.
-// The list shows even when the creator hid the number — the same as Instagram.
+// Follow / Following button used in people lists (likers, suggestions…).
+function FollowPill({ following, onClick, small = false }) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="shrink-0 rounded-lg transition-transform active:scale-95"
+      style={{
+        height: small ? 30 : 34,
+        minWidth: small ? 84 : 100,
+        padding: "0 14px",
+        fontSize: 13,
+        fontWeight: 700,
+        ...(following
+          ? { background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)" }
+          : { background: ACCENT, color: "var(--on-accent)" }),
+      }}
+    >
+      {following ? "Following" : "Follow"}
+    </button>
+  );
+}
+
+// Long-press on a like button: "Likes" (photos) or "Likes and views"
+// (videos), the numbers, then everyone who liked it with a Follow button.
+// The list shows even when the creator hid the number — like Instagram.
 function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
   const [likers, setLikers] = useState(null);
   const [query, setQuery] = useState("");
+  const [me, setMe] = useState(null);
+  const [following, setFollowing] = useState(new Set());
+  const isVideo = post.media_type === "reel" || post.media_type === "video";
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data: likes } = await supabase
-        .from("likes")
-        .select("user_id, created_at")
-        .eq("post_id", post.id)
-        .order("created_at", { ascending: false })
-        .limit(300);
-      const ids = [...new Set((likes || []).map((l) => l.user_id))];
-      if (ids.length === 0) {
-        if (!cancelled) setLikers([]);
-        return;
-      }
-      const [{ data: profs }, rel, { data: { user } }] = await Promise.all([
-        supabase.from("profiles").select("id, username, full_name, avatar_url").in("id", ids),
-        getRelations(),
+      const [{ data: likes }, { data: { user } }] = await Promise.all([
+        supabase.from("likes").select("user_id, created_at").eq("post_id", post.id).order("created_at", { ascending: false }).limit(300),
         supabase.auth.getUser(),
       ]);
+      if (cancelled) return;
+      setMe(user?.id || null);
+      const ids = [...new Set((likes || []).map((l) => l.user_id))];
+      if (ids.length === 0) {
+        setLikers([]);
+        return;
+      }
+      const [{ data: profs }, rel, { data: myFollows }] = await Promise.all([
+        supabase.from("profiles").select("id, username, full_name, avatar_url").in("id", ids),
+        getRelations(),
+        supabase.from("follows").select("following_id").eq("follower_id", user?.id ?? "").in("following_id", ids),
+      ]);
+      if (cancelled) return;
       const byId = Object.fromEntries((profs || []).map((p) => [p.id, p]));
       const list = ids.map((id) => byId[id]).filter((p) => p && !isBlockedEither(rel, p.id));
-      // Put yourself first, like Instagram does.
       list.sort((a, b) => (a.id === user?.id ? -1 : b.id === user?.id ? 1 : 0));
-      if (!cancelled) setLikers(list);
+      setFollowing(new Set((myFollows || []).map((f) => f.following_id)));
+      setLikers(list);
     })();
     return () => {
       cancelled = true;
     };
   }, [post.id]);
 
-  const shown = (likers || []).filter((p) => {
-    const q = query.trim().toLowerCase();
-    return !q || p.username?.toLowerCase().includes(q) || p.full_name?.toLowerCase().includes(q);
-  });
+  const toggleFollow = async (p) => {
+    if (!me) return;
+    const was = following.has(p.id);
+    setFollowing((prev) => {
+      const next = new Set(prev);
+      was ? next.delete(p.id) : next.add(p.id);
+      return next;
+    });
+    if (was) {
+      await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", p.id);
+    } else {
+      const { error } = await supabase.from("follows").insert({ follower_id: me, following_id: p.id });
+      if (!error) await supabase.from("notifications").insert({ user_id: p.id, actor_id: me, type: "follow" });
+    }
+  };
+
+  const q = query.trim().toLowerCase();
+  const shown = (likers || []).filter((p) => !q || p.username?.toLowerCase().includes(q) || p.full_name?.toLowerCase().includes(q));
   const countHidden = !isOwner && post.hide_likes;
 
   return (
-    <StorySheetShell title="Likes" onClose={onClose}>
-      <div className="px-4 pb-6">
-        <div className="flex items-center justify-center gap-8 pb-3 mb-3" style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="text-center">
-            <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>
-              {countHidden ? "—" : formatCount(post.likeCount || 0)}
-            </p>
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Likes</p>
-          </div>
-          {post.media_type === "reel" && (
-            <div className="text-center">
-              <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>{formatCount(post.views_count || 0)}</p>
-              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Views</p>
-            </div>
+    <>
+      <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose} />
+      <div
+        className="fixed left-0 right-0 bottom-0 z-[71] rounded-t-3xl flex flex-col"
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", maxHeight: "82vh" }}
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        <p className="text-center text-[15px] py-2.5" style={{ color: "var(--text)", fontWeight: 700, borderBottom: "1px solid var(--border-subtle)" }}>
+          {isVideo ? "Likes and views" : "Likes"}
+        </p>
+
+        <div className="flex items-center justify-center gap-8 py-3.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+          <span className="flex items-center gap-2 text-[17px]" style={{ color: "var(--text)", fontWeight: 600 }}>
+            <Heart size={20} color="var(--text)" strokeWidth={2} />
+            {countHidden ? "—" : (post.likeCount || 0).toLocaleString()}
+          </span>
+          {isVideo && (
+            <span className="flex items-center gap-2 text-[17px]" style={{ color: "var(--text)", fontWeight: 600 }}>
+              <Play size={19} color="var(--text)" strokeWidth={2} />
+              {(post.views_count || 0).toLocaleString()}
+            </span>
           )}
         </div>
         {countHidden && (
-          <p className="text-[11px] text-center mb-3" style={{ color: "var(--text-muted)" }}>
+          <p className="text-[11px] text-center pt-2" style={{ color: "var(--text-muted)" }}>
             {post.username ? `${post.username} hid` : "The creator hid"} the like count on this post.
           </p>
         )}
-        {likers && likers.length > 6 && (
-          <div className="flex items-center gap-2 rounded-xl px-3 h-9 mb-3" style={{ background: "var(--bg-sunken)" }}>
-            <Search size={14} color="var(--text-muted)" />
+
+        <div className="px-4 pt-3 flex-1 min-h-0 flex flex-col">
+          <p className="text-[15px] mb-2.5" style={{ color: "var(--text)", fontWeight: 700 }}>Liked by</p>
+          <div className="flex items-center gap-2 rounded-xl px-3 h-10 mb-2" style={{ background: "var(--surface)" }}>
+            <Search size={16} color="var(--text-muted)" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -485,41 +578,41 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
               style={{ color: "var(--text)" }}
             />
           </div>
-        )}
-        <div style={{ maxHeight: "50vh", overflowY: "auto" }}>
-          {likers === null ? (
-            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
-          ) : likers.length === 0 ? (
-            <div className="flex flex-col items-center py-8">
-              <Heart size={34} color="var(--text-muted)" strokeWidth={1.5} />
-              <p className="text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>No likes yet</p>
-            </div>
-          ) : (
-            shown.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => {
-                  if (onOpenProfile) {
-                    onClose();
-                    onOpenProfile(p.id);
-                  }
-                }}
-                className="w-full flex items-center gap-3 py-2 text-left"
-              >
-                <Avatar username={p.username} avatarUrl={p.avatar_url} size={44} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</p>
-                  {p.full_name && (
-                    <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>
-                  )}
+          <div className="overflow-y-auto pb-6" style={{ minHeight: 120 }}>
+            {likers === null ? (
+              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+            ) : likers.length === 0 ? (
+              <div className="flex flex-col items-center py-8">
+                <Heart size={34} color="var(--text-muted)" strokeWidth={1.5} />
+                <p className="text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>No likes yet</p>
+              </div>
+            ) : shown.length === 0 ? (
+              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No one by that name</p>
+            ) : (
+              shown.map((p) => (
+                <div key={p.id} className="flex items-center gap-3 py-2">
+                  <button
+                    onClick={() => {
+                      if (!onOpenProfile) return;
+                      onClose();
+                      onOpenProfile(p.id);
+                    }}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                  >
+                    <Avatar username={p.username} avatarUrl={p.avatar_url} size={48} />
+                    <div className="min-w-0">
+                      <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{p.username}</p>
+                      {p.full_name && <p className="text-[13px] truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>}
+                    </div>
+                  </button>
+                  {p.id !== me && <FollowPill following={following.has(p.id)} onClick={() => toggleFollow(p)} />}
                 </div>
-                <Heart size={14} color="var(--heart)" fill="var(--heart)" />
-              </button>
-            ))
-          )}
+              ))
+            )}
+          </div>
         </div>
       </div>
-    </StorySheetShell>
+    </>
   );
 }
 
@@ -717,6 +810,16 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
 
         {view === "menu" ? (
           <div className="pb-6">
+            {post.removed_at && (
+              <div className="mx-4 mb-2 rounded-xl px-3 py-2.5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--heart)" }}>
+                <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--heart)", fontWeight: 700 }}>
+                  <Shield size={13} /> Removed by Loop
+                </p>
+                <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                  Only you can see this post. Reason: {post.removed_reason || "Community Guidelines"}.
+                </p>
+              </div>
+            )}
             {post.created_at && new Date(post.created_at).getTime() > Date.now() && (
               <div className="mx-4 mb-2 rounded-xl px-3 py-2.5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
                 <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--text)", fontWeight: 600 }}>
@@ -860,9 +963,15 @@ function StoryComposer({ file, onCancel, onPublished }) {
       setError("Not logged in");
       return;
     }
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    if ((file.type || "").startsWith("video") && file.size > MAX_UPLOAD_VIDEO_BYTES) {
+      setBusy(false);
+      setError("That video is over 50 MB — pick a shorter one.");
+      return;
+    }
+    const upFile = await compressImage(file, 1920);
+    const safeName = upFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const path = `${user.id}/${Date.now()}-${safeName}`;
-    const { error: upErr } = await supabase.storage.from("stories").upload(path, file);
+    const { error: upErr } = await supabase.storage.from("stories").upload(path, upFile);
     if (upErr) {
       setBusy(false);
       setError(upErr.message);
@@ -1660,7 +1769,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
               style={{ background: "rgba(255,255,255,0.14)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.2)" }}
             >
               <span className="flex items-center gap-1.5 text-xs" style={{ color: "#FFFFFF", fontWeight: 600 }}>
-                <Eye size={15} /> {formatCount(meta.views)}
+                <Users size={15} /> {formatCount(meta.views)}
               </span>
               <span className="flex items-center gap-1.5 text-xs" style={{ color: "#FFFFFF", fontWeight: 600 }}>
                 <Heart size={15} /> {formatCount(meta.likes)}
@@ -2437,7 +2546,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [hasNotifications, setHasNotifications] = useState(false);
   const [suggestedPeople, setSuggestedPeople] = useState([]);
   const [suggestedReels, setSuggestedReels] = useState([]);
-  const [followingCount, setFollowingCount] = useState(0); // posts from people you follow, at the top
+  const followingCount = posts.filter((p) => !p.suggested).length; // posts from people you follow, at the top
   const pressTimers = React.useRef({});
   const [countPrefs] = useCountPrefs();
 
@@ -2460,132 +2569,173 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     setHasNotifications((count || 0) > 0);
   };
 
+  // ---- Loading, 10 posts at a time ----
+  // First everyone you follow (and you), newest first; when that runs out,
+  // "Suggested for you" posts from everyone else. Each page fetches only the
+  // likes, comments, saves and names for its own 10 posts, so Home stays
+  // quick however big Loop gets.
+  const FEED_PAGE = 10;
+  const feedRef = React.useRef({ me: null, followIds: [], phase: "following", cursor: null, busy: false, done: false });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [followingDone, setFollowingDone] = useState(false);
+  const sentinelRef = React.useRef(null);
+
+  const enrichPosts = async (rows, meId) => {
+    if (rows.length === 0) return [];
+    const ids = rows.map((p) => p.id);
+    const [mediaMap, { data: likesData }, { data: repostsData }, { data: savesData }, { data: commentsData }, { data: tagsData }] = await Promise.all([
+      fetchPostMediaMap(ids),
+      supabase.from("likes").select("post_id, user_id").in("post_id", ids),
+      supabase.from("reposts").select("post_id, user_id").in("post_id", ids),
+      supabase.from("saves").select("post_id, user_id").in("post_id", ids),
+      supabase.from("comments").select("post_id").in("post_id", ids),
+      supabase.from("post_tags").select("post_id, tagged_user_id").in("post_id", ids),
+    ]);
+    const peopleIds = [...new Set([...rows.map((p) => p.user_id), ...(tagsData || []).map((t) => t.tagged_user_id)])];
+    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url").in("id", peopleIds);
+    const prof = Object.fromEntries((profilesData || []).map((p) => [p.id, p]));
+    const count = (list, id) => (list || []).filter((x) => x.post_id === id);
+    return rows.map((p) => {
+      const postLikes = count(likesData, p.id);
+      const postReposts = count(repostsData, p.id);
+      const postSaves = count(savesData, p.id);
+      return {
+        ...p,
+        username: prof[p.user_id]?.username || "unknown",
+        avatarUrl: prof[p.user_id]?.avatar_url || null,
+        likeCount: postLikes.length,
+        liked: postLikes.some((l) => l.user_id === meId),
+        repostCount: postReposts.length,
+        reposted: postReposts.some((x) => x.user_id === meId),
+        saved: postSaves.some((x) => x.user_id === meId),
+        saveCount: postSaves.length,
+        commentCount: count(commentsData, p.id).length,
+        tags: count(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
+        media: mediaMap[p.id] || null,
+      };
+    });
+  };
+
+  const loadPage = async () => {
+    const st = feedRef.current;
+    if (st.busy || st.done) return;
+    st.busy = true;
+    setLoadingMore(true);
+    try {
+      const rel = await getRelations();
+      let gathered = [];
+      // Loop so a short "following" page is topped up with suggestions.
+      while (gathered.length < FEED_PAGE && !st.done) {
+        let q = supabase
+          .from("posts")
+          .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, aspect_ratio")
+          .eq("archived", false)
+          .is("removed_at", null)
+          .lte("created_at", new Date().toISOString()) // your own scheduled posts wait
+          .order("created_at", { ascending: false })
+          .limit(FEED_PAGE);
+        q = st.phase === "following" ? q.in("user_id", st.followIds) : q.not("user_id", "in", `(${st.followIds.join(",")})`);
+        if (st.cursor) q = q.lt("created_at", st.cursor);
+        const { data: rows, error } = await q;
+        if (error) throw error;
+        const batch = rows || [];
+        if (batch.length > 0) st.cursor = batch[batch.length - 1].created_at;
+        const visible = batch.filter((p) => !isHiddenFromFeed(rel, p.user_id)).map((p) => ({ ...p, suggested: st.phase === "suggested" }));
+        gathered = gathered.concat(visible);
+        if (batch.length < FEED_PAGE) {
+          if (st.phase === "following") {
+            st.phase = "suggested";
+            st.cursor = null;
+            setFollowingDone(true);
+          } else {
+            st.done = true;
+          }
+        }
+      }
+      const enriched = await enrichPosts(gathered, st.me);
+      setPosts((prev) => {
+        const seen = new Set(prev.map((p) => p.id));
+        return prev.concat(enriched.filter((p) => !seen.has(p.id)));
+      });
+    } catch (e) {
+      setLoadError(e.message || "Couldn't load posts");
+      st.done = true;
+    }
+    st.busy = false;
+    setLoadingMore(false);
+  };
+
   const loadFeed = async () => {
     setLoading(true);
     setLoadError("");
+    setPosts([]);
+    setFollowingDone(false);
 
     const {
       data: { user },
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
-    const { data: postsData, error: postsError } = await supabase
-      .from("posts")
-      .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, aspect_ratio")
-      .eq("archived", false)
-      .order("created_at", { ascending: false });
-
-    if (postsError) {
-      setLoadError(postsError.message);
-      setLoading(false);
-      return;
-    }
-
-    const mediaMap = await fetchPostMediaMap((postsData || []).map((p) => p.id));
-
-    const { data: profilesData, error: profilesError } = await supabase
-      .from("profiles")
-      .select("id, username, avatar_url");
-
-    if (profilesError) {
-      setLoadError(profilesError.message);
-      setLoading(false);
-      return;
-    }
-
-    const { data: likesData, error: likesError } = await supabase
-      .from("likes")
-      .select("post_id, user_id");
-
-    if (likesError) {
-      setLoadError(likesError.message);
-      setLoading(false);
-      return;
-    }
-
-    const { data: repostsData } = await supabase
-      .from("reposts")
-      .select("post_id, user_id");
-
-    const { data: allSavesData } = await supabase
-      .from("saves")
-      .select("post_id");
-
-    const { data: savesData } = await supabase
-      .from("saves")
-      .select("post_id, user_id")
-      .eq("user_id", user?.id ?? "");
-
-    const { data: commentsData } = await supabase.from("comments").select("post_id");
-
-    const { data: tagsData } = await supabase.from("post_tags").select("post_id, tagged_user_id");
-
-    const merged = (postsData || []).map((p) => {
-      const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
-      const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
-      const postReposts = (repostsData || []).filter((r) => r.post_id === p.id);
-      const postSaves = (allSavesData || []).filter((s) => s.post_id === p.id);
-      const postComments = (commentsData || []).filter((c) => c.post_id === p.id);
-      const postTags = (tagsData || [])
-        .filter((t) => t.post_id === p.id)
-        .map((t) => ({
-          tagged_user_id: t.tagged_user_id,
-          username: (profilesData || []).find((pr) => pr.id === t.tagged_user_id)?.username || "unknown",
-        }));
-      return {
-        ...p,
-        username: profile?.username || "unknown",
-        avatarUrl: profile?.avatar_url || null,
-        likeCount: postLikes.length,
-        liked: postLikes.some((l) => l.user_id === user?.id),
-        repostCount: postReposts.length,
-        reposted: postReposts.some((r) => r.user_id === user?.id),
-        saved: (savesData || []).some((s) => s.post_id === p.id),
-        saveCount: postSaves.length,
-        commentCount: postComments.length,
-        tags: postTags,
-        media: mediaMap[p.id] || null,
-      };
-    });
-
-    const rel = await getRelations();
-    // Your own scheduled posts stay off the feed until their time — the
-    // database already hides everyone else's.
-    const visible = merged.filter((p) => !isHiddenFromFeed(rel, p.user_id) && new Date(p.created_at).getTime() <= Date.now());
-
-    // Instagram's order: people you follow (and you) first, newest first;
-    // then "Suggested for you" posts from everyone else, best-performing and
-    // recent first.
     const { data: myFollows } = await supabase
       .from("follows")
       .select("following_id")
       .eq("follower_id", user?.id ?? "");
     const followingIds = new Set((myFollows || []).map((f) => f.following_id));
-    const fromFollowing = visible.filter((p) => p.user_id === user?.id || followingIds.has(p.user_id));
-    const score = (p) => {
-      const ageHours = (Date.now() - new Date(p.created_at).getTime()) / 3600000;
-      return (p.likeCount * 2 + p.commentCount * 3 + p.saveCount * 3 + p.repostCount * 2 + 1) / Math.pow(ageHours + 2, 1.2);
+    feedRef.current = {
+      me: user?.id ?? null,
+      followIds: [user?.id, ...followingIds].filter(Boolean),
+      phase: "following",
+      cursor: null,
+      busy: false,
+      done: false,
     };
-    const suggestedPosts = visible
-      .filter((p) => !(p.user_id === user?.id || followingIds.has(p.user_id)))
-      .sort((a, b) => score(b) - score(a))
-      .map((p) => ({ ...p, suggested: true }));
-    setFollowingCount(fromFollowing.length);
-    setPosts([...fromFollowing, ...suggestedPosts]);
+    if (feedRef.current.followIds.length === 0) feedRef.current.followIds = ["00000000-0000-0000-0000-000000000000"];
 
-    // Suggested reels: from accounts you don't follow, most viewed first.
-    setSuggestedReels(
-      suggestedPosts
-        .filter((p) => p.media_type === "reel")
-        .sort((a, b) => (b.views_count || 0) - (a.views_count || 0))
-        .slice(0, 10)
-    );
-
+    await loadPage();
     setLoading(false);
-    loadSuggestedPeople(user?.id, followingIds, rel, profilesData || []);
+
+    const rel = await getRelations();
+    loadSuggestedReels(feedRef.current.followIds, rel);
+    loadSuggestedPeople(user?.id, followingIds, rel);
   };
 
-  const loadSuggestedPeople = async (meId, followingIds, rel, profilesData) => {
+  // Next 10 when you get near the bottom.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) loadPage();
+      },
+      { rootMargin: "800px 0px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loading, posts.length > 0]);
+
+  // Suggested reels: most-viewed reels from accounts you don't follow.
+  const loadSuggestedReels = async (followIds, rel) => {
+    const { data } = await supabase
+      .from("posts")
+      .select("id, media_url, user_id, views_count, created_at")
+      .eq("media_type", "reel")
+      .eq("archived", false)
+      .is("removed_at", null)
+      .lte("created_at", new Date().toISOString())
+      .not("user_id", "in", `(${followIds.join(",")})`)
+      .order("views_count", { ascending: false })
+      .limit(14);
+    const reels = (data || []).filter((r) => !isHiddenFromFeed(rel, r.user_id)).slice(0, 10);
+    if (reels.length === 0) {
+      setSuggestedReels([]);
+      return;
+    }
+    const { data: profs } = await supabase.from("profiles").select("id, username").in("id", [...new Set(reels.map((r) => r.user_id))]);
+    const name = Object.fromEntries((profs || []).map((p) => [p.id, p.username]));
+    setSuggestedReels(reels.map((r) => ({ ...r, username: name[r.user_id] || "unknown" })));
+  };
+
+  const loadSuggestedPeople = async (meId, followingIds, rel) => {
     if (!meId) return;
     let dismissed = [];
     try {
@@ -2602,36 +2752,45 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       supabase.from("follows").select("follower_id").eq("following_id", meId),
     ]);
     const followsMeSet = new Set((followsMe || []).map((f) => f.follower_id));
-    const byId = Object.fromEntries(profilesData.map((p) => [p.id, p]));
     const tally = {};
     (theirFollows || []).forEach((f) => {
       if (skip.has(f.following_id)) return;
       const t = (tally[f.following_id] = tally[f.following_id] || { count: 0, via: f.follower_id });
       t.count += 1;
     });
-    // Anyone who follows you but you don't follow back, too.
     followsMeSet.forEach((id) => {
       if (!skip.has(id) && !tally[id]) tally[id] = { count: 0, via: null };
     });
     let ranked = Object.entries(tally)
       .map(([id, t]) => ({ id, ...t }))
-      .filter((t) => byId[t.id] && !isBlockedEither(rel, t.id))
-      .sort((a, b) => b.count - a.count || Number(followsMeSet.has(b.id)) - Number(followsMeSet.has(a.id)));
-    // New accounts with no network yet: fill with anyone else.
+      .filter((t) => !isBlockedEither(rel, t.id))
+      .sort((a, b) => b.count - a.count || Number(followsMeSet.has(b.id)) - Number(followsMeSet.has(a.id)))
+      .slice(0, 15);
+    // New accounts with no network yet: fill with other people on Loop.
     if (ranked.length < 6) {
-      profilesData
+      const { data: others } = await supabase.from("profiles").select("id").limit(40);
+      (others || [])
         .filter((p) => !skip.has(p.id) && !tally[p.id] && !isBlockedEither(rel, p.id))
         .slice(0, 12 - ranked.length)
         .forEach((p) => ranked.push({ id: p.id, count: 0, via: null }));
     }
+    const needIds = [...new Set([...ranked.map((t) => t.id), ...ranked.map((t) => t.via).filter(Boolean)])];
+    if (needIds.length === 0) {
+      setSuggestedPeople([]);
+      return;
+    }
+    const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", needIds);
+    const byId = Object.fromEntries((profs || []).map((p) => [p.id, p]));
     setSuggestedPeople(
-      ranked.slice(0, 15).map((t) => ({
-        ...byId[t.id],
-        mutualCount: t.count,
-        mutualName: t.count > 0 ? byId[t.via]?.username : null,
-        followsYou: followsMeSet.has(t.id),
-        followed: false,
-      }))
+      ranked
+        .filter((t) => byId[t.id])
+        .map((t) => ({
+          ...byId[t.id],
+          mutualCount: t.count,
+          mutualName: t.count > 0 ? byId[t.via]?.username : null,
+          followsYou: followsMeSet.has(t.id),
+          followed: false,
+        }))
     );
   };
 
@@ -2781,7 +2940,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           {postIndex === Math.min(3, followingCount) && (
             <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
           )}
-          {postIndex === followingCount && followingCount > 0 && (
+          {postIndex === followingCount && followingCount > 0 && followingDone && (
             <div className="flex flex-col items-center py-6 px-4">
               <div className="w-14 h-14 rounded-full flex items-center justify-center mb-2" style={{ background: ACCENT }}>
                 <Check size={28} color="var(--on-accent)" strokeWidth={2.4} />
@@ -2995,8 +3154,17 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           </React.Fragment>
         ))
       )}
-      {!loading && posts.length > 0 && posts.length <= followingCount + 4 && (
+      {!loading && posts.length > 0 && posts.length <= followingCount + 4 && !loadingMore && feedRef.current.done && (
         <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />
+      )}
+      {!loading && posts.length > 0 && (
+        <div ref={sentinelRef} className="flex justify-center py-6">
+          {loadingMore ? (
+            <div className="w-6 h-6 rounded-full animate-spin" style={{ border: "2px solid var(--border)", borderTopColor: "var(--text)" }} />
+          ) : feedRef.current.done ? (
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>You've seen everything for now</span>
+          ) : null}
+        </div>
       )}
 
       {commentSheetFor && (
@@ -3149,6 +3317,80 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
     setTimeout(() => setToast(""), 1800);
   };
 
+  // Reels load 10 at a time; the next 10 arrive while you're 3 from the end.
+  const REELS_PAGE = 10;
+  const reelsRef = React.useRef({ me: null, cursor: null, busy: false, done: false, skipId: null });
+
+  const enrichReels = async (rows, meId) => {
+    if (rows.length === 0) return [];
+    const ids = rows.map((p) => p.id);
+    const [{ data: likesData }, { data: repostsData }, { data: savesData }, { data: commentsData }, { data: tagsData }] = await Promise.all([
+      supabase.from("likes").select("post_id, user_id").in("post_id", ids),
+      supabase.from("reposts").select("post_id, user_id").in("post_id", ids),
+      supabase.from("saves").select("post_id, user_id").in("post_id", ids),
+      supabase.from("comments").select("post_id").in("post_id", ids),
+      supabase.from("post_tags").select("post_id, tagged_user_id").in("post_id", ids),
+    ]);
+    const peopleIds = [...new Set([...rows.map((p) => p.user_id), ...(tagsData || []).map((t) => t.tagged_user_id)])];
+    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url").in("id", peopleIds);
+    const prof = Object.fromEntries((profilesData || []).map((p) => [p.id, p]));
+    const of = (list, id) => (list || []).filter((x) => x.post_id === id);
+    return rows.map((p) => {
+      const l = of(likesData, p.id);
+      const rp = of(repostsData, p.id);
+      const sv = of(savesData, p.id);
+      return {
+        ...p,
+        username: prof[p.user_id]?.username || "unknown",
+        avatarUrl: prof[p.user_id]?.avatar_url || null,
+        likeCount: l.length,
+        liked: l.some((x) => x.user_id === meId),
+        repostCount: rp.length,
+        reposted: rp.some((x) => x.user_id === meId),
+        saved: sv.some((x) => x.user_id === meId),
+        saveCount: sv.length,
+        commentCount: of(commentsData, p.id).length,
+        tags: of(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
+      };
+    });
+  };
+
+  const REEL_COLS = "id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location";
+
+  const loadMoreReels = async () => {
+    const st = reelsRef.current;
+    if (st.busy || st.done) return;
+    st.busy = true;
+    try {
+      const rel = await getRelations();
+      let q = supabase
+        .from("posts")
+        .select(REEL_COLS)
+        .eq("media_type", "reel")
+        .eq("archived", false)
+        .is("removed_at", null)
+        .lte("created_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(REELS_PAGE);
+      if (st.cursor) q = q.lt("created_at", st.cursor);
+      const { data, error } = await q;
+      if (error) throw error;
+      const batch = data || [];
+      if (batch.length > 0) st.cursor = batch[batch.length - 1].created_at;
+      if (batch.length < REELS_PAGE) st.done = true;
+      const visible = batch.filter((r) => r.id !== st.skipId && !isHiddenFromFeed(rel, r.user_id));
+      const enriched = await enrichReels(visible, st.me);
+      setReels((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        return prev.concat(enriched.filter((r) => !seen.has(r.id)));
+      });
+    } catch (e) {
+      setLoadError(e.message || "Couldn't load reels");
+      st.done = true;
+    }
+    st.busy = false;
+  };
+
   const loadReels = async () => {
     setLoading(true);
     setLoadError("");
@@ -3157,72 +3399,30 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
       data: { user },
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
+    reelsRef.current = { me: user?.id ?? null, cursor: null, busy: false, done: false, skipId: startReelId || null };
 
-    const { data: postsData, error: postsError } = await supabase
-      .from("posts")
-      .select("id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location")
-      .eq("media_type", "reel")
-      .eq("archived", false)
-      .order("created_at", { ascending: false });
-
-    if (postsError) {
-      setLoadError(postsError.message);
-      setLoading(false);
-      return;
-    }
-
-    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url");
-    const { data: likesData } = await supabase.from("likes").select("post_id, user_id");
-    const { data: repostsData } = await supabase.from("reposts").select("post_id, user_id");
-    const { data: savesData } = await supabase
-      .from("saves")
-      .select("post_id, user_id")
-      .eq("user_id", user?.id ?? "");
-    const { data: allSavesData } = await supabase.from("saves").select("post_id");
-    const { data: commentsData } = await supabase.from("comments").select("post_id");
     const { data: followsData } = await supabase
       .from("follows")
       .select("following_id")
       .eq("follower_id", user?.id ?? "");
-    const { data: tagsData } = await supabase.from("post_tags").select("post_id, tagged_user_id");
-
     setFollowingSet(new Set((followsData || []).map((f) => f.following_id)));
 
-    const merged = (postsData || []).map((p) => {
-      const profile = (profilesData || []).find((pr) => pr.id === p.user_id);
-      const postLikes = (likesData || []).filter((l) => l.post_id === p.id);
-      const postReposts = (repostsData || []).filter((r) => r.post_id === p.id);
-      const postSaves = (allSavesData || []).filter((s) => s.post_id === p.id);
-      const postComments = (commentsData || []).filter((c) => c.post_id === p.id);
-      const postTags = (tagsData || [])
-        .filter((t) => t.post_id === p.id)
-        .map((t) => ({
-          tagged_user_id: t.tagged_user_id,
-          username: (profilesData || []).find((pr) => pr.id === t.tagged_user_id)?.username || "unknown",
-        }));
-      return {
-        ...p,
-        username: profile?.username || "unknown",
-        avatarUrl: profile?.avatar_url || null,
-        likeCount: postLikes.length,
-        liked: postLikes.some((l) => l.user_id === user?.id),
-        repostCount: postReposts.length,
-        reposted: postReposts.some((r) => r.user_id === user?.id),
-        saved: (savesData || []).some((s) => s.post_id === p.id),
-        saveCount: postSaves.length,
-        commentCount: postComments.length,
-        tags: postTags,
-      };
-    });
-
-    const rel = await getRelations();
-    const visible = merged.filter((r) => !isHiddenFromFeed(rel, r.user_id) && new Date(r.created_at).getTime() <= Date.now());
-    setReels(visible);
-    // Opened from a reel on Home: start on that reel.
-    const startAt = startReelId ? visible.findIndex((r) => r.id === startReelId) : -1;
-    setIndex(startAt > 0 ? startAt : 0);
+    // Opened from a reel on Home: that reel comes first, then the newest.
+    let first = [];
+    if (startReelId) {
+      const { data: one } = await supabase.from("posts").select(REEL_COLS).eq("id", startReelId).maybeSingle();
+      if (one) first = await enrichReels([one], user?.id ?? null);
+    }
+    setReels(first);
+    setIndex(0);
+    await loadMoreReels();
     setLoading(false);
   };
+
+  // Fetch the next page while you're still a few reels away from the end.
+  useEffect(() => {
+    if (!loading && reels.length > 0 && index >= reels.length - 3) loadMoreReels();
+  }, [index, reels.length, loading]);
 
   const reel = reels[index];
 
@@ -3944,21 +4144,55 @@ function ReelCommentsSheet({
   const [editText, setEditText] = useState("");
   const [attachment, setAttachment] = useState(null); // { file, url }
   const attachRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+  const [expanded, setExpanded] = useState(new Set()); // threads with replies open
 
   useEffect(() => {
     loadComments();
   }, []);
 
+  const openProfileByName = async (name) => {
+    const { data } = await supabase.from("profiles").select("id").ilike("username", name).maybeSingle();
+    if (data?.id) {
+      onClose?.();
+      onOpenProfile?.(data.id);
+    }
+  };
+
+  // Reply like Instagram: the reply goes under the top comment, and the
+  // box starts with @name of whoever you're answering.
+  const startReply = (topComment, target) => {
+    setReplyingTo({ id: topComment.id, username: target.username });
+    setText(`@${target.username} `);
+    setExpanded((prev) => new Set(prev).add(topComment.id));
+    setMenuFor(null);
+    setTimeout(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }, 30);
+  };
+
   const loadComments = async () => {
     setLoading(true);
     const { data: commentsData } = await supabase
       .from("comments")
-      .select("id, user_id, content, image_url, created_at, parent_id")
+      .select("id, user_id, content, image_url, created_at, parent_id, edited_at")
       .eq("post_id", postId)
       .order("created_at", { ascending: true });
 
-    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url");
-    const { data: reactionsData } = await supabase.from("comment_reactions").select("comment_id, user_id, type");
+    const commentIds = (commentsData || []).map((c) => c.id);
+    const authorIds = [...new Set((commentsData || []).map((c) => c.user_id))];
+    const [{ data: profilesData }, { data: reactionsData }] = await Promise.all([
+      authorIds.length
+        ? supabase.from("profiles").select("id, username, avatar_url").in("id", authorIds)
+        : Promise.resolve({ data: [] }),
+      commentIds.length
+        ? supabase.from("comment_reactions").select("comment_id, user_id, type").in("comment_id", commentIds)
+        : Promise.resolve({ data: [] }),
+    ]);
     const hidden = await hiddenCommenterSet(postOwnerId);
     const rel = await getRelations();
     const iAmOwner = currentUserId && currentUserId === postOwnerId;
@@ -3993,9 +4227,10 @@ function ReelCommentsSheet({
 
     let imageUrl = null;
     if (attachment) {
-      const safeName = attachment.file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const upFile = await compressImage(attachment.file, 1080);
+      const safeName = upFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const path = `${currentUserId}/${Date.now()}-${safeName}`;
-      const { error: upErr } = await supabase.storage.from("comments").upload(path, attachment.file);
+      const { error: upErr } = await supabase.storage.from("comments").upload(path, upFile);
       if (upErr) {
         setPosting(false);
         alert(upErr.message);
@@ -4022,6 +4257,7 @@ function ReelCommentsSheet({
       return;
     }
     if (!error) {
+      if (replyingTo) setExpanded((prev) => new Set(prev).add(replyingTo.id));
       setText("");
       setReplyingTo(null);
       onCommentPosted?.();
@@ -4086,11 +4322,11 @@ function ReelCommentsSheet({
   };
 
   const deleteComment = async (comment) => {
-    if (comment.user_id !== currentUserId) return;
+    if (comment.user_id !== currentUserId && postOwnerId !== currentUserId) return;
+    setMenuFor(null);
     if (!window.confirm("Delete this comment?")) return;
     setComments((prev) => prev.filter((c) => c.id !== comment.id && c.parent_id !== comment.id));
     await supabase.from("comments").delete().eq("id", comment.id);
-    setMenuFor(null);
   };
 
   const startEdit = (comment) => {
@@ -4102,9 +4338,17 @@ function ReelCommentsSheet({
   const saveEdit = async (comment) => {
     const trimmed = editText.trim();
     if (!trimmed) return;
-    setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: trimmed } : c)));
+    if (trimmed === comment.content) {
+      setEditingId(null);
+      return;
+    }
+    setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: trimmed, edited_at: new Date().toISOString() } : c)));
     setEditingId(null);
-    await supabase.from("comments").update({ content: trimmed }).eq("id", comment.id);
+    const { error } = await supabase.from("comments").update({ content: trimmed }).eq("id", comment.id);
+    if (error) {
+      setComments((prev) => prev.map((c) => (c.id === comment.id ? comment : c)));
+      alert(error.message.includes("15 minutes") ? "Comments can only be edited within 15 minutes of posting." : error.message);
+    }
   };
 
   const copyComment = (comment) => {
@@ -4118,6 +4362,7 @@ function ReelCommentsSheet({
     await supabase.from("reports").insert({
       post_id: postId,
       comment_id: comment.id,
+      reported_user_id: comment.user_id,
       reporter_id: currentUserId,
       reason: "Reported comment",
     });
@@ -4169,58 +4414,85 @@ function ReelCommentsSheet({
           </button>
         )}
 
-        <div className="flex-1 overflow-y-auto px-4 pt-3" onClick={() => setMenuFor(null)}>
+        <div className="flex-1 overflow-y-auto px-4 pt-3">
           {loading ? (
             <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
           ) : topLevel.length === 0 ? (
             <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No comments yet</p>
           ) : (
-            topLevel.map((c) => (
-              <div key={c.id} className="mb-3">
-                <CommentRow
-                  comment={c}
-                  isPinned={c.user_id === postOwnerId}
-                  isOwn={c.user_id === currentUserId}
-                  isEditing={editingId === c.id}
-                  editText={editText}
-                  onEditTextChange={setEditText}
-                  onSaveEdit={() => saveEdit(c)}
-                  onCancelEdit={() => setEditingId(null)}
-                  onReact={(type) => setReaction(c, type)}
-                  onReply={() => setReplyingTo(c)}
-                  menuOpen={menuFor === c.id}
-                  onOpenMenu={() => setMenuFor(menuFor === c.id ? null : c.id)}
-                  onEdit={() => startEdit(c)}
-                  onDelete={() => deleteComment(c)}
-                  onCopy={() => copyComment(c)}
-                  onReport={() => reportComment(c)}
-                />
-                {repliesOf(c.id).map((r) => (
-                  <div key={r.id} className="ml-9 mt-2">
-                    <CommentRow
-                      comment={r}
-                      isPinned={r.user_id === postOwnerId}
-                      isOwn={r.user_id === currentUserId}
-                      isEditing={editingId === r.id}
-                      editText={editText}
-                      onEditTextChange={setEditText}
-                      onSaveEdit={() => saveEdit(r)}
-                      onCancelEdit={() => setEditingId(null)}
-                      onReact={(type) => setReaction(r, type)}
-                      onReply={() => setReplyingTo(c)}
-                      menuOpen={menuFor === r.id}
-                      onOpenMenu={() => setMenuFor(menuFor === r.id ? null : r.id)}
-                      onEdit={() => startEdit(r)}
-                      onDelete={() => deleteComment(r)}
-                      onCopy={() => copyComment(r)}
-                      onReport={() => reportComment(r)}
-                    />
-                  </div>
-                ))}
-              </div>
-            ))
+            topLevel.map((c) => {
+              const replies = repliesOf(c.id);
+              const open = expanded.has(c.id);
+              const rowProps = (x, top, isReply) => ({
+                comment: x,
+                isReply,
+                replyToName: isReply ? top.username : null,
+                isPinned: x.user_id === postOwnerId,
+                isEditing: editingId === x.id,
+                editText,
+                onEditTextChange: setEditText,
+                onSaveEdit: () => saveEdit(x),
+                onCancelEdit: () => setEditingId(null),
+                onReact: (type) => setReaction(x, type),
+                onReply: () => startReply(top, x),
+                onOpenMenu: () => setMenuFor(x.id),
+                onOpenProfile: () => {
+                  onClose?.();
+                  onOpenProfile?.(x.user_id);
+                },
+                onMention: openProfileByName,
+              });
+              return (
+                <div key={c.id} className="mb-4">
+                  <CommentRow {...rowProps(c, c, false)} />
+                  {replies.length > 0 && (
+                    <div className="mt-2" style={{ marginLeft: 46 }}>
+                      <button
+                        onClick={() =>
+                          setExpanded((prev) => {
+                            const next = new Set(prev);
+                            open ? next.delete(c.id) : next.add(c.id);
+                            return next;
+                          })
+                        }
+                        className="flex items-center gap-2.5 text-xs mb-2"
+                        style={{ color: "var(--text-muted)", fontWeight: 600 }}
+                      >
+                        <span style={{ width: 24, height: 1, background: "var(--text-muted)", opacity: 0.6 }} />
+                        {open ? "Hide replies" : `View ${replies.length} ${replies.length === 1 ? "reply" : "replies"}`}
+                      </button>
+                      {open && (
+                        <div className="flex flex-col gap-3 pl-3" style={{ borderLeft: "2px solid var(--border-subtle)" }}>
+                          {replies.map((rp) => (
+                            <CommentRow key={rp.id} {...rowProps(rp, c, true)} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
+
+        {menuFor && comments.find((x) => x.id === menuFor) && (() => {
+          const mc = comments.find((x) => x.id === menuFor);
+          const top = mc.parent_id ? comments.find((x) => x.id === mc.parent_id) || mc : mc;
+          return (
+            <CommentActionSheet
+              comment={mc}
+              isOwn={mc.user_id === currentUserId}
+              isPostOwner={postOwnerId === currentUserId}
+              onClose={() => setMenuFor(null)}
+              onReply={() => startReply(top, mc)}
+              onCopy={() => copyComment(mc)}
+              onEdit={() => startEdit(mc)}
+              onDelete={() => deleteComment(mc)}
+              onReport={() => reportComment(mc)}
+            />
+          );
+        })()}
 
         <div className="px-4 pt-2 pb-4" style={{ borderTop: "1px solid var(--border)" }}>
           {commentsDisabled ? (
@@ -4228,9 +4500,19 @@ function ReelCommentsSheet({
           ) : (
             <>
               {replyingTo && (
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Replying to {replyingTo.username}</span>
-                  <button onClick={() => setReplyingTo(null)}><X size={12} color="var(--text-muted)" /></button>
+                <div className="flex items-center justify-between mb-2 rounded-xl px-3 py-2" style={{ background: "var(--surface)" }}>
+                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Replying to <span style={{ color: "var(--text)", fontWeight: 700 }}>{replyingTo.username}</span>
+                  </span>
+                  <button
+                    onClick={() => {
+                      setReplyingTo(null);
+                      setText((t) => t.replace(/^@[a-zA-Z0-9_.]+\s?/, ""));
+                    }}
+                    aria-label="Cancel reply"
+                  >
+                    <X size={14} color="var(--text-muted)" />
+                  </button>
                 </div>
               )}
               {attachment && (
@@ -4267,9 +4549,10 @@ function ReelCommentsSheet({
               />
               <div className="flex items-end gap-2">
                 <textarea
+                  ref={inputRef}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  placeholder="Add a comment..."
+                  placeholder={replyingTo ? `Reply to ${replyingTo.username}...` : "Add a comment..."}
                   rows={1}
                   className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
                   style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
@@ -4299,10 +4582,39 @@ function ReelCommentsSheet({
   );
 }
 
+const COMMENT_EDIT_WINDOW_MS = 15 * 60 * 1000;
+const canEditComment = (c) => Date.now() - new Date(c.created_at).getTime() < COMMENT_EDIT_WINDOW_MS;
+
+// Comment text with @names shown bold and tappable.
+function MentionText({ text, onMention }) {
+  if (!text) return null;
+  const parts = text.split(/(@[a-zA-Z0-9_.]+)/g);
+  return parts.map((part, i) =>
+    /^@[a-zA-Z0-9_.]+$/.test(part) ? (
+      <span
+        key={i}
+        onClick={(e) => {
+          e.stopPropagation();
+          onMention?.(part.slice(1));
+        }}
+        style={{ color: "var(--accent-solid)", fontWeight: 600 }}
+      >
+        {part}
+      </span>
+    ) : (
+      <React.Fragment key={i}>{part}</React.Fragment>
+    )
+  );
+}
+
+// One comment. Long-press (or right-click) opens its action sheet.
+// Replies show who they answer: an @name at the start (added when you tap
+// Reply, the way Instagram does it), or the parent's name for older replies.
 function CommentRow({
   comment,
+  replyToName,
+  isReply,
   isPinned,
-  isOwn,
   isEditing,
   editText,
   onEditTextChange,
@@ -4310,56 +4622,43 @@ function CommentRow({
   onCancelEdit,
   onReact,
   onReply,
-  menuOpen,
   onOpenMenu,
-  onEdit,
-  onDelete,
-  onCopy,
-  onReport,
+  onOpenProfile,
+  onMention,
 }) {
   const pressTimer = React.useRef(null);
-  const openedAtRef = React.useRef(0);
-
   const startPress = () => {
-    pressTimer.current = setTimeout(() => {
-      openedAtRef.current = Date.now();
-      onOpenMenu();
-    }, 500);
+    pressTimer.current = setTimeout(() => onOpenMenu(), 450);
   };
-  const cancelPress = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-  };
+  const cancelPress = () => clearTimeout(pressTimer.current);
+  const startsWithMention = /^@[a-zA-Z0-9_.]+/.test(comment.content || "");
 
   return (
     <div
-      className="relative flex items-start gap-2.5"
+      className="relative flex items-start gap-3 select-none"
       onTouchStart={startPress}
       onTouchEnd={cancelPress}
       onTouchMove={cancelPress}
       onContextMenu={(e) => {
         e.preventDefault();
-        openedAtRef.current = Date.now();
         onOpenMenu();
       }}
     >
-      <div className="w-7 h-7 rounded-full shrink-0 overflow-hidden" style={{ background: ACCENT, padding: 1.5 }}>
-        <div className="w-full h-full rounded-full overflow-hidden bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
-          {comment.avatarUrl ? (
-            <img src={comment.avatarUrl} alt="" className="w-full h-full object-cover" />
-          ) : (
-            comment.username[0].toUpperCase()
-          )}
-        </div>
-      </div>
-      <div className="flex-1">
+      <button onClick={onOpenProfile} className="shrink-0">
+        <Avatar username={comment.username} avatarUrl={comment.avatarUrl} size={isReply ? 28 : 34} />
+      </button>
+      <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs" style={{ color: "var(--text)", fontWeight: 700 }}>{comment.username}</span>
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{timeAgo(comment.created_at)}</span>
+          <button onClick={onOpenProfile} className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>{comment.username}</button>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {timeAgo(comment.created_at)}
+            {comment.edited_at ? " · Edited" : ""}
+          </span>
           {isPinned && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)" }}>Author</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)", fontWeight: 600 }}>Author</span>
           )}
           {comment.restricted && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)" }}>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)" }}>
               Restricted · only you and them
             </span>
           )}
@@ -4368,95 +4667,98 @@ function CommentRow({
         {isEditing ? (
           <div className="mt-1">
             <textarea
+              autoFocus
               value={editText}
               onChange={(e) => onEditTextChange(e.target.value)}
-              rows={1}
-              className="w-full rounded-lg px-2 py-1.5 text-xs outline-none resize-none"
+              rows={2}
+              className="w-full rounded-xl px-3 py-2 text-[13px] outline-none resize-none"
               style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
             />
-            <div className="flex items-center gap-3 mt-1">
-              <button onClick={onSaveEdit} className="text-[10px]" style={{ color: "var(--accent-start)", fontWeight: 700 }}>Save</button>
-              <button onClick={onCancelEdit} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Cancel</button>
+            <div className="flex items-center gap-4 mt-1">
+              <button onClick={onSaveEdit} className="text-xs" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>Save</button>
+              <button onClick={onCancelEdit} className="text-xs" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Cancel</button>
             </div>
           </div>
         ) : (
           <>
-            {comment.content && (
-              <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{comment.content}</p>
-            )}
+            {comment.content ? (
+              <p className="text-[13px] mt-0.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.4 }}>
+                {isReply && !startsWithMention && replyToName && (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMention?.(replyToName);
+                    }}
+                    style={{ color: "var(--accent-solid)", fontWeight: 600 }}
+                  >
+                    @{replyToName}{" "}
+                  </span>
+                )}
+                <MentionText text={comment.content} onMention={onMention} />
+              </p>
+            ) : null}
             {comment.image_url && (
               <img
                 src={comment.image_url}
                 alt=""
                 loading="lazy"
                 className="mt-1.5 rounded-xl object-cover"
-                style={{ maxWidth: 180, maxHeight: 220, border: "1px solid var(--border)" }}
+                style={{ maxWidth: 190, maxHeight: 230, border: "1px solid var(--border)" }}
               />
             )}
-            <div className="flex items-center gap-3 mt-1">
-              <button onClick={onReply} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Reply</button>
-              {isOwn && (
-                <button onClick={onEdit} className="text-[10px]" style={{ color: "var(--text-muted)" }}>Edit</button>
-              )}
-              {comment.likeCount > 0 && (
-                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{comment.likeCount} likes</span>
-              )}
+            <div className="flex items-center gap-4 mt-1.5">
+              <button onClick={onReply} className="text-xs" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Reply</button>
               {comment.dislikeCount > 0 && (
-                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{comment.dislikeCount} dislikes</span>
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {comment.dislikeCount} {comment.dislikeCount === 1 ? "dislike" : "dislikes"}
+                </span>
               )}
             </div>
           </>
         )}
       </div>
-      <div className="flex flex-col items-center gap-2 pt-0.5">
-        <button onClick={() => onReact("like")}>
-          <Heart size={13} color={comment.myReaction === "like" ? "var(--heart)" : "var(--text-muted)"} fill={comment.myReaction === "like" ? "var(--heart)" : "none"} />
+      <div className="flex flex-col items-center shrink-0" style={{ width: 34 }}>
+        <button onClick={() => onReact("like")} className="flex flex-col items-center p-1 transition-transform active:scale-90" aria-label="Like comment">
+          <Heart size={19} color={comment.myReaction === "like" ? "var(--heart)" : "var(--text-muted)"} fill={comment.myReaction === "like" ? "var(--heart)" : "none"} strokeWidth={1.9} />
+          <span className="text-[11px] leading-none mt-0.5" style={{ color: "var(--text-muted)", minHeight: 11 }}>
+            {comment.likeCount > 0 ? formatCount(comment.likeCount) : ""}
+          </span>
         </button>
-        <button onClick={() => onReact("dislike")}>
-          <ThumbsDown size={12} color={comment.myReaction === "dislike" ? "var(--accent-end)" : "var(--text-muted)"} fill={comment.myReaction === "dislike" ? "var(--accent-end)" : "none"} />
+        <button onClick={() => onReact("dislike")} className="p-1 mt-0.5 transition-transform active:scale-90" aria-label="Dislike comment">
+          <ThumbsDown size={17} color={comment.myReaction === "dislike" ? "var(--accent-end)" : "var(--text-muted)"} fill={comment.myReaction === "dislike" ? "var(--accent-end)" : "none"} strokeWidth={1.9} />
         </button>
       </div>
-
-      {menuOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-40"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (Date.now() - openedAtRef.current < 400) return;
-              onOpenMenu();
-            }}
-          />
-          <div
-            className="absolute right-8 top-6 z-50 rounded-xl overflow-hidden py-1"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", minWidth: 150 }}
-          >
-            {isOwn && (
-              <button onClick={onEdit} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
-                <Pencil size={13} /> Edit
-              </button>
-            )}
-            {isOwn && (
-              <button onClick={onDelete} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
-                <Trash2 size={13} /> Delete
-              </button>
-            )}
-            <button onClick={onCopy} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
-              <Copy size={13} /> Copy
-            </button>
-            <button onClick={onReply} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
-              <MessageCircle size={13} /> Reply
-            </button>
-            {!isOwn && (
-              <button onClick={onReport} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--accent-start)" }}>
-                Report
-              </button>
-            )}
-          </div>
-        </>
-      )}
-
     </div>
+  );
+}
+
+// Long-press sheet for a comment.
+function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport }) {
+  const editable = isOwn && canEditComment(comment);
+  return (
+    <StorySheetShell title="Comment" onClose={onClose}>
+      <div className="px-4 pb-2">
+        <div className="rounded-2xl px-3 py-2.5 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <p className="text-xs mb-0.5" style={{ color: "var(--text)", fontWeight: 700 }}>{comment.username}</p>
+          <p className="text-[13px]" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 90, overflow: "hidden" }}>
+            {comment.content || "Photo"}
+          </p>
+        </div>
+      </div>
+      <div className="pb-6">
+        <StoryMenuRow icon={<MessageCircle size={17} color="var(--text)" />} label="Reply" onClick={onReply} />
+        {comment.content && <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy text" onClick={onCopy} />}
+        {isOwn && (
+          <StoryMenuRow
+            icon={<Pencil size={17} color={editable ? "var(--text)" : "var(--text-muted)"} />}
+            label={editable ? "Edit" : "Edit · only within 15 minutes"}
+            onClick={editable ? onEdit : undefined}
+          />
+        )}
+        {(isOwn || isPostOwner) && <StoryMenuRow icon={<Trash2 size={17} color="var(--heart)" />} label="Delete" danger onClick={onDelete} />}
+        {!isOwn && <StoryMenuRow icon={<Flag size={17} color="var(--heart)" />} label="Report" danger onClick={onReport} />}
+      </div>
+    </StorySheetShell>
   );
 }
 
@@ -4945,6 +5247,11 @@ function UploadScreen() {
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
     if (!selected) return;
+    if (selected.size > MAX_UPLOAD_VIDEO_BYTES) {
+      setError("That video is over 50 MB — pick a shorter one.");
+      e.target.value = "";
+      return;
+    }
     setFile(selected);
     setPreviewUrl(URL.createObjectURL(selected));
     setError("");
@@ -4958,6 +5265,12 @@ function UploadScreen() {
     e.target.value = "";
     if (picked.length === 0) return;
     setError("");
+    const tooBig = picked.filter((f) => (f.type || "").startsWith("video") && f.size > MAX_UPLOAD_VIDEO_BYTES);
+    if (tooBig.length) {
+      setLimitNotice("Videos over 50 MB were skipped — pick shorter ones.");
+      picked.splice(0, picked.length, ...picked.filter((f) => !tooBig.includes(f)));
+      if (picked.length === 0) return;
+    }
     // The first pick decides the shape (you can still change it).
     if (items.length === 0) detectAspect(picked[0]).then(setAspect);
     setItems((prev) => {
@@ -5067,7 +5380,7 @@ function UploadScreen() {
     let carouselUploads = null; // set only when items.length > 1
 
     if (mode === "reel") {
-      const filePath = `${user.id}/${Date.now()}-${file.name}`;
+      const filePath = `${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, file);
       if (uploadError) {
         setUploading(false);
@@ -5082,8 +5395,9 @@ function UploadScreen() {
       // The overwhelming common case — identical to the original single-post
       // path, so it never touches post_media at all.
       const only = items[0];
-      const filePath = `${user.id}/${Date.now()}-${only.file.name}`;
-      const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, only.file);
+      const onlyFile = await compressImage(only.file);
+      const filePath = `${user.id}/${Date.now()}-${onlyFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, onlyFile);
       if (uploadError) {
         setUploading(false);
         setError(uploadError.message);
@@ -5099,8 +5413,9 @@ function UploadScreen() {
       try {
         carouselUploads = await Promise.all(
           items.map(async (it, i) => {
-            const filePath = `${user.id}/${Date.now()}-${i}-${it.file.name}`;
-            const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, it.file);
+            const upFile = await compressImage(it.file);
+            const filePath = `${user.id}/${Date.now()}-${i}-${upFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+            const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, upFile);
             if (uploadError) throw uploadError;
             const {
               data: { publicUrl },
@@ -7487,7 +7802,8 @@ async function uploadAvatarMedia(userId, file) {
     return { avatar_url: frameUrl, avatar_video_url: videoUrl };
   }
 
-  const photoUrl = await put(`${userId}/${Date.now()}-${safe(file.name)}`, file);
+  const small = await compressImage(file, 640, 0.85);
+  const photoUrl = await put(`${userId}/${Date.now()}-${safe(small.name)}`, small);
   return { avatar_url: photoUrl, avatar_video_url: null };
 }
 
@@ -7511,7 +7827,16 @@ const GENDERS = [
   { key: "third", label: "Third gender" },
 ];
 
-function EditProfileScreen({ currentUserId, onBack, onSaved }) {
+function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
+  // Work out who's signed in ourselves too — right after signing up or
+  // switching accounts the id handed down can still be empty, and an empty
+  // id is what made saving fail with 'invalid input syntax for type uuid'.
+  const [currentUserId, setCurrentUserId] = useState(passedUserId || null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user?.id) setCurrentUserId(data.user.id);
+    });
+  }, [passedUserId]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -7534,7 +7859,9 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
   const fileRef = React.useRef(null);
 
   useEffect(() => {
+    if (!currentUserId) return;
     (async () => {
+      setError("");
       const { data, error: err } = await supabase
         .from("profiles")
         .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender")
@@ -7585,6 +7912,10 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
 
   const uploadAvatar = async (file) => {
     if (!file) return;
+    if (!currentUserId) {
+      setError("Still loading your account — try again in a moment.");
+      return;
+    }
     setAvatarBusy(true);
     setError("");
     try {
@@ -7649,7 +7980,11 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
       }));
 
     setSaving(true);
-    const { error: err } = await supabase
+    if (!currentUserId) {
+      setError("Still loading your account — try again in a moment.");
+      return;
+    }
+    const { data: savedRows, error: err } = await supabase
       .from("profiles")
       .update({
         username: username.trim(),
@@ -7660,8 +7995,14 @@ function EditProfileScreen({ currentUserId, onBack, onSaved }) {
         links: cleanLinks,
         gender,
       })
-      .eq("id", currentUserId);
+      .eq("id", currentUserId)
+      .select("id");
 
+    if (!err && (!savedRows || savedRows.length === 0)) {
+      setSaving(false);
+      setError("Your profile wasn't found — log out and back in, then try again.");
+      return;
+    }
     if (err) {
       setSaving(false);
       // The unique index fires here if someone took the name in between.
@@ -7915,7 +8256,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
       }
       const { data: rows, error: err } = await supabase
         .from("posts")
-        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, aspect_ratio")
+        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, aspect_ratio, removed_at, removed_reason")
         .in("id", postIds);
 
       if (err) {
@@ -8769,7 +9110,39 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
   );
 }
 
-function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
+const REPORT_REASONS = [
+  "Spam",
+  "Nudity or sexual content",
+  "Hate speech or symbols",
+  "Bullying or harassment",
+  "Violence or dangerous content",
+  "Scam or fraud",
+  "Pretending to be someone else",
+  "May be under 13",
+  "Something else",
+];
+
+// Your moderation role, if any ("admin" | "moderator" | null). Cached for
+// the session so screens don't ask the database again and again.
+let staffRolePromise = null;
+function getMyStaffRole() {
+  if (!staffRolePromise) {
+    staffRolePromise = supabase
+      .rpc("my_staff_role")
+      .then(({ data, error }) => (error ? null : data || null))
+      .catch(() => null);
+  }
+  return staffRolePromise;
+}
+function useStaffRole() {
+  const [role, setRole] = useState(null);
+  useEffect(() => {
+    getMyStaffRole().then(setRole);
+  }, []);
+  return role;
+}
+
+function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -8789,6 +9162,8 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
   // How you relate to the person whose profile this is.
   const [myRel, setMyRel] = useState({ blocked: false, blockedBy: false, muted: false, restricted: false });
   const [relBusy, setRelBusy] = useState(null);
+  const staffRole = useStaffRole();
+  const [reportNote, setReportNote] = useState("");
   const avatarInputRef = React.useRef(null);
   const avatarPressRef = React.useRef(null);
   const avatarLongRef = React.useRef(false);
@@ -8835,7 +9210,7 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
 
     let postsQuery = supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived")
+      .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason")
       .eq("user_id", targetId);
     if (!isViewingOwnPosts) {
       postsQuery = postsQuery.eq("archived", false);
@@ -8918,6 +9293,34 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
     }
 
     setLoading(false);
+  };
+
+  const flashNote = (msg) => {
+    setReportNote(msg);
+    setTimeout(() => setReportNote(""), 2200);
+  };
+
+  const reportAccount = async (reason) => {
+    setSheet(null);
+    if (!myId || !profile) return;
+    const { error } = await supabase.from("reports").insert({ reported_user_id: profile.id, reporter_id: myId, reason });
+    flashNote(error ? error.message : "Thanks — we'll review this account.");
+  };
+
+  const modBanProfile = async (days) => {
+    if (!profile) return;
+    const label = days ? `Suspend ${profile.username} for ${days} days?` : `Ban ${profile.username} permanently? Their posts will be hidden.`;
+    if (!window.confirm(label)) return;
+    setSheet(null);
+    const { error } = await supabase.rpc("mod_ban", { p_user: profile.id, p_days: days, p_reason: "Suspended by moderator" });
+    flashNote(error ? error.message : days ? `Suspended for ${days} days` : "Banned permanently");
+  };
+
+  const modUnbanProfile = async () => {
+    if (!profile) return;
+    setSheet(null);
+    const { error } = await supabase.rpc("mod_unban", { p_user: profile.id });
+    flashNote(error ? error.message : "Suspension lifted");
   };
 
   const changeAvatar = async (file) => {
@@ -9335,6 +9738,12 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
                   <Pin size={10} color="var(--accent-end)" />
                 </div>
               )}
+              {tab === "posts" && p.removed_at && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1" style={{ background: "rgba(0,0,0,0.62)" }}>
+                  <Shield size={16} color="#FFFFFF" />
+                  <span className="text-[10px]" style={{ color: "#FFFFFF", fontWeight: 700 }}>Removed</span>
+                </div>
+              )}
               {tab === "posts" && isOwnProfile && p.created_at && new Date(p.created_at).getTime() > Date.now() && (
                 <div
                   className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 py-1"
@@ -9433,12 +9842,52 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
               onClick={() => toggleRelation("blocked")}
             />
             <StoryMenuRow
+              icon={<Flag size={17} color="var(--heart)" />}
+              label="Report"
+              danger
+              onClick={() => setSheet("reportAccount")}
+            />
+            <StoryMenuRow
               icon={<Share2 size={17} color="var(--text)" />}
               label="Share this profile"
               onClick={() => setSheet("shareProfile")}
             />
+            {staffRole && (
+              <>
+                <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+                <p className="px-4 pt-1 pb-1 text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Moderation</p>
+                <StoryMenuRow icon={<Shield size={17} color="var(--heart)" />} label="Suspend for 7 days" danger onClick={() => modBanProfile(7)} />
+                <StoryMenuRow icon={<Shield size={17} color="var(--heart)" />} label="Suspend for 30 days" danger onClick={() => modBanProfile(30)} />
+                {staffRole === "admin" && (
+                  <StoryMenuRow icon={<Shield size={17} color="var(--heart)" />} label="Ban permanently" danger onClick={() => modBanProfile(null)} />
+                )}
+                <StoryMenuRow icon={<Shield size={17} color="var(--text)" />} label="Lift suspension" onClick={modUnbanProfile} />
+              </>
+            )}
           </div>
         </StorySheetShell>
+      )}
+
+      {sheet === "reportAccount" && !isOwnProfile && (
+        <StorySheetShell title={`Report ${profile.username}`} onClose={() => setSheet(null)}>
+          <div className="pb-6">
+            <p className="px-4 pb-2 text-xs" style={{ color: "var(--text-muted)" }}>
+              Why are you reporting this account? They won't know it was you.
+            </p>
+            {REPORT_REASONS.map((reason) => (
+              <StoryMenuRow key={reason} icon={<Flag size={16} color="var(--text-muted)" />} label={reason} onClick={() => reportAccount(reason)} />
+            ))}
+          </div>
+        </StorySheetShell>
+      )}
+
+      {reportNote && (
+        <div
+          className="fixed left-1/2 bottom-24 -translate-x-1/2 z-[80] rounded-full px-4 py-2.5 text-xs"
+          style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}
+        >
+          {reportNote}
+        </div>
       )}
 
       {sheet === "accounts" && (
@@ -9507,6 +9956,19 @@ function ProfileScreen({ userId, onOpenSettings, onOpenPost, onBack, onOpenProfi
       {sheet === "menu" && (
         <StorySheetShell title="Settings and activity" onClose={() => setSheet(null)}>
           <div className="pb-6">
+            {staffRole && (
+              <StoryMenuRow
+                icon={<Shield size={17} color="var(--accent-solid)" />}
+                label="Moderation"
+                trailing={
+                  <span className="text-[11px] capitalize" style={{ color: "var(--text-muted)" }}>{staffRole}</span>
+                }
+                onClick={() => {
+                  setSheet(null);
+                  onOpenModeration?.();
+                }}
+              />
+            )}
             <StoryMenuRow
               icon={<Gauge size={17} color="var(--text)" />}
               label="Your activity"
@@ -13499,8 +13961,10 @@ function ReportScreen({ postId, onBack }) {
     } = await supabase.auth.getUser();
 
     if (user) {
+      const { data: reportedPost } = await supabase.from("posts").select("user_id").eq("id", postId).maybeSingle();
       await supabase.from("reports").insert({
         post_id: postId,
+        reported_user_id: reportedPost?.user_id ?? null,
         reporter_id: user.id,
         reason,
       });
@@ -13727,8 +14191,8 @@ function AuthInput({ icon: Icon, type, placeholder, value, onChange, showToggle,
         style={{ color: "var(--text)" }}
       />
       {showToggle && (
-        <button onClick={onToggle} type="button">
-          {revealed ? <EyeOff size={17} color="var(--text-muted)" /> : <Eye size={17} color="var(--text-muted)" />}
+        <button onClick={onToggle} type="button" className="text-xs shrink-0" style={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+          {revealed ? "Hide" : "Show"}
         </button>
       )}
     </div>
@@ -14297,6 +14761,380 @@ const PEOPLE_LIST_META = {
   muted: { title: "Muted", hint: "You stay following them, but their posts, reels and stories stop appearing. They aren't told." },
 };
 
+// ---- Moderation (Admin + Moderators) ----
+// Reports come in here. One tap dismisses, removes the post/comment, or
+// suspends the account; every decision is written to the log. Only the
+// admin can ban permanently or add/remove moderators — the database
+// enforces that too, not just this screen.
+const MOD_ACTION_LABEL = {
+  dismiss: "Dismissed",
+  remove: "Removed",
+  ban7: "Suspended 7 days",
+  ban30: "Suspended 30 days",
+  banperm: "Banned permanently",
+  restore: "Post restored",
+  unban: "Suspension lifted",
+  add_moderator: "Made moderator",
+  remove_moderator: "Removed as moderator",
+};
+const modLabel = (a) => MOD_ACTION_LABEL[a] || (a?.startsWith("ban") ? `Suspended ${a.slice(3)} days` : a);
+
+function ModerationScreen({ onBack }) {
+  const role = useStaffRole();
+  const [tab, setTab] = useState("reports");
+  const [status, setStatus] = useState("open");
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(null);
+  const [newMod, setNewMod] = useState("");
+  const [note, setNote] = useState("");
+
+  const flash = (msg) => {
+    setNote(msg);
+    setTimeout(() => setNote(""), 2200);
+  };
+
+  const load = async () => {
+    setRows(null);
+    setError("");
+    const call =
+      tab === "reports"
+        ? supabase.rpc("mod_list_reports", { p_status: status })
+        : tab === "bans"
+        ? supabase.rpc("mod_list_bans")
+        : tab === "team"
+        ? supabase.rpc("mod_list_staff")
+        : supabase.rpc("mod_log");
+    const { data, error: err } = await call;
+    if (err) {
+      setError(err.message);
+      setRows([]);
+      return;
+    }
+    setRows(data || []);
+  };
+
+  useEffect(() => {
+    load();
+  }, [tab, status]);
+
+  const act = async (fn, args, done, confirmText) => {
+    if (confirmText && !window.confirm(confirmText)) return;
+    setBusy(JSON.stringify(args));
+    const { error: err } = await supabase.rpc(fn, args);
+    setBusy(null);
+    if (err) {
+      flash(err.message);
+      return;
+    }
+    flash(done);
+    load();
+  };
+
+  const tabs = [
+    ["reports", "Reports"],
+    ["bans", "Suspended"],
+    ["team", "Team"],
+    ["log", "Log"],
+  ];
+
+  const ActionBtn = ({ label, onClick, danger, primary }) => (
+    <button
+      onClick={onClick}
+      disabled={!!busy}
+      className="rounded-lg px-3 h-8 text-xs transition-transform active:scale-95"
+      style={{
+        fontWeight: 700,
+        ...(primary
+          ? { background: ACCENT, color: "var(--on-accent)" }
+          : danger
+          ? { background: "transparent", color: "var(--heart)", border: "1px solid var(--heart)" }
+          : { background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)" }),
+        opacity: busy ? 0.6 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center gap-3 px-4 h-14 shrink-0" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <button onClick={onBack} aria-label="Back">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <span className="text-[17px] flex-1" style={{ color: "var(--text)", fontWeight: 700 }}>Moderation</span>
+        {role && (
+          <span className="text-[11px] rounded-full px-2.5 py-1 capitalize" style={{ background: "var(--surface)", color: "var(--text-secondary)", fontWeight: 700 }}>
+            {role}
+          </span>
+        )}
+      </div>
+
+      <div className="flex shrink-0" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        {tabs.map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className="flex-1 h-11 text-[13px]"
+            style={{
+              color: tab === k ? "var(--text)" : "var(--text-muted)",
+              fontWeight: tab === k ? 700 : 500,
+              borderBottom: tab === k ? "2px solid var(--text)" : "2px solid transparent",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {tab === "reports" && (
+          <div className="flex gap-2 mb-3">
+            {["open", "resolved"].map((st) => (
+              <button
+                key={st}
+                onClick={() => setStatus(st)}
+                className="rounded-full px-3.5 h-8 text-xs capitalize"
+                style={{
+                  fontWeight: 700,
+                  background: status === st ? "var(--text)" : "var(--surface)",
+                  color: status === st ? "var(--bg)" : "var(--text)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {st}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === "team" && role === "admin" && (
+          <div className="rounded-2xl p-3 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <p className="text-[13px] mb-2" style={{ color: "var(--text)", fontWeight: 700 }}>Add a moderator</p>
+            <div className="flex gap-2">
+              <input
+                value={newMod}
+                onChange={(e) => setNewMod(e.target.value)}
+                placeholder="Their username"
+                className="flex-1 rounded-lg px-3 h-9 text-sm outline-none"
+                style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}
+              />
+              <ActionBtn
+                primary
+                label="Add"
+                onClick={() =>
+                  newMod.trim() &&
+                  act("admin_set_role", { p_username: newMod.trim().replace(/^@/, ""), p_role: "moderator" }, "Moderator added").then(() => setNewMod(""))
+                }
+              />
+            </div>
+            <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+              Moderators can review reports, remove posts and suspend for 7 or 30 days. Only you can ban permanently or change the team.
+            </p>
+          </div>
+        )}
+
+        {error ? (
+          <div className="rounded-2xl p-4 text-center" style={{ background: "var(--surface)" }}>
+            <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Couldn't load this</p>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              {/Not allowed/.test(error) ? "This account isn't on the moderation team." : error}
+            </p>
+          </div>
+        ) : rows === null ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center py-12">
+            <Shield size={34} color="var(--text-muted)" strokeWidth={1.5} />
+            <p className="text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>
+              {tab === "reports" ? (status === "open" ? "No open reports" : "Nothing resolved yet") : tab === "bans" ? "No one is suspended" : tab === "team" ? "No team yet" : "No actions yet"}
+            </p>
+            {tab === "reports" && status === "open" && (
+              <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>You're all caught up.</p>
+            )}
+          </div>
+        ) : tab === "reports" ? (
+          rows.map((rp) => (
+            <div key={rp.id} className="rounded-2xl p-3 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <div className="flex items-center gap-2.5">
+                <Avatar username={rp.target_username || "?"} avatarUrl={rp.target_avatar} size={36} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{rp.target_username || "Unknown account"}</p>
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    {rp.reports_against_user} {Number(rp.reports_against_user) === 1 ? "report" : "reports"} in total
+                    {rp.target_banned ? " · Suspended" : ""}
+                  </p>
+                </div>
+                <span className="text-[11px] rounded-full px-2 py-0.5" style={{ background: "var(--bg)", color: "var(--text-secondary)", fontWeight: 600 }}>
+                  {rp.comment_id ? "Comment" : rp.post_id ? "Post" : "Account"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 mt-2.5">
+                <Flag size={13} color="var(--heart)" />
+                <span className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{rp.reason || "No reason given"}</span>
+              </div>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                Reported by {rp.reporter_username || "someone"} · {timeAgo(rp.created_at)} ago
+              </p>
+
+              {rp.comment_id ? (
+                <div className="rounded-xl px-3 py-2 mt-2.5" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+                  <p className="text-[13px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {rp.comment_content || <span style={{ color: "var(--text-muted)" }}>(comment already deleted)</span>}
+                  </p>
+                </div>
+              ) : rp.post_id ? (
+                <div className="mt-2.5">
+                  {rp.post_media_url ? (
+                    <div className="relative rounded-xl overflow-hidden" style={{ background: "var(--bg)", maxHeight: 280 }}>
+                      {rp.post_media_type === "photo" ? (
+                        <img src={rp.post_media_url} alt="" className="w-full object-cover" style={{ maxHeight: 280 }} />
+                      ) : (
+                        <video src={rp.post_media_url} className="w-full object-cover" style={{ maxHeight: 280 }} controls playsInline preload="metadata" />
+                      )}
+                      {rp.post_removed && (
+                        <span className="absolute top-2 left-2 rounded-full px-2 py-0.5 text-[11px]" style={{ background: "var(--heart)", color: "#fff", fontWeight: 700 }}>
+                          Removed
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>(post already deleted)</p>
+                  )}
+                  {rp.post_caption && (
+                    <p className="text-[13px] mt-1.5" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{rp.post_caption}</p>
+                  )}
+                </div>
+              ) : null}
+
+              {rp.status === "open" ? (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <ActionBtn label="Dismiss" onClick={() => act("mod_resolve_report", { p_report: rp.id, p_action: "dismiss" }, "Dismissed")} />
+                  {(rp.post_id || rp.comment_id) && (
+                    <ActionBtn danger label="Remove" onClick={() => act("mod_resolve_report", { p_report: rp.id, p_action: "remove" }, "Removed")} />
+                  )}
+                  <ActionBtn
+                    danger
+                    label="Suspend 7d"
+                    onClick={() => act("mod_resolve_report", { p_report: rp.id, p_action: "ban7" }, "Removed and suspended for 7 days", `Remove this and suspend ${rp.target_username} for 7 days?`)}
+                  />
+                  <ActionBtn
+                    danger
+                    label="Suspend 30d"
+                    onClick={() => act("mod_resolve_report", { p_report: rp.id, p_action: "ban30" }, "Removed and suspended for 30 days", `Remove this and suspend ${rp.target_username} for 30 days?`)}
+                  />
+                  {role === "admin" && (
+                    <ActionBtn
+                      danger
+                      label="Ban"
+                      onClick={() => act("mod_resolve_report", { p_report: rp.id, p_action: "banperm" }, "Banned permanently", `Ban ${rp.target_username} permanently? All their posts will be hidden.`)}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-between mt-3">
+                  <span className="text-xs" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>{modLabel(rp.resolution)}</span>
+                  {rp.post_removed && rp.post_id && (
+                    <ActionBtn label="Restore post" onClick={() => act("mod_restore_post", { p_post: rp.post_id }, "Post restored")} />
+                  )}
+                </div>
+              )}
+            </div>
+          ))
+        ) : tab === "bans" ? (
+          rows.map((b) => (
+            <div key={b.user_id} className="flex items-center gap-3 py-2.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+              <Avatar username={b.username || "?"} avatarUrl={b.avatar_url} size={42} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{b.username}</p>
+                <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+                  {b.until ? `Until ${new Date(b.until).toLocaleDateString()}` : "Permanent"} · {b.reason || "—"}
+                  {b.banned_by_username ? ` · by ${b.banned_by_username}` : ""}
+                </p>
+              </div>
+              {(b.until || role === "admin") && (
+                <ActionBtn label="Lift" onClick={() => act("mod_unban", { p_user: b.user_id }, "Suspension lifted", `Lift the suspension on ${b.username}?`)} />
+              )}
+            </div>
+          ))
+        ) : tab === "team" ? (
+          rows.map((m) => (
+            <div key={m.user_id} className="flex items-center gap-3 py-2.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+              <Avatar username={m.username || "?"} avatarUrl={m.avatar_url} size={42} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{m.username}</p>
+                <p className="text-[11px] capitalize" style={{ color: "var(--text-muted)" }}>{m.role}</p>
+              </div>
+              {role === "admin" && m.role === "moderator" && (
+                <ActionBtn
+                  danger
+                  label="Remove"
+                  onClick={() => act("admin_set_role", { p_username: m.username, p_role: null }, "Removed from the team", `Remove ${m.username} as moderator?`)}
+                />
+              )}
+            </div>
+          ))
+        ) : (
+          rows.map((l, i) => (
+            <div key={i} className="py-2.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+              <p className="text-[13px]" style={{ color: "var(--text)" }}>
+                <span style={{ fontWeight: 700 }}>{l.actor_username || "someone"}</span> · {modLabel(l.action)}
+                {l.target_username ? (
+                  <>
+                    {" "}
+                    <span style={{ fontWeight: 700 }}>{l.target_username}</span>
+                  </>
+                ) : null}
+              </p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {timeAgo(l.created_at)} ago{l.note ? ` · ${l.note}` : ""}
+              </p>
+            </div>
+          ))
+        )}
+      </div>
+
+      {note && (
+        <div
+          className="absolute left-1/2 bottom-6 -translate-x-1/2 z-[80] rounded-full px-4 py-2.5 text-xs"
+          style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", whiteSpace: "nowrap" }}
+        >
+          {note}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Shown instead of the app while an account is suspended or banned.
+function SuspendedScreen({ ban, onLogout }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-8 text-center" style={{ background: "var(--bg)" }}>
+      <div className="w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ background: "var(--surface)" }}>
+        <Shield size={30} color="var(--heart)" />
+      </div>
+      <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>
+        {ban.until ? "Your account is suspended" : "Your account has been disabled"}
+      </p>
+      <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>
+        {ban.until
+          ? `You can use Loop again on ${new Date(ban.until).toLocaleString()}.`
+          : "This account broke Loop's Community Guidelines."}
+      </p>
+      {ban.reason && (
+        <p className="text-xs mt-3 rounded-xl px-3 py-2" style={{ background: "var(--surface)", color: "var(--text-muted)" }}>
+          Reason: {ban.reason}
+        </p>
+      )}
+      <button onClick={onLogout} className="mt-6 rounded-xl px-6 h-11 text-sm" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}>
+        Log out
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [authScreen, setAuthScreen] = useState("login"); // "login" | "signup" | null
   const [checkingSession, setCheckingSession] = useState(true);
@@ -14320,10 +15158,41 @@ export default function App() {
   const [peopleList, setPeopleList] = useState(null); // close_friends | blocked | restricted | muted
   const [profileRefresh, setProfileRefresh] = useState(0);
   const [meId, setMeId] = useState(null);
-
+  const [moderationOpen, setModerationOpen] = useState(false);
+  const [myBan, setMyBan] = useState(null); // { until, reason } while suspended
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMeId(data?.user?.id ?? null));
+    // Keep "who am I" right after logging in, out, or switching accounts.
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      setMeId(session?.user?.id ?? null);
+      staffRolePromise = null;
+      invalidateRelations();
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
+  // Entering the app (after login/sign-up) — make sure we know who it is.
+  useEffect(() => {
+    if (authScreen === null) {
+      supabase.auth.getUser().then(({ data }) => {
+        if (data?.user?.id) setMeId(data.user.id);
+      });
+    }
+  }, [authScreen]);
+  useEffect(() => {
+    if (!meId) {
+      setMyBan(null);
+      return;
+    }
+    supabase
+      .from("user_bans")
+      .select("until, reason")
+      .eq("user_id", meId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data && (!data.until || new Date(data.until).getTime() > Date.now())) setMyBan(data);
+        else setMyBan(null);
+      });
+  }, [meId]);
   const [theme, setThemeState] = useState(() => {
     try {
       return localStorage.getItem("loop_theme") || "dark";
@@ -14382,7 +15251,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan;
 
   React.useEffect(() => {
     // A reset link lands here with "type=recovery" in the URL. Check it up
@@ -14460,8 +15329,12 @@ export default function App() {
         className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh)}>
-          {reportPostId !== null ? (
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen)}>
+          {myBan ? (
+            <SuspendedScreen ban={myBan} onLogout={() => supabase.auth.signOut()} />
+          ) : moderationOpen ? (
+            <ModerationScreen onBack={() => setModerationOpen(false)} />
+          ) : reportPostId !== null ? (
             <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
           ) : editProfileOpen ? (
             <EditProfileScreen
@@ -14609,6 +15482,7 @@ export default function App() {
               onOpenSaved={() => setSavedOpen(true)}
               onOpenPeopleList={(kind) => setPeopleList(kind)}
               onCreate={() => setActive("upload")}
+              onOpenModeration={() => setModerationOpen(true)}
               onAddAccount={async () => {
                 await supabase.auth.signOut();
               }}
