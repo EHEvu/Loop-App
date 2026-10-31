@@ -19,6 +19,10 @@ import {
   UserSquare2,
   Settings,
   Mail,
+  Link2,
+  QrCode,
+  Phone,
+  History,
   Lock,
   Ellipsis,
   Bell,
@@ -60,6 +64,15 @@ import {
   Mic,
   UserMinus,
   LogOut,
+  ChevronRight,
+  KeyRound,
+  Globe,
+  Info,
+  HandHeart,
+  UserX,
+  Palette,
+  LifeBuoy,
+  Trash,
   Shield,
   Layers,
   Clock,
@@ -357,7 +370,7 @@ function Avatar({ username, avatarUrl, size = 40 }) {
 // end of that line; tapping it opens the whole caption with "less" at the end.
 // "more" only appears when there really is more (measured, or a line break).
 // `light` renders it for dark video overlays (Reels).
-function CaptionText({ username, caption, onOpenProfile, light = false }) {
+function CaptionText({ username, caption, onOpenProfile, onMention, light = false }) {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const ref = React.useRef(null);
@@ -400,7 +413,7 @@ function CaptionText({ username, caption, onOpenProfile, light = false }) {
     return (
       <p className="text-sm" onClick={toggle} style={{ color: bodyColor, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.4 }}>
         {name}
-        {caption}{" "}
+        <MentionText text={caption} onMention={onMention} />{" "}
         <button onClick={toggle} style={{ color: toggleColor, fontWeight: 500 }}>
           less
         </button>
@@ -438,12 +451,63 @@ function RepostIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, acti
   );
 }
 
-// Share: a curved arrow heading out to the right.
+// Share: a solid "send" arrowhead with a notch line (Loop's own drawing).
+// The notch is cut out with a mask so it shows whatever is behind it.
+let iconMaskSeq = 0;
 function ShareIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, ...rest }) {
+  const idRef = React.useRef(null);
+  if (!idRef.current) idRef.current = `loopShareMask${++iconMaskSeq}`;
+  const id = idRef.current;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" {...rest}>
-      <path d="M14 4.5 20.5 11 14 17.5" />
-      <path d="M20.5 11H11a7.5 7.5 0 0 0-7.5 7.5v1" />
+    <svg width={size} height={size} viewBox="0 0 24 24" {...rest}>
+      <defs>
+        <mask id={id} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+          <rect x="0" y="0" width="24" height="24" fill="#fff" />
+          <path d="M6.6 12h6.6" stroke="#000" strokeWidth={1.9} strokeLinecap="round" />
+        </mask>
+      </defs>
+      <path
+        d="M5.2 4.2 20.4 12 5.2 19.8 8.6 12Z"
+        fill={color}
+        stroke={color}
+        strokeWidth={2.4}
+        strokeLinejoin="round"
+        mask={`url(#${id})`}
+      />
+    </svg>
+  );
+}
+
+// Messages: a filled chat bubble with three dots, a second bubble behind it.
+function ChatsIcon({ size = 24, color = "currentColor", ...rest }) {
+  const idRef = React.useRef(null);
+  if (!idRef.current) idRef.current = `loopChatMask${++iconMaskSeq}`;
+  const id = idRef.current;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...rest}>
+      <defs>
+        <mask id={id} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+          <rect x="0" y="0" width="24" height="24" fill="#fff" />
+          <circle cx="6.6" cy="9.6" r="1.15" fill="#000" />
+          <circle cx="9.9" cy="9.6" r="1.15" fill="#000" />
+          <circle cx="13.2" cy="9.6" r="1.15" fill="#000" />
+        </mask>
+      </defs>
+      <path
+        d="M17.4 9.4c2.2.9 3.7 2.8 3.7 5 0 1.3-.5 2.5-1.4 3.5l.7 2.6-2.9-1c-.9.3-1.8.4-2.8.4-2.3 0-4.3-.9-5.5-2.4"
+        stroke={color}
+        strokeWidth={1.9}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.9 3.4c4 0 7.3 2.8 7.3 6.2s-3.3 6.2-7.3 6.2c-1 0-1.9-.2-2.8-.5L3.3 16.6l1.1-3.2C3.3 12.3 2.6 11 2.6 9.6c0-3.4 3.3-6.2 7.3-6.2Z"
+        fill={color}
+        stroke={color}
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+        mask={`url(#${id})`}
+      />
     </svg>
   );
 }
@@ -1995,7 +2059,7 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
       )}
       {showMessages && (
         <button onClick={onMessagesClick} className="absolute right-4 top-1/2 -translate-y-1/2">
-          <SendHorizontal size={22} color="var(--text)" />
+          <ChatsIcon size={24} color="var(--text)" />
           {unreadCount > 0 && (
             <span
               className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center text-[9px]"
@@ -2295,6 +2359,25 @@ function PostMediaCarousel({ media }) {
 // One query, shared by every screen that renders full posts (Feed,
 // PostDetail, ProfileFeed). Returns a map of postId -> ordered media
 // array, or {} for ids that have none (plain single-media posts).
+// True totals for likes, comments, reposts and saves. Saves are private
+// rows (each person only sees their own), so counting them in the app
+// always gave 0 or 1 — the database counts them for us instead.
+// Returns { [postId]: { likes, comments, reposts, saves } } or {} if the
+// function isn't installed yet.
+async function fetchPostCounts(postIds) {
+  if (!postIds || postIds.length === 0) return {};
+  const { data, error } = await supabase.rpc("post_counts", { p_ids: postIds });
+  if (error || !data) return {};
+  return Object.fromEntries(
+    data.map((r) => [r.post_id, { likes: Number(r.likes), comments: Number(r.comments), reposts: Number(r.reposts), saves: Number(r.saves) }])
+  );
+}
+// Overlay the true counts onto posts that already have their own guesses.
+function applyCounts(post, c) {
+  if (!c) return post;
+  return { ...post, likeCount: c.likes, commentCount: c.comments, repostCount: c.reposts, saveCount: c.saves };
+}
+
 async function fetchPostMediaMap(postIds) {
   if (!postIds || postIds.length === 0) return {};
   const { data } = await supabase
@@ -2583,7 +2666,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const enrichPosts = async (rows, meId) => {
     if (rows.length === 0) return [];
     const ids = rows.map((p) => p.id);
-    const [mediaMap, { data: likesData }, { data: repostsData }, { data: savesData }, { data: commentsData }, { data: tagsData }] = await Promise.all([
+    const [counts, mediaMap, { data: likesData }, { data: repostsData }, { data: savesData }, { data: commentsData }, { data: tagsData }] = await Promise.all([
+      fetchPostCounts(ids),
       fetchPostMediaMap(ids),
       supabase.from("likes").select("post_id, user_id").in("post_id", ids),
       supabase.from("reposts").select("post_id, user_id").in("post_id", ids),
@@ -2613,7 +2697,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         tags: count(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
         media: mediaMap[p.id] || null,
       };
-    });
+    }).map((p) => applyCounts(p, counts[p.id]));
   };
 
   const loadPage = async () => {
@@ -2628,7 +2712,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       while (gathered.length < FEED_PAGE && !st.done) {
         let q = supabase
           .from("posts")
-          .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, aspect_ratio")
+          .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, aspect_ratio, link_url")
           .eq("archived", false)
           .is("removed_at", null)
           .lte("created_at", new Date().toISOString()) // your own scheduled posts wait
@@ -2856,7 +2940,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     if (!userId) return;
 
     setPosts((prev) =>
-      prev.map((p) => (p.id === post.id ? { ...p, saved: !p.saved } : p))
+      prev.map((p) => (p.id === post.id ? { ...p, saved: !p.saved, saveCount: Math.max(0, (p.saveCount || 0) + (p.saved ? -1 : 1)) } : p))
     );
 
     const { error } = post.saved
@@ -2866,7 +2950,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     if (error) {
       // Put the icon back where it was — a bookmark that looks saved but
       // isn't is worse than an honest failure.
-      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, saved: post.saved } : p)));
+      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, saved: post.saved, saveCount: post.saveCount } : p)));
       setSaveError(error.message);
       setTimeout(() => setSaveError(""), 4000);
     }
@@ -3134,7 +3218,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 username={post.username}
                 caption={post.caption}
                 onOpenProfile={() => onOpenProfile?.(post.user_id)}
+                onMention={(n) => openProfileByUsername(n, onOpenProfile)}
               />
+              <PostLinkChip url={post.link_url} />
               {!post.comments_disabled && !post.hide_comments && post.commentCount > 1 && (
                 <button
                   onClick={() => setCommentSheetFor(post)}
@@ -3174,6 +3260,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           currentUserId={userId}
           postUsername={commentSheetFor.username}
           postCaption={commentSheetFor.caption}
+          postAvatar={commentSheetFor.avatarUrl}
+          postCreatedAt={commentSheetFor.created_at}
+          postLink={commentSheetFor.link_url}
           commentsDisabled={commentSheetFor.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentSheetFor(null)}
@@ -3324,7 +3413,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
   const enrichReels = async (rows, meId) => {
     if (rows.length === 0) return [];
     const ids = rows.map((p) => p.id);
-    const [{ data: likesData }, { data: repostsData }, { data: savesData }, { data: commentsData }, { data: tagsData }] = await Promise.all([
+    const [counts, { data: likesData }, { data: repostsData }, { data: savesData }, { data: commentsData }, { data: tagsData }] = await Promise.all([
+      fetchPostCounts(ids),
       supabase.from("likes").select("post_id, user_id").in("post_id", ids),
       supabase.from("reposts").select("post_id, user_id").in("post_id", ids),
       supabase.from("saves").select("post_id, user_id").in("post_id", ids),
@@ -3352,10 +3442,10 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
         commentCount: of(commentsData, p.id).length,
         tags: of(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
       };
-    });
+    }).map((p) => applyCounts(p, counts[p.id]));
   };
 
-  const REEL_COLS = "id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location";
+  const REEL_COLS = "id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, link_url";
 
   const loadMoreReels = async () => {
     const st = reelsRef.current;
@@ -3535,14 +3625,14 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
     if (!userId || !reel) return;
     const wasSaved = reel.saved;
 
-    setReels((prev) => prev.map((r, i) => (i === index ? { ...r, saved: !wasSaved } : r)));
+    setReels((prev) => prev.map((r, i) => (i === index ? { ...r, saved: !wasSaved, saveCount: Math.max(0, (r.saveCount || 0) + (wasSaved ? -1 : 1)) } : r)));
 
     const { error } = wasSaved
       ? await supabase.from("saves").delete().eq("post_id", reel.id).eq("user_id", userId)
       : await supabase.from("saves").insert({ post_id: reel.id, user_id: userId });
 
     if (error) {
-      setReels((prev) => prev.map((r, i) => (i === index ? { ...r, saved: wasSaved } : r)));
+      setReels((prev) => prev.map((r, i) => (i === index ? { ...r, saved: wasSaved, saveCount: reel.saveCount } : r)));
       showToast(error.message);
     }
   };
@@ -3905,7 +3995,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
           </span>
         )}
         <TaggedPeopleLine tags={reel.tags} onOpenProfile={onOpenProfile} />
-        <CaptionText caption={reel.caption} light />
+        <CaptionText caption={reel.caption} light onMention={(n) => openProfileByUsername(n, onOpenProfile)} />
+        <PostLinkChip url={reel.link_url} light />
       </div>
 
       {/* Quick Actions — the only action control; expands to full-size icons */}
@@ -4075,6 +4166,9 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
           currentUserId={userId}
           postUsername={reel.username}
           postCaption={reel.caption}
+          postAvatar={reel.avatarUrl}
+          postCreatedAt={reel.created_at}
+          postLink={reel.link_url}
           commentsDisabled={reel.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentSheetOpen(false)}
@@ -4129,6 +4223,9 @@ function ReelCommentsSheet({
   currentUserId,
   postUsername,
   postCaption,
+  postAvatar,
+  postCreatedAt,
+  postLink,
   commentsDisabled,
   onOpenProfile,
   onClose,
@@ -4146,6 +4243,29 @@ function ReelCommentsSheet({
   const attachRef = React.useRef(null);
   const inputRef = React.useRef(null);
   const [expanded, setExpanded] = useState(new Set()); // threads with replies open
+  const [historyFor, setHistoryFor] = useState(null);
+  const [followsOwner, setFollowsOwner] = useState(null); // null = unknown/self
+  useEffect(() => {
+    if (!currentUserId || !postOwnerId || currentUserId === postOwnerId) return;
+    supabase
+      .from("follows")
+      .select("following_id")
+      .eq("follower_id", currentUserId)
+      .eq("following_id", postOwnerId)
+      .maybeSingle()
+      .then(({ data }) => setFollowsOwner(!!data));
+  }, [currentUserId, postOwnerId]);
+  const followOwner = async () => {
+    if (!currentUserId || !postOwnerId) return;
+    if (followsOwner) {
+      setFollowsOwner(false);
+      await supabase.from("follows").delete().eq("follower_id", currentUserId).eq("following_id", postOwnerId);
+    } else {
+      setFollowsOwner(true);
+      const { error } = await supabase.from("follows").insert({ follower_id: currentUserId, following_id: postOwnerId });
+      if (!error) await supabase.from("notifications").insert({ user_id: postOwnerId, actor_id: currentUserId, type: "follow" });
+    }
+  };
 
   useEffect(() => {
     loadComments();
@@ -4396,22 +4516,45 @@ function ReelCommentsSheet({
           <button onClick={onClose} className="absolute right-4"><X size={20} color="var(--text)" /></button>
         </div>
 
-        {postCaption && (
-          <button
-            onClick={() => onOpenProfile?.(postOwnerId)}
-            className="text-left px-4 pb-3 flex items-start gap-2.5"
-            style={{ borderBottom: "1px solid var(--border-subtle)" }}
-          >
-            <div className="w-7 h-7 rounded-full shrink-0" style={{ background: ACCENT, padding: 1.5 }}>
-              <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-[9px]" style={{ color: "var(--text)" }}>
-                {(postUsername || "u")[0].toUpperCase()}
-              </div>
+        {postUsername && (
+          <div className="px-4 pt-1 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  onClose?.();
+                  onOpenProfile?.(postOwnerId);
+                }}
+                className="flex items-center gap-3 min-w-0"
+              >
+                <Avatar username={postUsername} avatarUrl={postAvatar} size={40} />
+                <span className="text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{postUsername}</span>
+              </button>
+              {followsOwner !== null && (
+                <button
+                  onClick={followOwner}
+                  className="rounded-lg px-3.5 h-8 text-[13px] shrink-0 transition-transform active:scale-95"
+                  style={{ border: "1px solid var(--text)", color: "var(--text)", fontWeight: 700, background: "transparent", opacity: followsOwner ? 0.6 : 1 }}
+                >
+                  {followsOwner ? "Following" : "Follow"}
+                </button>
+              )}
             </div>
-            <p className="text-xs" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>
-              <span style={{ fontWeight: 700, color: "var(--text)" }}>{postUsername} </span>
-              {postCaption}
-            </p>
-          </button>
+            {postCaption && (
+              <p className="text-[14px] mt-2.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+                <MentionText text={postCaption} onMention={openProfileByName} />
+              </p>
+            )}
+            {postCreatedAt && (
+              <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>
+                {new Date(postCreatedAt).toLocaleDateString(undefined, {
+                  day: "numeric",
+                  month: "long",
+                  ...(new Date(postCreatedAt).getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}),
+                })}
+              </p>
+            )}
+            <PostLinkChip url={postLink} />
+          </div>
         )}
 
         <div className="flex-1 overflow-y-auto px-4 pt-3">
@@ -4441,6 +4584,7 @@ function ReelCommentsSheet({
                   onOpenProfile?.(x.user_id);
                 },
                 onMention: openProfileByName,
+                onShowHistory: () => setHistoryFor(x),
               });
               return (
                 <div key={c.id} className="mb-4">
@@ -4490,9 +4634,15 @@ function ReelCommentsSheet({
               onEdit={() => startEdit(mc)}
               onDelete={() => deleteComment(mc)}
               onReport={() => reportComment(mc)}
+              onShowHistory={() => {
+                setMenuFor(null);
+                setHistoryFor(mc);
+              }}
             />
           );
         })()}
+
+        {historyFor && <CommentHistorySheet comment={historyFor} onClose={() => setHistoryFor(null)} />}
 
         <div className="px-4 pt-2 pb-4" style={{ borderTop: "1px solid var(--border)" }}>
           {commentsDisabled ? (
@@ -4585,25 +4735,85 @@ function ReelCommentsSheet({
 const COMMENT_EDIT_WINDOW_MS = 15 * 60 * 1000;
 const canEditComment = (c) => Date.now() - new Date(c.created_at).getTime() < COMMENT_EDIT_WINDOW_MS;
 
-// Comment text with @names shown bold and tappable.
+// Text with @names, #tags and web links made tappable.
+const RICH_TOKEN = /((?:https?:\/\/|www\.)[^\s]+|@[a-zA-Z0-9_.]+|#[\p{L}\p{N}_]+)/gu;
 function MentionText({ text, onMention }) {
   if (!text) return null;
-  const parts = text.split(/(@[a-zA-Z0-9_.]+)/g);
-  return parts.map((part, i) =>
-    /^@[a-zA-Z0-9_.]+$/.test(part) ? (
-      <span
-        key={i}
-        onClick={(e) => {
-          e.stopPropagation();
-          onMention?.(part.slice(1));
-        }}
-        style={{ color: "var(--accent-solid)", fontWeight: 600 }}
-      >
-        {part}
-      </span>
-    ) : (
-      <React.Fragment key={i}>{part}</React.Fragment>
-    )
+  const parts = text.split(RICH_TOKEN);
+  return parts.map((part, i) => {
+    if (!part) return null;
+    if (/^(https?:\/\/|www\.)/i.test(part)) {
+      const trail = (part.match(/[).,!?]+$/) || [""])[0];
+      const clean = trail ? part.slice(0, -trail.length) : part;
+      const href = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+      return (
+        <React.Fragment key={i}>
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            onClick={(e) => e.stopPropagation()}
+            style={{ color: "var(--accent-solid)", fontWeight: 600, wordBreak: "break-all" }}
+          >
+            {clean.replace(/^https?:\/\//i, "")}
+          </a>
+          {trail}
+        </React.Fragment>
+      );
+    }
+    if (/^@[a-zA-Z0-9_.]+$/.test(part)) {
+      return (
+        <span
+          key={i}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMention?.(part.slice(1));
+          }}
+          style={{ color: "var(--accent-solid)", fontWeight: 600 }}
+        >
+          {part}
+        </span>
+      );
+    }
+    if (/^#/.test(part)) {
+      return (
+        <span key={i} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+          {part}
+        </span>
+      );
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
+// Open a profile from an @name.
+async function openProfileByUsername(name, onOpenProfile) {
+  if (!name || !onOpenProfile) return;
+  const { data } = await supabase.from("profiles").select("id").ilike("username", name).maybeSingle();
+  if (data?.id) onOpenProfile(data.id);
+}
+
+// "🔗 youtube.com" chip for a post's link.
+function PostLinkChip({ url, light = false }) {
+  if (!url) return null;
+  let host = url;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch (e) {
+    // keep raw
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer nofollow"
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center gap-1.5 mt-1.5 text-[13px]"
+      style={{ color: light ? "#FFFFFF" : "var(--text)", fontWeight: 700 }}
+    >
+      <Link2 size={15} color={light ? "#FFFFFF" : "var(--text)"} style={{ transform: "rotate(-45deg)" }} />
+      {host}
+    </a>
   );
 }
 
@@ -4625,6 +4835,7 @@ function CommentRow({
   onOpenMenu,
   onOpenProfile,
   onMention,
+  onShowHistory,
 }) {
   const pressTimer = React.useRef(null);
   const startPress = () => {
@@ -4650,10 +4861,12 @@ function CommentRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={onOpenProfile} className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>{comment.username}</button>
-          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-            {timeAgo(comment.created_at)}
-            {comment.edited_at ? " · Edited" : ""}
-          </span>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{timeAgo(comment.created_at)}</span>
+          {comment.edited_at && (
+            <button onClick={onShowHistory} className="text-[11px] underline-offset-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+              · Edited
+            </button>
+          )}
           {isPinned && (
             <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)", fontWeight: 600 }}>Author</span>
           )}
@@ -4733,7 +4946,56 @@ function CommentRow({
 }
 
 // Long-press sheet for a comment.
-function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport }) {
+// Every earlier version of an edited comment, oldest first, then the
+// current text.
+function CommentHistorySheet({ comment, onClose }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    supabase
+      .from("comment_edits")
+      .select("old_content, edited_at")
+      .eq("comment_id", comment.id)
+      .order("edited_at", { ascending: true })
+      .then(({ data, error }) => setRows(error ? [] : data || []));
+  }, [comment.id]);
+  const fmt = (d) => new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  // Version n was written at: created_at for the first, then each edit time.
+  const versions =
+    rows === null
+      ? []
+      : [
+          ...rows.map((r, i) => ({ text: r.old_content, at: i === 0 ? comment.created_at : rows[i - 1].edited_at, label: i === 0 ? "Original" : `Edit ${i}` })),
+          { text: comment.content, at: rows.length ? rows[rows.length - 1].edited_at : comment.edited_at, label: "Current", current: true },
+        ];
+  return (
+    <StorySheetShell title="Edit history" onClose={onClose}>
+      <div className="px-4 pb-6">
+        {rows === null ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>
+            This comment was edited before edit history was turned on, so earlier versions weren't kept.
+          </p>
+        ) : (
+          versions
+            .slice()
+            .reverse()
+            .map((v, i) => (
+              <div key={i} className="rounded-2xl px-3 py-2.5 mb-2" style={{ background: v.current ? "var(--surface)" : "transparent", border: "1px solid var(--border)" }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px]" style={{ color: v.current ? "var(--accent-solid)" : "var(--text-muted)", fontWeight: 700 }}>{v.label}</span>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmt(v.at)}</span>
+                </div>
+                <p className="text-[13px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{v.text || "—"}</p>
+              </div>
+            ))
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport, onShowHistory }) {
   const editable = isOwn && canEditComment(comment);
   return (
     <StorySheetShell title="Comment" onClose={onClose}>
@@ -4748,6 +5010,7 @@ function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onC
       <div className="pb-6">
         <StoryMenuRow icon={<MessageCircle size={17} color="var(--text)" />} label="Reply" onClick={onReply} />
         {comment.content && <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy text" onClick={onCopy} />}
+        {comment.edited_at && <StoryMenuRow icon={<History size={17} color="var(--text)" />} label="View edit history" onClick={onShowHistory} />}
         {isOwn && (
           <StoryMenuRow
             icon={<Pencil size={17} color={editable ? "var(--text)" : "var(--text-muted)"} />}
@@ -5134,6 +5397,7 @@ function UploadScreen() {
   const [tagInput, setTagInput] = useState(""); // only read from old drafts
   const [taggedPeople, setTaggedPeople] = useState([]); // [{id, username, avatar_url}]
   const [aspect, setAspect] = useState("4:5");
+  const [linkUrl, setLinkUrl] = useState("");
   const [pollEnabled, setPollEnabled] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
   const [pollOptions, setPollOptions] = useState(["", ""]);
@@ -5315,6 +5579,7 @@ function UploadScreen() {
     setTagInput("");
     setTaggedPeople([]);
     setAspect("4:5");
+    setLinkUrl("");
     setPollEnabled(false);
     setPollQuestion("");
     setPollOptions(["", ""]);
@@ -5345,6 +5610,20 @@ function UploadScreen() {
         setError("A poll needs a question and at least 2 options");
         return;
       }
+    }
+
+    let cleanLink = linkUrl.trim();
+    if (cleanLink) {
+      if (!/^https?:\/\//i.test(cleanLink)) cleanLink = `https://${cleanLink}`;
+      try {
+        const u = new URL(cleanLink);
+        if (!u.hostname.includes(".")) throw new Error("bad");
+      } catch (e) {
+        setError("That link doesn't look right");
+        return;
+      }
+    } else {
+      cleanLink = null;
     }
 
     let scheduledFor = null;
@@ -5441,6 +5720,7 @@ function UploadScreen() {
         // "reel", matching how Reels actually work on Instagram.
         media_type: mode,
         aspect_ratio: mode === "reel" ? "9:16" : aspect,
+        link_url: cleanLink,
         caption,
         location: location.trim() || null,
         hide_likes: hideLikes,
@@ -5764,6 +6044,22 @@ function UploadScreen() {
             placeholder="Add location"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
+            className="flex-1 bg-transparent text-sm outline-none"
+            style={{ color: "var(--text)" }}
+          />
+        </div>
+
+        <div
+          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-3"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+        >
+          <Link2 size={15} color="var(--text-muted)" />
+          <input
+            type="url"
+            inputMode="url"
+            placeholder="Add a link (optional)"
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
             className="flex-1 bg-transparent text-sm outline-none"
             style={{ color: "var(--text)" }}
           />
@@ -6278,8 +6574,28 @@ function NotificationsSettings({ userId, onBack }) {
   );
 }
 
-function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, onAccentChange, onOpenSaved, onOpenEditProfile }) {
-  const [view, setView] = useState("menu"); // "menu" | "editProfile" | "changeEmail" | "changePassword" | "appearance"
+function SettingsScreen({
+  onBack,
+  theme,
+  onThemeChange,
+  accentStart,
+  accentEnd,
+  onAccentChange,
+  onOpenSaved,
+  onOpenEditProfile,
+  onOpenArchive,
+  onOpenActivity,
+  onOpenPeopleList,
+  onOpenModeration,
+}) {
+  const staffRole = useStaffRole();
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [delPassword, setDelPassword] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
+  const [delError, setDelError] = useState("");
+  const [view, setView] = useState("menu"); // menu | editProfile | changeEmail | changePassword | appearance | notifications | about | support | deleteAccount
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -6328,10 +6644,11 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
     }
     const { data } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url")
+      .select("id, username, full_name, bio, avatar_url, is_private")
       .eq("id", user.id)
       .single();
     setProfile(data);
+    setIsPrivate(!!data?.is_private);
     setFullName(data?.full_name || "");
     setUsername(data?.username || "");
     setBio(data?.bio || "");
@@ -6752,54 +7069,278 @@ function SettingsScreen({ onBack, theme, onThemeChange, accentStart, accentEnd, 
     );
   }
 
-  return (
-    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
-      <Header title="Settings" back={onBack} />
+  const togglePrivacy = async () => {
+    if (!userId) return;
+    const next = !isPrivate;
+    setPrivacyBusy(true);
+    setIsPrivate(next);
+    const { error } = await supabase.from("profiles").update({ is_private: next }).eq("id", userId);
+    setPrivacyBusy(false);
+    if (error) {
+      setIsPrivate(!next);
+      alert(error.message);
+    }
+  };
 
-      <div className="px-4 pt-3">
-        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Appearance</div>
-        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={() => setView("appearance")} className="w-full flex items-center justify-between px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
-            <span>Theme & Colour</span>
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>{theme === "light" ? "Light" : theme === "bangladesh" ? "Bangladesh" : "Dark"}</span>
-          </button>
+  const requestDeletion = async () => {
+    setDelError("");
+    if (!delPassword) {
+      setDelError("Enter your password to continue");
+      return;
+    }
+    setDelBusy(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { error: pwErr } = await supabase.auth.signInWithPassword({ email: user?.email || "", password: delPassword });
+    if (pwErr) {
+      setDelBusy(false);
+      setDelError("That password isn't right");
+      return;
+    }
+    const { data: when, error } = await supabase.rpc("request_account_deletion");
+    setDelBusy(false);
+    if (error) {
+      setDelError(error.message);
+      return;
+    }
+    alert(
+      `Your account will be deleted on ${new Date(when).toLocaleDateString(undefined, { dateStyle: "long" })}. ` +
+        "Log in before then if you change your mind."
+    );
+    await supabase.auth.signOut();
+  };
+
+  if (view === "about") {
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+        <Header title="About" back={() => setView("menu")} />
+        <div className="flex flex-col items-center px-6 pt-8 pb-6 text-center">
+          <LoopLogo size={72} />
+          <p className="text-lg mt-3" style={{ color: "var(--text)", fontWeight: 800, fontFamily: "'Sora', sans-serif" }}>Loop</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Version 1.0 · Made in Bangladesh</p>
+          <p className="text-sm mt-5" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+            Share photos, videos and stories with the people you care about.
+          </p>
         </div>
-
-        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>How you use Loop</div>
-        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={() => setView("notifications")} className="w-full flex items-center gap-2.5 px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
-            <Bell size={16} color="var(--text-muted)" />
-            <span>Notifications</span>
-          </button>
+        <div className="mx-4 rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          {["Terms of Use", "Privacy Policy", "Community Guidelines"].map((t, i) => (
+            <div key={t} className="flex items-center justify-between px-4 py-3.5 text-sm" style={{ color: "var(--text)", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              {t}
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Coming soon</span>
+            </div>
+          ))}
         </div>
+      </div>
+    );
+  }
 
-        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Your content</div>
-        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={onOpenSaved} className="w-full flex items-center gap-2.5 px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
-            <Bookmark size={16} color="var(--text-muted)" />
-            <span>Saved</span>
-          </button>
+  if (view === "support") {
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+        <Header title="Support Loop" back={() => setView("menu")} />
+        <div className="px-6 pt-8 pb-6 text-center">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: ACCENT }}>
+            <HandHeart size={30} color="var(--on-accent)" />
+          </div>
+          <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>Help keep Loop running</p>
+          <p className="text-sm mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.55 }}>
+            Loop is built by one person. Servers for photos and videos cost money every month. If you enjoy Loop, a small
+            gift helps keep it free and ad-light for everyone.
+          </p>
         </div>
-
-        <div className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Account</div>
-        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={() => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile"))} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
-            Edit Profile
-          </button>
-          <button onClick={() => setView("changeEmail")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
-            Change Email
-          </button>
-          <button onClick={() => setView("changePassword")} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--text)" }}>
-            Change Password
-          </button>
+        <div className="mx-4 rounded-2xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Ways to give are coming soon</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>bKash and Nagad will appear here.</p>
         </div>
+        <div className="mx-4 mt-3">
+          <button
+            onClick={async () => {
+              const url = window.location.origin;
+              try {
+                if (navigator.share) await navigator.share({ title: "Loop", text: "Join me on Loop", url });
+                else {
+                  await navigator.clipboard.writeText(url);
+                  alert("Link copied");
+                }
+              } catch (e) {
+                // share cancelled
+              }
+            }}
+            className="w-full rounded-xl h-11 text-sm"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+          >
+            Share Loop with friends
+          </button>
+          <p className="text-[11px] text-center mt-2" style={{ color: "var(--text-muted)" }}>Telling a friend helps just as much.</p>
+        </div>
+      </div>
+    );
+  }
 
-        <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <button onClick={handleLogout} className="w-full text-left px-4 py-3 text-sm" style={{ color: "var(--accent-start)", fontWeight: 600 }}>
-            Log Out
+  if (view === "deleteAccount") {
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+        <Header title="Delete account" back={() => setView("menu")} />
+        <div className="px-5 pt-5">
+          <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>Delete @{profile?.username}?</p>
+          <div className="mt-3 flex flex-col gap-2.5">
+            {[
+              "Your profile, photos, videos, comments and likes will be hidden right away.",
+              "After 30 days they're deleted for good and can't be brought back.",
+              "Changed your mind? Just log in before then and choose Keep account.",
+            ].map((t) => (
+              <div key={t} className="flex gap-2.5">
+                <Check size={16} color="var(--text-muted)" className="shrink-0 mt-0.5" />
+                <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.45 }}>{t}</p>
+              </div>
+            ))}
+          </div>
+          <label className="text-[11px] block mt-6 mb-1.5" style={{ color: "var(--text-muted)" }}>Re-enter your password</label>
+          <input
+            type="password"
+            value={delPassword}
+            onChange={(e) => setDelPassword(e.target.value)}
+            className="w-full rounded-xl px-4 h-12 text-sm outline-none"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+          />
+          {delError && <p className="text-xs mt-2" style={{ color: "var(--heart)" }}>{delError}</p>}
+          <button
+            onClick={requestDeletion}
+            disabled={delBusy}
+            className="w-full rounded-xl h-12 text-sm mt-4"
+            style={{ background: "var(--heart)", color: "#fff", fontWeight: 700, opacity: delBusy ? 0.6 : 1 }}
+          >
+            {delBusy ? "Please wait…" : "Delete account"}
+          </button>
+          <button onClick={() => setView("menu")} className="w-full h-11 text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>
+            Cancel
           </button>
         </div>
       </div>
+    );
+  }
+
+  const themeLabel = theme === "light" ? "Light" : theme === "bangladesh" ? "Bangladesh" : "Dark";
+  const sections = [
+    {
+      title: "Your account",
+      rows: [
+        { icon: CircleUserRound, label: "Edit profile", onClick: () => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile")) },
+        { icon: KeyRound, label: "Password and security", onClick: () => setView("changePassword") },
+        { icon: Mail, label: "Email address", onClick: () => setView("changeEmail") },
+      ],
+    },
+    {
+      title: "How you use Loop",
+      rows: [
+        { icon: Bookmark, label: "Saved", onClick: onOpenSaved },
+        { icon: Archive, label: "Archive", onClick: onOpenArchive },
+        { icon: Gauge, label: "Your activity", onClick: onOpenActivity },
+        { icon: Bell, label: "Notifications", onClick: () => setView("notifications") },
+      ],
+    },
+    {
+      title: "Who can see your content",
+      rows: [
+        { icon: Lock, label: "Account privacy", value: isPrivate ? "Private" : "Public", toggle: true, on: isPrivate, onClick: togglePrivacy, busy: privacyBusy },
+        { icon: Star, label: "Close Friends", onClick: () => onOpenPeopleList?.("close_friends") },
+        { icon: UserX, label: "Blocked", onClick: () => onOpenPeopleList?.("blocked") },
+      ],
+    },
+    {
+      title: "How others can interact with you",
+      rows: [
+        { icon: Shield, label: "Restricted", onClick: () => onOpenPeopleList?.("restricted") },
+        { icon: VolumeX, label: "Muted accounts", onClick: () => onOpenPeopleList?.("muted") },
+      ],
+    },
+    {
+      title: "Your app and media",
+      rows: [
+        { icon: Palette, label: "Theme & colour", value: themeLabel, onClick: () => setView("appearance") },
+        { icon: Globe, label: "Language", value: "English · বাংলা soon" },
+      ],
+    },
+    ...(staffRole
+      ? [{ title: "Moderation", rows: [{ icon: Shield, label: "Moderation", value: staffRole, onClick: onOpenModeration }] }]
+      : []),
+    {
+      title: "More info and support",
+      rows: [
+        { icon: HandHeart, label: "Support Loop", onClick: () => setView("support") },
+        {
+          icon: LifeBuoy,
+          label: "Help",
+          onClick: () => {
+            window.location.href = "mailto:eh.evu1000@gmail.com?subject=Loop%20help";
+          },
+        },
+        { icon: Info, label: "About", onClick: () => setView("about") },
+      ],
+    },
+    {
+      title: "Login",
+      rows: [
+        { icon: LogOut, label: "Log out", danger: true, onClick: handleLogout },
+        { icon: Trash, label: "Delete account", danger: true, onClick: () => setView("deleteAccount") },
+      ],
+    },
+  ];
+  const q = settingsQuery.trim().toLowerCase();
+  const shownSections = sections
+    .map((sec) => ({ ...sec, rows: sec.rows.filter((row) => !q || row.label.toLowerCase().includes(q) || sec.title.toLowerCase().includes(q)) }))
+    .filter((sec) => sec.rows.length > 0);
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <Header title="Settings and activity" back={onBack} />
+      <div className="px-4 pt-3 pb-1">
+        <div className="flex items-center gap-2 rounded-xl px-3 h-10" style={{ background: "var(--surface)" }}>
+          <Search size={16} color="var(--text-muted)" />
+          <input
+            value={settingsQuery}
+            onChange={(e) => setSettingsQuery(e.target.value)}
+            placeholder="Search"
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: "var(--text)" }}
+          />
+        </div>
+      </div>
+      {shownSections.length === 0 && (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No settings match "{settingsQuery}"</p>
+      )}
+      {shownSections.map((sec) => (
+        <div key={sec.title} className="pt-4">
+          <p className="px-4 pb-1.5 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{sec.title}</p>
+          {sec.rows.map((row) => {
+            const Icon = row.icon;
+            return (
+              <button
+                key={row.label}
+                onClick={row.onClick}
+                disabled={!row.onClick || row.busy}
+                className="w-full flex items-center gap-3.5 px-4 py-3 text-left transition-colors active:opacity-70"
+              >
+                <Icon size={21} color={row.danger ? "var(--heart)" : "var(--text)"} strokeWidth={1.8} />
+                <span className="flex-1 text-[15px]" style={{ color: row.danger ? "var(--heart)" : "var(--text)" }}>{row.label}</span>
+                {row.toggle ? (
+                  <span className="rounded-full shrink-0" style={{ width: 40, height: 23, background: row.on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+                    <span className="rounded-full bg-white absolute" style={{ width: 19, height: 19, top: 2, left: row.on ? 19 : 2, transition: "left 0.15s" }} />
+                  </span>
+                ) : (
+                  <>
+                    {row.value && (
+                      <span className="text-[13px] capitalize" style={{ color: "var(--text-muted)" }}>{row.value}</span>
+                    )}
+                    {row.onClick && !row.danger && <ChevronRight size={18} color="var(--text-muted)" />}
+                  </>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
@@ -6831,7 +7372,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
     const { data: p, error } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count, aspect_ratio")
+      .select("id, media_url, media_type, media_count, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count, aspect_ratio, link_url")
       .eq("id", postId)
       .single();
 
@@ -6847,9 +7388,10 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
     const { data: reposts } = await supabase.from("reposts").select("user_id").eq("post_id", postId);
     const { data: allSaves } = await supabase.from("saves").select("user_id").eq("post_id", postId);
     const { data: comments } = await supabase.from("comments").select("id").eq("post_id", postId);
-    const { data: tagsData } = await supabase.from("post_tags").select("tagged_user_id");
+    const { data: tagsData } = await supabase.from("post_tags").select("tagged_user_id").eq("post_id", postId);
+    const counts = await fetchPostCounts([p.id]);
 
-    setPost({
+    setPost(applyCounts({
       ...p,
       username: profile?.username || "unknown",
       avatarUrl: profile?.avatar_url || null,
@@ -6862,7 +7404,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       commentCount: (comments || []).length,
       tags: tagsData || [],
       media: mediaMap[p.id] || null,
-    });
+    }, counts[p.id]));
     setLoading(false);
   };
 
@@ -7045,7 +7587,9 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
           username={post.username}
           caption={post.caption}
           onOpenProfile={() => onOpenProfile?.(post.user_id)}
+          onMention={(n) => openProfileByUsername(n, onOpenProfile)}
         />
+        <PostLinkChip url={post.link_url} />
         {!post.comments_disabled && !post.hide_comments && post.commentCount > 0 && (
           <button
             onClick={() => setCommentSheetOpen(true)}
@@ -7067,6 +7611,9 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
           currentUserId={userId}
           postUsername={post.username}
           postCaption={post.caption}
+          postAvatar={post.avatarUrl}
+          postCreatedAt={post.created_at}
+          postLink={post.link_url}
           commentsDisabled={post.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentSheetOpen(false)}
@@ -7845,6 +8392,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [avatarVideoUrl, setAvatarVideoUrl] = useState(null);
   const [birthday, setBirthday] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
@@ -7864,7 +8413,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
       setError("");
       const { data, error: err } = await supabase
         .from("profiles")
-        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender")
+        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender, contact_email, contact_phone")
         .eq("id", currentUserId)
         .maybeSingle();
       if (err) setError(err.message);
@@ -7875,6 +8424,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         setBio(data.bio || "");
         setAvatarUrl(data.avatar_url || null);
         setAvatarVideoUrl(data.avatar_video_url || null);
+        setContactEmail(data.contact_email || "");
+        setContactPhone(data.contact_phone || "");
         // Birthday lives in its own owner-only table so nobody else can read it.
         supabase
           .from("profile_private")
@@ -7964,6 +8515,16 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         return;
       }
     }
+    const cEmail = contactEmail.trim();
+    const cPhone = contactPhone.trim();
+    if (cEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cEmail)) {
+      setError("That contact email doesn't look right");
+      return;
+    }
+    if (cPhone && !/^\+?[0-9 ()-]{6,20}$/.test(cPhone)) {
+      setError("Phone number can only have digits, spaces, + ( ) and -");
+      return;
+    }
     if (bio.length > 150) {
       setError("Bio can't be longer than 150 characters");
       return;
@@ -7992,6 +8553,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         bio: bio.trim() || null,
         avatar_url: avatarUrl,
         avatar_video_url: avatarVideoUrl,
+        contact_email: contactEmail.trim() || null,
+        contact_phone: contactPhone.trim() || null,
         links: cleanLinks,
         gender,
       })
@@ -8192,6 +8755,35 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
           </button>
         )}
 
+        <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Contact options</label>
+        <div className="rounded-2xl overflow-hidden mb-1" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-3 px-4 h-12" style={{ borderBottom: "1px solid var(--border)" }}>
+            <Mail size={16} color="var(--text-muted)" />
+            <input
+              type="email"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              placeholder="Public email (optional)"
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "var(--text)" }}
+            />
+          </div>
+          <div className="flex items-center gap-3 px-4 h-12">
+            <Phone size={16} color="var(--text-muted)" />
+            <input
+              type="tel"
+              value={contactPhone}
+              onChange={(e) => setContactPhone(e.target.value)}
+              placeholder="Phone for calls (optional)"
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "var(--text)" }}
+            />
+          </div>
+        </div>
+        <p className="text-[11px] mt-1 mb-4" style={{ color: "var(--text-muted)" }}>
+          Anyone can see these. Your profile shows an Email, Call or Contact button for whichever you fill in.
+        </p>
+
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Birthday</label>
         <input
           type="date"
@@ -8256,7 +8848,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
       }
       const { data: rows, error: err } = await supabase
         .from("posts")
-        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, aspect_ratio, removed_at, removed_reason")
+        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, aspect_ratio, removed_at, removed_reason, link_url")
         .in("id", postIds);
 
       if (err) {
@@ -8302,6 +8894,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
         tagProfiles = data || [];
       }
 
+      const counts = await fetchPostCounts(ids);
       if (cancelled) return;
       setPosts(
         ordered.map((p) => {
@@ -8324,6 +8917,9 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 username: tagProfiles.find((tp) => tp.id === t.tagged_user_id)?.username || "unknown",
               })),
             media: mediaMap[p.id] || null,
+            ...(counts[p.id]
+              ? { likeCount: counts[p.id].likes, commentCount: counts[p.id].comments, repostCount: counts[p.id].reposts, saveCount: counts[p.id].saves }
+              : {}),
           };
         })
       );
@@ -8541,7 +9137,9 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                   username={post.username}
                   caption={post.caption}
                   onOpenProfile={() => onOpenProfile?.(post.user_id)}
+                  onMention={(n) => openProfileByUsername(n, onOpenProfile)}
                 />
+                <PostLinkChip url={post.link_url} />
                 {!post.comments_disabled && !post.hide_comments && post.commentCount > 1 && (
                   <button
                     onClick={() => setCommentFor(post)}
@@ -8573,6 +9171,9 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
           currentUserId={currentUserId}
           postUsername={commentFor.username}
           postCaption={commentFor.caption}
+          postAvatar={commentFor.avatarUrl}
+          postCreatedAt={commentFor.created_at}
+          postLink={commentFor.link_url}
           commentsDisabled={commentFor.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentFor(null)}
@@ -9110,6 +9711,96 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
   );
 }
 
+// Big profile photo (long-press someone's picture): blurred backdrop,
+// large circle, and Follow · Share profile · Copy link · QR code.
+function AvatarViewer({ profile, isOwn, isFollowing, onFollow, onEditPhoto, onShare, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const link = `${window.location.origin}/u/${profile.username}`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      // clipboard blocked — nothing else to do
+    }
+  };
+  const Action = ({ icon, label, onClick }) => (
+    <button onClick={onClick} className="flex flex-col items-center gap-2 transition-transform active:scale-95" style={{ width: 76 }}>
+      <span className="w-14 h-14 rounded-full flex items-center justify-center" style={{ border: "1.5px solid rgba(255,255,255,0.35)", background: "rgba(255,255,255,0.06)" }}>
+        {icon}
+      </span>
+      <span className="text-[12px] text-center leading-tight" style={{ color: "#FFFFFF", fontWeight: 500 }}>{label}</span>
+    </button>
+  );
+  return (
+    <div className="absolute inset-0 z-[75] flex flex-col overflow-hidden" style={{ background: "#0b0d12" }} onClick={onClose}>
+      {profile.avatar_url && (
+        <div
+          className="absolute inset-0"
+          style={{ backgroundImage: `url(${profile.avatar_url})`, backgroundSize: "cover", backgroundPosition: "center", filter: "blur(40px) brightness(0.45)", transform: "scale(1.3)" }}
+        />
+      )}
+      <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.35), rgba(0,0,0,0.15) 40%, rgba(0,0,0,0.75))" }} />
+      <div className="relative flex items-center gap-3 px-4 h-14 shrink-0">
+        <button onClick={onClose} aria-label="Close">
+          <ChevronLeft size={24} color="rgba(255,255,255,0.8)" />
+        </button>
+        <span className="text-[15px] truncate" style={{ color: "rgba(255,255,255,0.75)", fontWeight: 700 }}>{profile.username}</span>
+      </div>
+      <div className="relative flex-1 flex items-center justify-center px-8">
+        <div
+          className="rounded-full overflow-hidden flex items-center justify-center"
+          style={{ width: "min(78vw, 300px)", height: "min(78vw, 300px)", background: "var(--surface)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {profile.avatar_video_url ? (
+            <video src={profile.avatar_video_url} poster={profile.avatar_url || undefined} className="w-full h-full object-cover" autoPlay loop playsInline muted />
+          ) : profile.avatar_url ? (
+            <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <span style={{ color: "var(--text)", fontSize: 96, fontWeight: 700 }}>{profile.username[0].toUpperCase()}</span>
+          )}
+        </div>
+      </div>
+      <div className="relative flex items-start justify-center gap-3 px-4 pb-10 pt-4" onClick={(e) => e.stopPropagation()}>
+        {isOwn ? (
+          <Action icon={<ImagePlus size={22} color="#fff" />} label="Edit" onClick={onEditPhoto} />
+        ) : (
+          <Action
+            icon={isFollowing ? <UserCheck size={22} color="#fff" /> : <UserPlus size={22} color="#fff" />}
+            label={isFollowing ? "Following" : "Follow"}
+            onClick={onFollow}
+          />
+        )}
+        <Action icon={<CircleUserRound size={22} color="#fff" />} label="Share profile" onClick={onShare} />
+        <Action icon={<Link2 size={22} color="#fff" />} label={copied ? "Copied!" : "Copy link"} onClick={copy} />
+        <Action icon={<QrCode size={22} color="#fff" />} label="QR code" onClick={onShare} />
+      </div>
+    </div>
+  );
+}
+
+// Email / Call options from a profile's Contact button.
+function ContactSheet({ profile, onClose }) {
+  return (
+    <StorySheetShell title={`Contact ${profile.username}`} onClose={onClose}>
+      <div className="pb-6">
+        {profile.contact_email && (
+          <a href={`mailto:${profile.contact_email}`} onClick={onClose} className="block">
+            <StoryMenuRow icon={<Mail size={17} color="var(--text)" />} label="Email" trailing={<span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{profile.contact_email}</span>} />
+          </a>
+        )}
+        {profile.contact_phone && (
+          <a href={`tel:${profile.contact_phone.replace(/[^0-9+]/g, "")}`} onClick={onClose} className="block">
+            <StoryMenuRow icon={<Phone size={17} color="var(--text)" />} label="Call" trailing={<span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{profile.contact_phone}</span>} />
+          </a>
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
 const REPORT_REASONS = [
   "Spam",
   "Nudity or sexual content",
@@ -9142,7 +9833,7 @@ function useStaffRole() {
   return role;
 }
 
-function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
+function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -9164,6 +9855,11 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
   const [relBusy, setRelBusy] = useState(null);
   const staffRole = useStaffRole();
   const [reportNote, setReportNote] = useState("");
+  const [avatarViewer, setAvatarViewer] = useState(false);
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [similar, setSimilar] = useState(null);
+  const [reelSort, setReelSort] = useState("latest"); // latest | views
+  const [reelSortMenu, setReelSortMenu] = useState(false);
   const avatarInputRef = React.useRef(null);
   const avatarPressRef = React.useRef(null);
   const avatarLongRef = React.useRef(false);
@@ -9172,7 +9868,11 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
   // Reels are just video posts — no separate table, so split by media_type.
   // A carousel is never a Reel, even if its cover happens to be a video —
   // the media_count guard keeps carousels out of this split.
-  const reels = posts.filter((p) => p.media_type !== "photo" && (p.media_count || 1) <= 1);
+  const reelsRaw = posts.filter((p) => p.media_type !== "photo" && (p.media_count || 1) <= 1);
+  const reels =
+    reelSort === "views"
+      ? reelsRaw.slice().sort((a, b) => (b.views_count || 0) - (a.views_count || 0))
+      : reelsRaw;
   const photos = posts;
   const gridFor = tab === "posts" ? photos : tab === "reels" ? reels : tab === "reposts" ? reposts : tagged;
   const isOwnProfile = myId && profile && myId === profile.id;
@@ -9201,7 +9901,7 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private")
+      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private, contact_email, contact_phone")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -9210,7 +9910,7 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
 
     let postsQuery = supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason")
+      .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason, views_count")
       .eq("user_id", targetId);
     if (!isViewingOwnPosts) {
       postsQuery = postsQuery.eq("archived", false);
@@ -9293,6 +9993,44 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
     }
 
     setLoading(false);
+  };
+
+  // "Suggested accounts" on someone's profile: people they follow that you
+  // don't, then people who follow the same accounts.
+  const loadSimilar = async () => {
+    if (!profile || !myId) return;
+    const [{ data: theirs }, { data: mine }, rel] = await Promise.all([
+      supabase.from("follows").select("following_id").eq("follower_id", profile.id).limit(60),
+      supabase.from("follows").select("following_id").eq("follower_id", myId),
+      getRelations(),
+    ]);
+    const skip = new Set([myId, profile.id, ...(mine || []).map((f) => f.following_id)]);
+    let ids = (theirs || []).map((f) => f.following_id).filter((id) => !skip.has(id) && !isBlockedEither(rel, id));
+    if (ids.length < 5) {
+      const { data: alsoFollow } = await supabase.from("follows").select("follower_id").eq("following_id", profile.id).limit(40);
+      (alsoFollow || []).forEach((f) => {
+        if (!skip.has(f.follower_id) && !ids.includes(f.follower_id) && !isBlockedEither(rel, f.follower_id)) ids.push(f.follower_id);
+      });
+    }
+    ids = ids.slice(0, 12);
+    if (ids.length === 0) {
+      setSimilar([]);
+      return;
+    }
+    const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+    setSimilar((profs || []).map((pp) => ({ ...pp, mutualName: profile.username, mutualCount: 1, followed: false })));
+  };
+
+  const followSimilar = async (pp) => {
+    if (!myId) return;
+    if (pp.followed) {
+      setSimilar((prev) => prev.map((x) => (x.id === pp.id ? { ...x, followed: false } : x)));
+      await supabase.from("follows").delete().eq("follower_id", myId).eq("following_id", pp.id);
+      return;
+    }
+    setSimilar((prev) => prev.map((x) => (x.id === pp.id ? { ...x, followed: true } : x)));
+    const { error } = await supabase.from("follows").insert({ follower_id: myId, following_id: pp.id });
+    if (!error) await supabase.from("notifications").insert({ user_id: pp.id, actor_id: myId, type: "follow" });
   };
 
   const flashNote = (msg) => {
@@ -9507,22 +10245,6 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
           </div>
         ) : (
           <div className="flex items-center gap-2 shrink-0">
-            {!myRel.blocked && (
-              <button
-                onClick={toggleFollow}
-                disabled={followBusy}
-                className="rounded-lg px-5 py-1.5 text-[13px] transition-transform active:scale-[0.98]"
-                style={{
-                  background: isFollowing ? "var(--surface)" : ACCENT,
-                  border: isFollowing ? "1px solid var(--border)" : "none",
-                  color: isFollowing ? "var(--text)" : "var(--on-accent)",
-                  fontWeight: 700,
-                  opacity: followBusy ? 0.6 : 1,
-                }}
-              >
-                {isFollowing ? "Following" : "Follow"}
-              </button>
-            )}
             <button onClick={() => setSheet("safety")} className="p-1 transition-transform active:scale-90">
               <Ellipsis size={20} color="var(--text)" />
             </button>
@@ -9550,20 +10272,20 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
               else onOpenProfileStory?.(profile.id);
             }}
             onTouchStart={() => {
-              if (!isOwnProfile) return;
               avatarLongRef.current = false;
               avatarPressRef.current = setTimeout(() => {
                 avatarLongRef.current = true;
-                setSheet("avatar");
-              }, 500);
+                if (isOwnProfile) setSheet("avatar");
+                else setAvatarViewer(true);
+              }, 450);
             }}
             onTouchEnd={() => clearTimeout(avatarPressRef.current)}
             onTouchMove={() => clearTimeout(avatarPressRef.current)}
             onContextMenu={(e) => {
-              if (!isOwnProfile) return;
               e.preventDefault();
               avatarLongRef.current = true;
-              setSheet("avatar");
+              if (isOwnProfile) setSheet("avatar");
+              else setAvatarViewer(true);
             }}
             className="rounded-full flex items-center justify-center transition-transform active:scale-95"
             style={{ width: 88, height: 88, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 3 }}
@@ -9623,6 +10345,77 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
         )}
       </div>
 
+      {!isOwnProfile && !myRel.blocked && (
+        <>
+          <div className="flex gap-1.5 px-4 mb-3">
+            <button
+              onClick={toggleFollow}
+              disabled={followBusy}
+              className="flex-1 rounded-lg h-9 text-[13px] transition-transform active:scale-[0.98]"
+              style={{
+                background: isFollowing ? "var(--surface)" : ACCENT,
+                border: isFollowing ? "1px solid var(--border)" : "none",
+                color: isFollowing ? "var(--text)" : "var(--on-accent)",
+                fontWeight: 700,
+                opacity: followBusy ? 0.6 : 1,
+              }}
+            >
+              {isFollowing ? "Following" : "Follow"}
+            </button>
+            {!myRel.blockedBy && (
+              <button
+                onClick={() => onMessage?.(profile)}
+                className="flex-1 rounded-lg h-9 text-[13px] transition-transform active:scale-[0.98]"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700 }}
+              >
+                Message
+              </button>
+            )}
+            {(profile.contact_email || profile.contact_phone) && (
+              <button
+                onClick={() => {
+                  if (profile.contact_email && !profile.contact_phone) window.location.href = `mailto:${profile.contact_email}`;
+                  else if (profile.contact_phone && !profile.contact_email) window.location.href = `tel:${profile.contact_phone.replace(/[^0-9+]/g, "")}`;
+                  else setSheet("contact");
+                }}
+                className="flex-1 rounded-lg h-9 text-[13px] transition-transform active:scale-[0.98]"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700 }}
+              >
+                {profile.contact_email && profile.contact_phone ? "Contact" : profile.contact_email ? "Email" : "Call"}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                const next = !showSuggest;
+                setShowSuggest(next);
+                if (next && similar === null) loadSimilar();
+              }}
+              aria-label="Suggested accounts"
+              className="rounded-lg h-9 w-10 flex items-center justify-center transition-transform active:scale-[0.98]"
+              style={{ background: showSuggest ? "var(--text)" : "var(--surface)", border: "1px solid var(--border)" }}
+            >
+              <UserPlus size={16} color={showSuggest ? "var(--bg)" : "var(--text)"} />
+            </button>
+          </div>
+          {showSuggest && (
+            <div className="mb-2">
+              {similar === null ? (
+                <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>Loading…</p>
+              ) : similar.length === 0 ? (
+                <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>No suggestions right now</p>
+              ) : (
+                <SuggestedAccountsStrip
+                  people={similar}
+                  onOpenProfile={(id) => onOpenProfile?.(id)}
+                  onFollow={followSimilar}
+                  onDismiss={(id) => setSimilar((prev) => prev.filter((x) => x.id !== id))}
+                />
+              )}
+            </div>
+          )}
+        </>
+      )}
+
       {isOwnProfile && (
         <div className="flex gap-2 px-4 mb-4">
           <button
@@ -9672,14 +10465,51 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
         style={{ borderTop: "1px solid var(--border)" }}
       >
         {tabOrder.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className="flex-1 flex items-center justify-center py-3 transition-transform active:scale-95"
-            style={{ borderBottom: tab === t ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
-          >
-            <ProfileTabIcon kind={t} active={tab === t} />
-          </button>
+          <div key={t} className="relative flex-1">
+            <button
+              onClick={() => {
+                if (t === "reels" && tab === "reels") setReelSortMenu((v) => !v);
+                else {
+                  setReelSortMenu(false);
+                  setTab(t);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-1 py-3 transition-transform active:scale-95"
+              style={{ borderBottom: tab === t ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
+            >
+              <ProfileTabIcon kind={t} active={tab === t} />
+              {t === "reels" && tab === "reels" && (
+                <ChevronLeft size={14} color="var(--text)" style={{ transform: reelSortMenu ? "rotate(90deg)" : "rotate(-90deg)", transition: "transform 0.15s" }} />
+              )}
+            </button>
+            {t === "reels" && reelSortMenu && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setReelSortMenu(false)} />
+                <div
+                  className="absolute left-1/2 top-full -translate-x-1/2 z-30 rounded-2xl overflow-hidden py-1 mt-1"
+                  style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 180, boxShadow: "0 10px 30px rgba(0,0,0,0.35)" }}
+                >
+                  {[
+                    ["latest", "Latest"],
+                    ["views", "Most viewed"],
+                  ].map(([k, label]) => (
+                    <button
+                      key={k}
+                      onClick={() => {
+                        setReelSort(k);
+                        setReelSortMenu(false);
+                      }}
+                      className="w-full flex items-center justify-between px-4 py-3 text-sm"
+                      style={{ color: "var(--text)", fontWeight: reelSort === k ? 700 : 500 }}
+                    >
+                      {label}
+                      {reelSort === k && <Check size={16} color="var(--text)" />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         ))}
       </div>
 
@@ -9866,6 +10696,26 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
             )}
           </div>
         </StorySheetShell>
+      )}
+
+      {sheet === "contact" && <ContactSheet profile={profile} onClose={() => setSheet(null)} />}
+
+      {avatarViewer && (
+        <AvatarViewer
+          profile={profile}
+          isOwn={isOwnProfile}
+          isFollowing={isFollowing}
+          onFollow={toggleFollow}
+          onEditPhoto={() => {
+            setAvatarViewer(false);
+            setSheet("avatar");
+          }}
+          onShare={() => {
+            setAvatarViewer(false);
+            setSheet("shareProfile");
+          }}
+          onClose={() => setAvatarViewer(false)}
+        />
       )}
 
       {sheet === "reportAccount" && !isOwnProfile && (
@@ -10067,6 +10917,14 @@ function ProfileScreen({ userId, onOpenModeration, onOpenSettings, onOpenPost, o
         <StorySheetShell title="Profile photo or video" onClose={() => setSheet(null)}>
           <div className="pb-6">
             <StoryMenuRow
+              icon={<CircleUserRound size={17} color="var(--text)" />}
+              label="View profile photo"
+              onClick={() => {
+                setSheet(null);
+                setAvatarViewer(true);
+              }}
+            />
+            <StoryMenuRow
               icon={<ImagePlus size={17} color="var(--text)" />}
               label={avatarBusy ? "Uploading..." : "Choose from library"}
               busy={avatarBusy}
@@ -10099,7 +10957,7 @@ function timeShort(dateStr) {
   return `${weeks}w`;
 }
 
-function MessagesScreen({ onBack }) {
+function MessagesScreen({ onBack, startWith }) {
   const [userId, setUserId] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -10113,6 +10971,11 @@ function MessagesScreen({ onBack }) {
   useEffect(() => {
     init();
   }, []);
+
+  // Opened from someone's profile "Message" button: go straight to that chat.
+  useEffect(() => {
+    if (startWith && startWith.id) startChat(startWith);
+  }, [startWith?.id]);
 
   const init = async () => {
     setLoading(true);
@@ -15108,6 +15971,38 @@ function ModerationScreen({ onBack }) {
   );
 }
 
+// Logged in while the account is waiting to be deleted: keep it, or leave.
+function PendingDeletionScreen({ deleteAfter, onKeep, onLogout }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-8 text-center" style={{ background: "var(--bg)" }}>
+      <div className="w-16 h-16 rounded-full flex items-center justify-center mb-4" style={{ background: "var(--surface)" }}>
+        <Trash size={28} color="var(--heart)" />
+      </div>
+      <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>Keep your account?</p>
+      <p className="text-sm mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+        You asked to delete this account. It will be deleted for good on{" "}
+        <span style={{ fontWeight: 700 }}>{new Date(deleteAfter).toLocaleDateString(undefined, { dateStyle: "long" })}</span>.
+      </p>
+      <button
+        onClick={async () => {
+          setBusy(true);
+          await onKeep();
+          setBusy(false);
+        }}
+        disabled={busy}
+        className="mt-6 w-full rounded-xl h-12 text-sm"
+        style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+      >
+        Keep account
+      </button>
+      <button onClick={onLogout} className="mt-2 w-full h-11 text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>
+        Log out
+      </button>
+    </div>
+  );
+}
+
 // Shown instead of the app while an account is suspended or banned.
 function SuspendedScreen({ ban, onLogout }) {
   return (
@@ -15159,7 +16054,9 @@ export default function App() {
   const [profileRefresh, setProfileRefresh] = useState(0);
   const [meId, setMeId] = useState(null);
   const [moderationOpen, setModerationOpen] = useState(false);
+  const [messageTarget, setMessageTarget] = useState(null); // profile to open a chat with
   const [myBan, setMyBan] = useState(null); // { until, reason } while suspended
+  const [myDeletion, setMyDeletion] = useState(null); // { delete_after } while deletion is pending
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMeId(data?.user?.id ?? null));
     // Keep "who am I" right after logging in, out, or switching accounts.
@@ -15199,6 +16096,18 @@ export default function App() {
         if (!/duplicate|unique|username/i.test(error.message)) return;
       }
     })();
+  }, [meId]);
+  useEffect(() => {
+    if (!meId) {
+      setMyDeletion(null);
+      return;
+    }
+    supabase
+      .from("account_deletions")
+      .select("delete_after")
+      .eq("user_id", meId)
+      .maybeSingle()
+      .then(({ data }) => setMyDeletion(data || null));
   }, [meId]);
   useEffect(() => {
     if (!meId) {
@@ -15273,7 +16182,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion;
 
   React.useEffect(() => {
     // A reset link lands here with "type=recovery" in the URL. Check it up
@@ -15352,7 +16261,17 @@ export default function App() {
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
         <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen)}>
-          {myBan ? (
+          {myDeletion ? (
+            <PendingDeletionScreen
+              deleteAfter={myDeletion.delete_after}
+              onKeep={async () => {
+                const { error } = await supabase.rpc("cancel_account_deletion");
+                if (error) alert(error.message);
+                else setMyDeletion(null);
+              }}
+              onLogout={() => supabase.auth.signOut()}
+            />
+          ) : myBan ? (
             <SuspendedScreen ban={myBan} onLogout={() => supabase.auth.signOut()} />
           ) : moderationOpen ? (
             <ModerationScreen onBack={() => setModerationOpen(false)} />
@@ -15419,7 +16338,13 @@ export default function App() {
               }}
             />
           ) : inboxOpen ? (
-            <MessagesScreen onBack={() => setInboxOpen(false)} />
+            <MessagesScreen
+              startWith={messageTarget}
+              onBack={() => {
+                setInboxOpen(false);
+                setMessageTarget(null);
+              }}
+            />
           ) : notificationsOpen ? (
             <NotificationsScreen onBack={() => setNotificationsOpen(false)} />
           ) : interestsOpen ? (
@@ -15442,6 +16367,22 @@ export default function App() {
                 setSettingsOpen(false);
                 setEditProfileOpen(true);
               }}
+              onOpenArchive={() => {
+                setSettingsOpen(false);
+                setArchiveOpen(true);
+              }}
+              onOpenActivity={() => {
+                setSettingsOpen(false);
+                setActivityOpen(true);
+              }}
+              onOpenPeopleList={(kind) => {
+                setSettingsOpen(false);
+                setPeopleList(kind);
+              }}
+              onOpenModeration={() => {
+                setSettingsOpen(false);
+                setModerationOpen(true);
+              }}
             />
           ) : viewPostId !== null ? (
             <PostDetailScreen
@@ -15457,6 +16398,10 @@ export default function App() {
           ) : viewProfileId !== null ? (
             <ProfileScreen
               userId={viewProfileId}
+              onMessage={(prof) => {
+                setMessageTarget({ id: prof.id, username: prof.username, avatar_url: prof.avatar_url });
+                setInboxOpen(true);
+              }}
               onOpenPost={(postId) => setViewPostId(postId)}
               onBack={() => setViewProfileId(null)}
               onOpenProfile={(id) => setViewProfileId(id)}
