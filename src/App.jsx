@@ -15178,6 +15178,28 @@ export default function App() {
       });
     }
   }, [authScreen]);
+  // Every signed-in account needs a profile. If one is missing (for example
+  // its row was deleted by hand), make a fresh one instead of showing
+  // "Profile not found".
+  useEffect(() => {
+    if (!meId) return;
+    (async () => {
+      const { data: existing } = await supabase.from("profiles").select("id").eq("id", meId).maybeSingle();
+      if (existing) return;
+      const { data: u } = await supabase.auth.getUser();
+      const base =
+        ((u?.user?.email || "user").split("@")[0].toLowerCase().replace(/[^a-z0-9._]/g, "") || "user").slice(0, 20);
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const username = attempt === 0 ? base : `${base}_${Math.floor(1000 + Math.random() * 9000)}`;
+        const { error } = await supabase.from("profiles").insert({ id: meId, username });
+        if (!error) {
+          setProfileRefresh((n) => n + 1);
+          return;
+        }
+        if (!/duplicate|unique|username/i.test(error.message)) return;
+      }
+    })();
+  }, [meId]);
   useEffect(() => {
     if (!meId) {
       setMyBan(null);
