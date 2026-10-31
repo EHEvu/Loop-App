@@ -182,6 +182,14 @@ const THEME_CSS = `
      around it. On a computer it stays phone-sized in the middle. */
   .loop-frame { max-height: 100dvh; }
   @media (max-width: 520px) {
+    .loop-page {
+      min-height: 100dvh !important;
+      height: 100dvh;
+      align-items: stretch !important;
+      justify-content: stretch !important;
+      background: var(--bg) !important;
+      overflow: hidden;
+    }
     .loop-frame {
       max-width: none !important;
       width: 100% !important;
@@ -2452,6 +2460,146 @@ async function hiddenCommenterSet(postOwnerId) {
   return hidden;
 }
 
+// Blue verified tick (given by the admin).
+function VerifiedBadge({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" className="shrink-0" aria-label="Verified">
+      <path
+        d="M12 1.8l2.4 1.9 3-.4 1.1 2.8 2.8 1.1-.4 3 1.9 2.4-1.9 2.4.4 3-2.8 1.1-1.1 2.8-3-.4L12 22.2l-2.4-1.9-3 .4-1.1-2.8-2.8-1.1.4-3L1.2 11.4l1.9-2.4-.4-3 2.8-1.1 1.1-2.8 3 .4z"
+        fill="#3897F0"
+      />
+      <path d="M7.6 12.2l3 3 5.8-6" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Accepted collaborators for a set of posts: { postId: [{ id, username }] }.
+async function fetchCollabMap(postIds) {
+  if (!postIds || postIds.length === 0) return {};
+  const { data, error } = await supabase.from("post_collaborators").select("post_id, user_id").in("post_id", postIds).eq("status", "accepted");
+  if (error || !data || data.length === 0) return {};
+  const { data: profs } = await supabase.from("profiles").select("id, username").in("id", [...new Set(data.map((d) => d.user_id))]);
+  const name = Object.fromEntries((profs || []).map((pp) => [pp.id, pp.username]));
+  const map = {};
+  data.forEach((d) => {
+    (map[d.post_id] = map[d.post_id] || []).push({ id: d.user_id, username: name[d.user_id] || "unknown" });
+  });
+  return map;
+}
+
+// "owner and collaborator" header name.
+function PostAuthorLine({ post, onOpenProfile, light = false, className = "text-[13px]" }) {
+  const color = light ? "#FFFFFF" : "var(--text)";
+  const collabs = post.collabs || [];
+  return (
+    <span className={`flex items-center gap-1 min-w-0 ${className}`} style={{ color, fontWeight: 600 }}>
+      <button onClick={() => onOpenProfile?.(post.user_id)} className="truncate text-left">{post.username}</button>
+      {post.verified && <VerifiedBadge size={13} />}
+      {post.isFavorite && <Star size={12} color="#F5B800" fill="#F5B800" className="shrink-0" />}
+      {collabs.length > 0 && (
+        <>
+          <span style={{ fontWeight: 400, opacity: 0.85 }}>and</span>
+          {collabs.length === 1 ? (
+            <button onClick={() => onOpenProfile?.(collabs[0].id)} className="truncate text-left">{collabs[0].username}</button>
+          ) : (
+            <span className="truncate">{collabs.length} others</span>
+          )}
+        </>
+      )}
+    </span>
+  );
+}
+
+// The ⋯ sheet on a feed post.
+function FeedPostMenu({ post, isOwn, onClose, onOptions, onDelete, onFeedback, onFavorite, onUnfollow, onAbout, onReport }) {
+  return (
+    <StorySheetShell title="" onClose={onClose}>
+      <div className="pb-6">
+        {isOwn ? (
+          <>
+            <StoryMenuRow icon={<Pencil size={17} color="var(--text)" />} label="Edit and post options" onClick={onOptions} />
+            <StoryMenuRow icon={<Trash2 size={17} color="var(--heart)" />} label="Delete" danger onClick={onDelete} />
+          </>
+        ) : post.suggested ? (
+          <>
+            <StoryMenuRow icon={<Heart size={17} color="var(--text)" />} label="Interested" trailing={<span className="text-[11px]" style={{ color: "var(--text-muted)" }}>More like this</span>} onClick={() => onFeedback("interested")} />
+            <StoryMenuRow icon={<X size={17} color="var(--text)" />} label="Not interested" trailing={<span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Hide this post</span>} onClick={() => onFeedback("not_interested")} />
+            <StoryMenuRow icon={<Info size={17} color="var(--text)" />} label="About this account" onClick={onAbout} />
+            <StoryMenuRow icon={<Flag size={17} color="var(--heart)" />} label="Report" danger onClick={onReport} />
+          </>
+        ) : (
+          <>
+            <StoryMenuRow
+              icon={<Star size={17} color={post.isFavorite ? "#F5B800" : "var(--text)"} fill={post.isFavorite ? "#F5B800" : "none"} />}
+              label={post.isFavorite ? "Remove from favourites" : "Add to favourites"}
+              onClick={onFavorite}
+            />
+            <StoryMenuRow icon={<UserMinus size={17} color="var(--text)" />} label="Unfollow" onClick={onUnfollow} />
+            <StoryMenuRow icon={<X size={17} color="var(--text)" />} label="Not interested" onClick={() => onFeedback("not_interested")} />
+            <StoryMenuRow icon={<Info size={17} color="var(--text)" />} label="About this account" onClick={onAbout} />
+            <StoryMenuRow icon={<Flag size={17} color="var(--heart)" />} label="Report" danger onClick={onReport} />
+          </>
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// "About this account": when they joined and a few public numbers.
+function AboutAccountSheet({ userId, onClose, onOpenProfile }) {
+  const [info, setInfo] = useState(null);
+  useEffect(() => {
+    supabase.rpc("about_account", { p_user: userId }).then(({ data, error }) => setInfo(error ? { error: error.message } : (data || [])[0] || { error: "Not found" }));
+  }, [userId]);
+  return (
+    <StorySheetShell title="About this account" onClose={onClose}>
+      <div className="px-4 pb-6">
+        {!info ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : info.error ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>{info.error}</p>
+        ) : (
+          <>
+            <button
+              onClick={() => {
+                onClose();
+                onOpenProfile?.(userId);
+              }}
+              className="w-full flex flex-col items-center text-center pt-2 pb-4"
+            >
+              <Avatar username={info.username} avatarUrl={info.avatar_url} size={76} />
+              <span className="flex items-center gap-1 mt-2 text-[16px]" style={{ color: "var(--text)", fontWeight: 700 }}>
+                {info.username}
+                {info.is_verified && <VerifiedBadge size={15} />}
+              </span>
+              {info.full_name && <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{info.full_name}</span>}
+              {info.category && <span className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{info.category}</span>}
+            </button>
+            <p className="text-[12px] text-center mb-3" style={{ color: "var(--text-muted)" }}>
+              To help keep Loop authentic, we show information about accounts.
+            </p>
+            <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              {[
+                [Clock, "Date joined", new Date(info.joined).toLocaleDateString(undefined, { month: "long", year: "numeric" })],
+                [Layers, "Posts", formatCount(Number(info.posts))],
+                [Users, "Followers", formatCount(Number(info.followers))],
+                [UserCheck, "Following", formatCount(Number(info.following))],
+                [Shield, "Verified", info.is_verified ? "Yes" : "No"],
+              ].map(([Icon, label, value], i) => (
+                <div key={label} className="flex items-center gap-3 px-4 py-3" style={{ borderTop: i ? "1px solid var(--border)" : "none" }}>
+                  <Icon size={18} color="var(--text)" />
+                  <span className="flex-1 text-[14px]" style={{ color: "var(--text)" }}>{label}</span>
+                  <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{value}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
 // "Suggested for you" accounts on Home, ranked by how many people you follow
 // already follow them — the same signal Instagram leads with.
 function SuggestedAccountsStrip({ people, onOpenProfile, onFollow, onDismiss }) {
@@ -2641,6 +2789,16 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [suggestedPeople, setSuggestedPeople] = useState([]);
   const [suggestedReels, setSuggestedReels] = useState([]);
   const followingCount = posts.filter((p) => !p.suggested).length; // posts from people you follow, at the top
+  // Where the suggestion rows appear changes every time Home loads.
+  const [slots, setSlots] = useState({ accounts: 2, reels: 7 });
+  const [postMenuFor, setPostMenuFor] = useState(null);
+  const [optionsFor, setOptionsFor] = useState(null);
+  const [aboutFor, setAboutFor] = useState(null);
+  const [feedToast, setFeedToast] = useState("");
+  const flashFeed = (msg) => {
+    setFeedToast(msg);
+    setTimeout(() => setFeedToast(""), 2200);
+  };
   const pressTimers = React.useRef({});
   const [countPrefs] = useCountPrefs();
 
@@ -2686,8 +2844,20 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       supabase.from("comments").select("post_id").in("post_id", ids),
       supabase.from("post_tags").select("post_id, tagged_user_id").in("post_id", ids),
     ]);
-    const peopleIds = [...new Set([...rows.map((p) => p.user_id), ...(tagsData || []).map((t) => t.tagged_user_id)])];
-    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url").in("id", peopleIds);
+    const followSet = new Set(feedRef.current.followIds || []);
+    // For "Liked by …": someone you follow if possible, otherwise anyone.
+    const likerFor = {};
+    rows.forEach((p) => {
+      const ls = (likesData || []).filter((l) => l.post_id === p.id && l.user_id !== meId);
+      const pick = ls.find((l) => followSet.has(l.user_id)) || ls[0];
+      if (pick) likerFor[p.id] = pick.user_id;
+    });
+    const peopleIds = [...new Set([...rows.map((p) => p.user_id), ...(tagsData || []).map((t) => t.tagged_user_id), ...Object.values(likerFor)])];
+    const [{ data: profilesData }, collabMap, favs] = await Promise.all([
+      supabase.from("profiles").select("id, username, avatar_url, is_verified").in("id", peopleIds),
+      fetchCollabMap(ids),
+      getFavorites(),
+    ]);
     const prof = Object.fromEntries((profilesData || []).map((p) => [p.id, p]));
     const count = (list, id) => (list || []).filter((x) => x.post_id === id);
     return rows.map((p) => {
@@ -2707,6 +2877,10 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         commentCount: count(commentsData, p.id).length,
         tags: count(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
         media: mediaMap[p.id] || null,
+        verified: !!prof[p.user_id]?.is_verified,
+        collabs: collabMap[p.id] || [],
+        isFavorite: favs.has(p.user_id),
+        likedBy: likerFor[p.id] ? { id: likerFor[p.id], username: prof[likerFor[p.id]]?.username } : null,
       };
     }).map((p) => applyCounts(p, counts[p.id]));
   };
@@ -2735,7 +2909,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         if (error) throw error;
         const batch = rows || [];
         if (batch.length > 0) st.cursor = batch[batch.length - 1].created_at;
-        const visible = batch.filter((p) => !isHiddenFromFeed(rel, p.user_id)).map((p) => ({ ...p, suggested: st.phase === "suggested" }));
+        const visible = batch
+          .filter((p) => !isHiddenFromFeed(rel, p.user_id) && !(st.hiddenPosts && st.hiddenPosts.has(p.id)))
+          .map((p) => ({ ...p, suggested: st.phase === "suggested" }));
         gathered = gathered.concat(visible);
         if (batch.length < FEED_PAGE) {
           if (st.phase === "following") {
@@ -2785,6 +2961,14 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       done: false,
     };
     if (feedRef.current.followIds.length === 0) feedRef.current.followIds = ["00000000-0000-0000-0000-000000000000"];
+    const { data: notInterested } = await supabase
+      .from("post_feedback")
+      .select("post_id")
+      .eq("user_id", user?.id ?? "")
+      .eq("kind", "not_interested");
+    feedRef.current.hiddenPosts = new Set((notInterested || []).map((f) => f.post_id));
+    const a = 1 + Math.floor(Math.random() * 4); // after post 2–5
+    setSlots({ accounts: a, reels: a + 3 + Math.floor(Math.random() * 4) });
 
     await loadPage();
     setLoading(false);
@@ -2876,6 +3060,11 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     }
     const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", needIds);
     const byId = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+    // Keep the strongest matches near the front but mix the order each time.
+    ranked = ranked
+      .map((t, i) => ({ t, k: i + Math.random() * 5 }))
+      .sort((x, y) => x.k - y.k)
+      .map((x) => x.t);
     setSuggestedPeople(
       ranked
         .filter((t) => byId[t.id])
@@ -2985,6 +3174,43 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     }
   };
 
+  const sendFeedback = async (post, kind) => {
+    setPostMenuFor(null);
+    if (!userId) return;
+    await supabase.from("post_feedback").upsert({ user_id: userId, post_id: post.id, kind }, { onConflict: "user_id,post_id" });
+    if (kind === "not_interested") {
+      setPosts((prev) => prev.filter((p) => p.id !== post.id));
+      flashFeed("Post hidden. You'll see fewer posts like this.");
+    } else {
+      flashFeed("Thanks — you'll see more posts like this.");
+    }
+  };
+
+  const toggleFavorite = async (post) => {
+    setPostMenuFor(null);
+    if (!userId) return;
+    const on = !post.isFavorite;
+    setPosts((prev) => prev.map((p) => (p.user_id === post.user_id ? { ...p, isFavorite: on } : p)));
+    const { error } = on
+      ? await supabase.from("favorites").insert({ user_id: userId, target_id: post.user_id })
+      : await supabase.from("favorites").delete().eq("user_id", userId).eq("target_id", post.user_id);
+    invalidateFavorites();
+    if (error) {
+      setPosts((prev) => prev.map((p) => (p.user_id === post.user_id ? { ...p, isFavorite: !on } : p)));
+      flashFeed(error.message);
+      return;
+    }
+    flashFeed(on ? `Added ${post.username} to favourites` : `Removed ${post.username} from favourites`);
+  };
+
+  const unfollowFromPost = async (post) => {
+    setPostMenuFor(null);
+    if (!userId) return;
+    await supabase.from("follows").delete().eq("follower_id", userId).eq("following_id", post.user_id);
+    feedRef.current.followIds = (feedRef.current.followIds || []).filter((id) => id !== post.user_id);
+    flashFeed(`Unfollowed ${post.username}`);
+  };
+
   const deletePost = async (post) => {
     if (post.user_id !== userId) return;
     if (!window.confirm("Delete this post? This cannot be undone.")) return;
@@ -3031,8 +3257,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       ) : (
         posts.map((post, postIndex) => (
           <React.Fragment key={post.id}>
-          {/* accounts strip after the 3rd post from people you follow (or at the top) */}
-          {postIndex === Math.min(3, followingCount) && (
+          {/* suggestion rows land in a different place each visit */}
+          {postIndex === slots.accounts && (
             <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
           )}
           {postIndex === followingCount && followingCount > 0 && followingDone && (
@@ -3044,14 +3270,14 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>You've seen all new posts from accounts you follow.</p>
             </div>
           )}
-          {postIndex === followingCount + 4 && <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />}
+          {postIndex === slots.reels && <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />}
           <div className="mb-1">
             <div className="flex items-center gap-2.5 px-4 py-2.5">
               <button onClick={() => onOpenProfile(post.user_id)} className="shrink-0">
                 <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
               </button>
               <div className="flex flex-col leading-tight flex-1 min-w-0">
-                <button onClick={() => onOpenProfile(post.user_id)} className="text-[13px] text-left truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</button>
+                <PostAuthorLine post={post} onOpenProfile={onOpenProfile} />
                 {post.suggested && (
                   <span className="text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>Suggested for you</span>
                 )}
@@ -3062,44 +3288,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 )}
               </div>
 
-              <div className="relative">
-                <button onClick={() => setMenuOpenFor(menuOpenFor === post.id ? null : post.id)} className="p-1 -mr-1">
-                  <Ellipsis size={19} color="var(--text)" />
-                </button>
-                {menuOpenFor === post.id && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-10"
-                      onClick={() => setMenuOpenFor(null)}
-                    />
-                    <div
-                      className="absolute right-0 top-8 z-20 rounded-2xl overflow-hidden py-1"
-                      style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 190, boxShadow: "0 8px 28px rgba(0,0,0,0.35)" }}
-                    >
-                      {post.user_id === userId ? (
-                        <button
-                          onClick={() => deletePost(post)}
-                          className="w-full flex items-center gap-2 px-4 py-3 text-sm"
-                          style={{ color: "var(--heart)", fontWeight: 600 }}
-                        >
-                          <Trash2 size={16} /> Delete
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setMenuOpenFor(null);
-                            onOpenReport(post.id);
-                          }}
-                          className="w-full text-left px-4 py-3 text-sm"
-                          style={{ color: "var(--heart)", fontWeight: 600 }}
-                        >
-                          Report
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+              <button onClick={() => setPostMenuFor(post)} className="p-1 -mr-1" aria-label="More">
+                <Ellipsis size={19} color="var(--text)" />
+              </button>
             </div>
 
             <div
@@ -3214,6 +3405,22 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             )}
 
             <div className="px-4 pt-1.5">
+              {post.likedBy?.username && (
+                <p className="text-[13px] mb-1" style={{ color: "var(--text)" }}>
+                  Liked by{" "}
+                  <button onClick={() => onOpenProfile(post.likedBy.id)} style={{ fontWeight: 700 }}>
+                    {post.likedBy.username}
+                  </button>
+                  {post.likeCount > 1 && (
+                    <>
+                      {" "}and{" "}
+                      <button onClick={() => setLikesPopupFor(post.id)} style={{ fontWeight: 700 }}>
+                        others
+                      </button>
+                    </>
+                  )}
+                </p>
+              )}
               <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
               <CaptionText
                 username={post.username}
@@ -3241,7 +3448,10 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           </React.Fragment>
         ))
       )}
-      {!loading && posts.length > 0 && posts.length <= followingCount + 4 && !loadingMore && feedRef.current.done && (
+      {!loading && posts.length > 0 && posts.length <= slots.accounts && feedRef.current.done && (
+        <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
+      )}
+      {!loading && posts.length > 0 && posts.length <= slots.reels && !loadingMore && feedRef.current.done && (
         <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />
       )}
       {!loading && posts.length > 0 && (
@@ -3251,6 +3461,58 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           ) : feedRef.current.done ? (
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>You've seen everything for now</span>
           ) : null}
+        </div>
+      )}
+
+      {postMenuFor && (
+        <FeedPostMenu
+          post={postMenuFor}
+          isOwn={postMenuFor.user_id === userId}
+          onClose={() => setPostMenuFor(null)}
+          onOptions={() => {
+            setOptionsFor(postMenuFor);
+            setPostMenuFor(null);
+          }}
+          onDelete={() => {
+            const target = postMenuFor;
+            setPostMenuFor(null);
+            deletePost(target);
+          }}
+          onFeedback={(kind) => sendFeedback(postMenuFor, kind)}
+          onFavorite={() => toggleFavorite(postMenuFor)}
+          onUnfollow={() => unfollowFromPost(postMenuFor)}
+          onAbout={() => {
+            setAboutFor(postMenuFor.user_id);
+            setPostMenuFor(null);
+          }}
+          onReport={() => {
+            const id = postMenuFor.id;
+            setPostMenuFor(null);
+            onOpenReport(id);
+          }}
+        />
+      )}
+      {optionsFor && (
+        <PostOptionsSheet
+          post={optionsFor}
+          onClose={() => setOptionsFor(null)}
+          onSaved={(patch) => {
+            setPosts((prev) => prev.map((p) => (p.id === optionsFor.id ? { ...p, ...patch } : p)));
+            setOptionsFor((prev) => (prev ? { ...prev, ...patch } : prev));
+          }}
+          onDeleted={() => {
+            setPosts((prev) => prev.filter((p) => p.id !== optionsFor.id));
+            setOptionsFor(null);
+          }}
+        />
+      )}
+      {aboutFor && <AboutAccountSheet userId={aboutFor} onClose={() => setAboutFor(null)} onOpenProfile={onOpenProfile} />}
+      {feedToast && (
+        <div
+          className="fixed left-1/2 bottom-24 -translate-x-1/2 z-[80] rounded-full px-4 py-2.5 text-xs"
+          style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", whiteSpace: "nowrap" }}
+        >
+          {feedToast}
         </div>
       )}
 
@@ -3423,7 +3685,10 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
       supabase.from("post_tags").select("post_id, tagged_user_id").in("post_id", ids),
     ]);
     const peopleIds = [...new Set([...rows.map((p) => p.user_id), ...(tagsData || []).map((t) => t.tagged_user_id)])];
-    const { data: profilesData } = await supabase.from("profiles").select("id, username, avatar_url").in("id", peopleIds);
+    const [{ data: profilesData }, collabMap] = await Promise.all([
+      supabase.from("profiles").select("id, username, avatar_url, is_verified").in("id", peopleIds),
+      fetchCollabMap(ids),
+    ]);
     const prof = Object.fromEntries((profilesData || []).map((p) => [p.id, p]));
     const of = (list, id) => (list || []).filter((x) => x.post_id === id);
     return rows.map((p) => {
@@ -3442,6 +3707,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
         saveCount: sv.length,
         commentCount: of(commentsData, p.id).length,
         tags: of(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
+        verified: !!prof[p.user_id]?.is_verified,
+        collabs: collabMap[p.id] || [],
       };
     }).map((p) => applyCounts(p, counts[p.id]));
   };
@@ -3965,8 +4232,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
             <div className="w-9 h-9 rounded-full shrink-0 overflow-hidden flex items-center justify-center text-[13px]" style={{ background: "rgba(255,255,255,0.22)", color: "#FFFFFF", fontWeight: 600 }}>
               {reel.avatarUrl ? <img src={reel.avatarUrl} alt="" className="w-full h-full object-cover" /> : reel.username[0].toUpperCase()}
             </div>
-            <span className="text-[13px] truncate" style={{ color: "#FFFFFF", fontWeight: 600 }}>{reel.username}</span>
           </button>
+          <PostAuthorLine post={reel} onOpenProfile={onOpenProfile} light />
           {reel.user_id !== userId && (
             <button
               onClick={toggleFollow}
@@ -4239,6 +4506,7 @@ function ReelCommentsSheet({
   const inputRef = React.useRef(null);
   const [expanded, setExpanded] = useState(new Set()); // threads with replies open
   const [historyFor, setHistoryFor] = useState(null);
+  const [showHidden, setShowHidden] = useState(false);
   const [followsOwner, setFollowsOwner] = useState(null); // null = unknown/self
   useEffect(() => {
     if (!currentUserId || !postOwnerId || currentUserId === postOwnerId) return;
@@ -4294,7 +4562,7 @@ function ReelCommentsSheet({
     setLoading(true);
     const { data: commentsData } = await supabase
       .from("comments")
-      .select("id, user_id, content, image_url, created_at, parent_id, edited_at")
+      .select("id, user_id, content, image_url, created_at, parent_id, edited_at, pinned_at")
       .eq("post_id", postId)
       .order("created_at", { ascending: true });
 
@@ -4311,6 +4579,7 @@ function ReelCommentsSheet({
     const hidden = await hiddenCommenterSet(postOwnerId);
     const rel = await getRelations();
     const iAmOwner = currentUserId && currentUserId === postOwnerId;
+    const words = await getHiddenWords();
 
     const merged = (commentsData || [])
       .filter((c) => !hidden.has(c.user_id))
@@ -4328,6 +4597,9 @@ function ReelCommentsSheet({
           // Only the post owner is told a comment comes from someone they
           // restricted — everyone else simply never sees it.
           restricted: iAmOwner && rel.restricted.has(c.user_id),
+          likedByAuthor: c.user_id !== postOwnerId && reactions.some((rx) => rx.user_id === postOwnerId && rx.type === "like"),
+          hiddenByWords:
+            c.user_id !== currentUserId && words.length > 0 && words.some((w) => (c.content || "").toLowerCase().includes(w)),
         };
       });
 
@@ -4485,16 +4757,31 @@ function ReelCommentsSheet({
   };
 
   // Pin the post owner's own comments to the top; keep chronological order otherwise
-  const topLevel = comments
+  const allTopLevel = comments
     .filter((c) => !c.parent_id)
     .slice()
     .sort((a, b) => {
+      if (!!a.pinned_at !== !!b.pinned_at) return a.pinned_at ? -1 : 1;
+      if (a.pinned_at && b.pinned_at) return new Date(a.pinned_at) - new Date(b.pinned_at);
       const aOwner = a.user_id === postOwnerId ? 0 : 1;
       const bOwner = b.user_id === postOwnerId ? 0 : 1;
       if (aOwner !== bOwner) return aOwner - bOwner;
       return new Date(a.created_at) - new Date(b.created_at);
     });
-  const repliesOf = (id) => comments.filter((c) => c.parent_id === id);
+  const hiddenCount = allTopLevel.filter((c) => c.hiddenByWords).length;
+  const topLevel = showHidden ? allTopLevel : allTopLevel.filter((c) => !c.hiddenByWords);
+  const repliesOf = (id) => comments.filter((c) => c.parent_id === id && (showHidden || !c.hiddenByWords));
+
+  const togglePin = async (c) => {
+    setMenuFor(null);
+    const pin = !c.pinned_at;
+    const { error } = await supabase.rpc("pin_comment", { p_comment: c.id, p_pin: pin });
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setComments((prev) => prev.map((x) => (x.id === c.id ? { ...x, pinned_at: pin ? new Date().toISOString() : null } : x)));
+  };
 
   return (
     <>
@@ -4583,6 +4870,11 @@ function ReelCommentsSheet({
               });
               return (
                 <div key={c.id} className="mb-4">
+                  {c.pinned_at && (
+                    <p className="flex items-center gap-1 text-[11px] mb-1" style={{ color: "var(--text-muted)", marginLeft: 46 }}>
+                      <Pin size={11} /> Pinned by {postUsername || "author"}
+                    </p>
+                  )}
                   <CommentRow {...rowProps(c, c, false)} />
                   {replies.length > 0 && (
                     <div className="mt-2" style={{ marginLeft: 46 }}>
@@ -4615,6 +4907,16 @@ function ReelCommentsSheet({
           )}
         </div>
 
+        {hiddenCount > 0 && (
+          <button
+            onClick={() => setShowHidden((v) => !v)}
+            className="mx-4 mb-2 text-xs text-left"
+            style={{ color: "var(--text-muted)", fontWeight: 600 }}
+          >
+            {showHidden ? "Hide comments with your hidden words" : `View ${hiddenCount} hidden ${hiddenCount === 1 ? "comment" : "comments"}`}
+          </button>
+        )}
+
         {menuFor && comments.find((x) => x.id === menuFor) && (() => {
           const mc = comments.find((x) => x.id === menuFor);
           const top = mc.parent_id ? comments.find((x) => x.id === mc.parent_id) || mc : mc;
@@ -4633,6 +4935,7 @@ function ReelCommentsSheet({
                 setMenuFor(null);
                 setHistoryFor(mc);
               }}
+              onPin={postOwnerId === currentUserId && !mc.parent_id ? () => togglePin(mc) : null}
             />
           );
         })()}
@@ -4772,7 +5075,14 @@ function MentionText({ text, onMention }) {
     }
     if (/^#/.test(part)) {
       return (
-        <span key={i} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+        <span
+          key={i}
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: part.slice(1) }));
+          }}
+          style={{ color: "var(--accent-solid)", fontWeight: 600 }}
+        >
           {part}
         </span>
       );
@@ -4916,6 +5226,11 @@ function CommentRow({
             )}
             <div className="flex items-center gap-4 mt-1.5">
               <button onClick={onReply} className="text-xs" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Reply</button>
+              {comment.likedByAuthor && (
+                <span className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                  <Heart size={11} color="var(--heart)" fill="var(--heart)" /> by author
+                </span>
+              )}
               {comment.dislikeCount > 0 && (
                 <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                   {comment.dislikeCount} {comment.dislikeCount === 1 ? "dislike" : "dislikes"}
@@ -5005,7 +5320,7 @@ function CommentHistorySheet({ comment, onClose }) {
   );
 }
 
-function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport, onShowHistory }) {
+function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport, onShowHistory, onPin }) {
   const editable = isOwn && canEditComment(comment);
   return (
     <StorySheetShell title="Comment" onClose={onClose}>
@@ -5019,6 +5334,7 @@ function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onC
       </div>
       <div className="pb-6">
         <StoryMenuRow icon={<MessageCircle size={17} color="var(--text)" />} label="Reply" onClick={onReply} />
+        {onPin && <StoryMenuRow icon={<Pin size={17} color="var(--text)" />} label={comment.pinned_at ? "Unpin comment" : "Pin comment"} onClick={onPin} />}
         {comment.content && <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy text" onClick={onCopy} />}
         {comment.edited_at && <StoryMenuRow icon={<History size={17} color="var(--text)" />} label="View edit history" onClick={onShowHistory} />}
         {isOwn && (
@@ -5044,8 +5360,34 @@ const mockAccounts = [
   { id: 6, user: "shuvo.eats", name: "Shuvo Rahman", followers: "23K" },
 ];
 
+const RECENT_SEARCH_KEY = "loop_recent_searches";
+const readRecentSearches = () => {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_SEARCH_KEY) || "[]") || [];
+  } catch {
+    return [];
+  }
+};
+const writeRecentSearches = (list) => {
+  try {
+    localStorage.setItem(RECENT_SEARCH_KEY, JSON.stringify(list.slice(0, 15)));
+  } catch {}
+};
+
 function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
   const [query, setQuery] = useState("");
+  const [recent, setRecent] = useState(readRecentSearches);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const remember = (entry) => {
+    const next = [entry, ...recent.filter((x) => !(x.kind === entry.kind && x.id === entry.id))];
+    setRecent(next);
+    writeRecentSearches(next);
+  };
+  const forget = (entry) => {
+    const next = recent.filter((x) => !(x.kind === entry.kind && x.id === entry.id));
+    setRecent(next);
+    writeRecentSearches(next);
+  };
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   // Explore grid — real posts, no longer placeholder squares.
@@ -5106,8 +5448,10 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
             <Search size={17} color="var(--text-muted)" />
             <input
               value={query}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search accounts"
+              placeholder="Search accounts and #tags"
               className="flex-1 bg-transparent outline-none text-sm"
               style={{ color: "var(--text)" }}
             />
@@ -5127,8 +5471,64 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
         </div>
       </div>
 
-      {query ? (
+      {!query && searchFocused && recent.length > 0 ? (
         <div className="px-4">
+          <div className="flex items-center justify-between py-2">
+            <span className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>Recent</span>
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setRecent([]);
+                writeRecentSearches([]);
+              }}
+              className="text-[13px]"
+              style={{ color: "var(--accent-solid)", fontWeight: 600 }}
+            >
+              Clear all
+            </button>
+          </div>
+          {recent.map((x) => (
+            <div key={x.kind + x.id} className="flex items-center gap-3 py-2">
+              <button
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  remember(x);
+                  if (x.kind === "tag") window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: x.id }));
+                  else onOpenProfile(x.id);
+                }}
+                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+              >
+                {x.kind === "tag" ? (
+                  <span className="w-[46px] h-[46px] rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700, fontSize: 20 }}>#</span>
+                ) : (
+                  <Avatar username={x.username} avatarUrl={x.avatar_url} size={46} />
+                )}
+                <div className="min-w-0">
+                  <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{x.kind === "tag" ? `#${x.id}` : x.username}</p>
+                  {x.full_name && <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{x.full_name}</p>}
+                </div>
+              </button>
+              <button onMouseDown={(e) => e.preventDefault()} onClick={() => forget(x)} aria-label="Remove">
+                <X size={16} color="var(--text-muted)" />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : query ? (
+        <div className="px-4">
+          {query.trim().startsWith("#") && query.trim().length > 1 && (
+            <button
+              onClick={() => {
+                const tag = query.trim().slice(1).replace(/\s+/g, "");
+                remember({ kind: "tag", id: tag });
+                window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: tag }));
+              }}
+              className="flex items-center gap-3 py-2.5 w-full text-left"
+            >
+              <span className="w-[46px] h-[46px] rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700, fontSize: 20 }}>#</span>
+              <span className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{query.trim().replace(/\s+/g, "")}</span>
+            </button>
+          )}
           {searching ? (
             <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
               Searching...
@@ -5141,7 +5541,10 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
             results.map((a) => (
               <button
                 key={a.id}
-                onClick={() => onOpenProfile(a.id)}
+                onClick={() => {
+                  remember({ kind: "user", id: a.id, username: a.username, full_name: a.full_name || null, avatar_url: a.avatar_url || null });
+                  onOpenProfile(a.id);
+                }}
                 className="flex items-center gap-3 py-2.5 w-full text-left"
               >
                 <Avatar username={a.username} avatarUrl={a.avatar_url} size={46} />
@@ -5288,7 +5691,7 @@ function detectAspect(file) {
 }
 
 // Tag people: search by username, pick from the list, shown as chips.
-function TagPeoplePicker({ value, onChange }) {
+function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [me, setMe] = useState(null);
@@ -5325,7 +5728,7 @@ function TagPeoplePicker({ value, onChange }) {
   }, [q, value, me]);
 
   const add = (p) => {
-    if (value.length >= 20) return;
+    if (value.length >= max) return;
     onChange([...value, p]);
     setQ("");
     setResults([]);
@@ -5335,11 +5738,14 @@ function TagPeoplePicker({ value, onChange }) {
     <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
       <div className="flex items-center gap-2 px-3 py-2.5">
         <UserPlus size={15} color="var(--text-muted)" />
-        <span className="text-sm flex-1" style={{ color: "var(--text)", fontWeight: 600 }}>Tag people</span>
+        <span className="text-sm flex-1" style={{ color: "var(--text)", fontWeight: 600 }}>{title}</span>
         {value.length > 0 && (
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{value.length}</span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{max < 20 ? `${value.length}/${max}` : value.length}</span>
         )}
       </div>
+      {hint && (
+        <p className="px-3 -mt-1.5 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>{hint}</p>
+      )}
       {value.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-3 pb-2">
           {value.map((p) => (
@@ -5353,7 +5759,7 @@ function TagPeoplePicker({ value, onChange }) {
           ))}
         </div>
       )}
-      <div className="px-3 pb-2.5">
+      <div className="px-3 pb-2.5" style={{ display: value.length >= max ? "none" : undefined }}>
         <div className="flex items-center gap-2 rounded-lg px-2.5 h-9" style={{ background: "var(--bg-sunken)" }}>
           <Search size={14} color="var(--text-muted)" />
           <input
@@ -5406,6 +5812,7 @@ function UploadScreen() {
   const [turnOffComments, setTurnOffComments] = useState(false);
   const [tagInput, setTagInput] = useState(""); // only read from old drafts
   const [taggedPeople, setTaggedPeople] = useState([]); // [{id, username, avatar_url}]
+  const [collabPeople, setCollabPeople] = useState([]); // invited collaborators (max 3)
   const [aspect, setAspect] = useState("4:5");
   const [linkUrl, setLinkUrl] = useState("");
   const [pollEnabled, setPollEnabled] = useState(false);
@@ -5588,6 +5995,7 @@ function UploadScreen() {
     setTurnOffComments(false);
     setTagInput("");
     setTaggedPeople([]);
+    setCollabPeople([]);
     setAspect("4:5");
     setLinkUrl("");
     setPollEnabled(false);
@@ -5797,6 +6205,23 @@ function UploadScreen() {
       }
     } catch (e) {
       // Tagging is best-effort — never block publishing over it
+    }
+
+    // Collaboration invites — they accept or decline from Notifications.
+    if (collabPeople.length > 0) {
+      try {
+        const invitees = collabPeople.filter((pp) => pp.id !== user.id).slice(0, 3);
+        const { error: collabErr } = await supabase
+          .from("post_collaborators")
+          .insert(invitees.map((pp) => ({ post_id: insertedPost.id, user_id: pp.id })));
+        if (!collabErr) {
+          await supabase
+            .from("notifications")
+            .insert(invitees.map((pp) => ({ user_id: pp.id, actor_id: user.id, type: "collab", post_id: insertedPost.id })));
+        }
+      } catch (e) {
+        // never block the post over invites
+      }
     }
 
     // Best-effort: create the poll
@@ -6076,6 +6501,13 @@ function UploadScreen() {
         </div>
 
         <TagPeoplePicker value={taggedPeople} onChange={setTaggedPeople} />
+        <TagPeoplePicker
+          value={collabPeople}
+          onChange={setCollabPeople}
+          title="Invite collaborators"
+          max={3}
+          hint="If they accept, this post shows on their profile too, with both your names on it."
+        />
 
         {/* Poll */}
         <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -7121,6 +7553,11 @@ function SettingsScreen({
     await supabase.auth.signOut();
   };
 
+  if (view === "time") return <TimeManagementScreen onBack={() => setView("menu")} />;
+  if (view === "status") return <AccountStatusScreen onBack={() => setView("menu")} />;
+  if (view === "favourites") return <FavouritesScreen onBack={() => setView("menu")} />;
+  if (view === "hiddenWords") return <HiddenWordsScreen onBack={() => setView("menu")} />;
+
   if (view === "about") {
     return (
       <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -7239,6 +7676,7 @@ function SettingsScreen({
         { icon: CircleUserRound, label: "Edit profile", onClick: () => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile")) },
         { icon: KeyRound, label: "Password and security", onClick: () => setView("changePassword") },
         { icon: Mail, label: "Email address", onClick: () => setView("changeEmail") },
+        { icon: Shield, label: "Account status", onClick: () => setView("status") },
       ],
     },
     {
@@ -7248,6 +7686,14 @@ function SettingsScreen({
         { icon: Archive, label: "Archive", onClick: onOpenArchive },
         { icon: Gauge, label: "Your activity", onClick: onOpenActivity },
         { icon: Bell, label: "Notifications", onClick: () => setView("notifications") },
+        { icon: Clock, label: "Time management", onClick: () => setView("time") },
+      ],
+    },
+    {
+      title: "What you see",
+      rows: [
+        { icon: Star, label: "Favourites", onClick: () => setView("favourites") },
+        { icon: MessageCircle, label: "Hidden words", onClick: () => setView("hiddenWords") },
       ],
     },
     {
@@ -7653,9 +8099,31 @@ function readTimeSpent() {
   }
 }
 
+const localDay = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// Time management choices (this device): a daily limit and break reminders.
+const TIME_PREFS_KEY = "loop_time_prefs";
+function readTimePrefs() {
+  try {
+    return { dailyLimit: 0, breakEvery: 0, ...(JSON.parse(localStorage.getItem(TIME_PREFS_KEY) || "{}") || {}) };
+  } catch {
+    return { dailyLimit: 0, breakEvery: 0 };
+  }
+}
+function writeTimePrefs(prefs) {
+  try {
+    localStorage.setItem(TIME_PREFS_KEY, JSON.stringify(prefs));
+  } catch {}
+}
+const fmtMinutes = (sec) => {
+  const m = Math.round(sec / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+};
+
 function recordTimeSpent(seconds) {
   try {
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const data = readTimeSpent();
     data[day] = (data[day] || 0) + seconds;
     // Keep a fortnight; older days aren't shown anywhere.
@@ -7664,6 +8132,378 @@ function recordTimeSpent(seconds) {
     keep.forEach((k) => (trimmed[k] = data[k]));
     localStorage.setItem(TIME_KEY, JSON.stringify(trimmed));
   } catch {}
+}
+
+// Settings → Time management.
+function TimeManagementScreen({ onBack }) {
+  const [prefs, setPrefs] = useState(readTimePrefs);
+  const data = readTimeSpent();
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(localDay(d));
+  }
+  const values = days.map((d) => data[d] || 0);
+  const today = values[values.length - 1];
+  const recorded = values.filter((v) => v > 0);
+  const avg = recorded.length ? recorded.reduce((a, b) => a + b, 0) / recorded.length : 0;
+  const max = Math.max(60, ...values);
+  const update = (patch) => {
+    const next = { ...prefs, ...patch };
+    setPrefs(next);
+    writeTimePrefs(next);
+  };
+  const Choice = ({ value, current, label, onPick }) => (
+    <button
+      onClick={() => onPick(value)}
+      className="rounded-full px-3.5 h-9 text-[13px] shrink-0"
+      style={{
+        fontWeight: 600,
+        background: current === value ? "var(--text)" : "var(--surface)",
+        color: current === value ? "var(--bg)" : "var(--text)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Time management" onBack={onBack} />
+      <div className="px-4 pt-4">
+        <div className="rounded-2xl p-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <div className="flex items-end justify-between mb-4">
+            <div>
+              <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Today</p>
+              <p className="text-2xl" style={{ color: "var(--text)", fontWeight: 800 }}>{fmtMinutes(today)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Daily average</p>
+              <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>{fmtMinutes(avg)}</p>
+            </div>
+          </div>
+          <div className="flex items-end justify-between gap-2" style={{ height: 120 }}>
+            {days.map((d, i) => (
+              <div key={d} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+                <div
+                  className="w-full rounded-md"
+                  style={{
+                    height: `${Math.max(3, (values[i] / max) * 100)}%`,
+                    background: i === days.length - 1 ? ACCENT : "var(--toggle-off)",
+                  }}
+                />
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  {new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "narrow" })}
+                </span>
+              </div>
+            ))}
+          </div>
+          {prefs.dailyLimit > 0 && (
+            <p className="text-[12px] mt-3" style={{ color: "var(--text-secondary)" }}>
+              Daily limit: {prefs.dailyLimit} min · {today >= prefs.dailyLimit * 60 ? "reached today" : `${fmtMinutes(Math.max(0, prefs.dailyLimit * 60 - today))} left`}
+            </p>
+          )}
+        </div>
+
+        <p className="text-[15px] mt-6" style={{ color: "var(--text)", fontWeight: 700 }}>Daily limit</p>
+        <p className="text-[12px] mt-0.5 mb-2.5" style={{ color: "var(--text-muted)" }}>
+          We'll remind you when you've used Loop this long today.
+        </p>
+        <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+          {[0, 15, 30, 45, 60, 90, 120].map((m) => (
+            <Choice key={m} value={m} current={prefs.dailyLimit} label={m ? (m < 60 ? `${m} min` : `${m / 60} h`) : "Off"} onPick={(v) => update({ dailyLimit: v })} />
+          ))}
+        </div>
+
+        <p className="text-[15px] mt-6" style={{ color: "var(--text)", fontWeight: 700 }}>Take a break</p>
+        <p className="text-[12px] mt-0.5 mb-2.5" style={{ color: "var(--text-muted)" }}>
+          A gentle reminder to look up after you've been scrolling for a while.
+        </p>
+        <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+          {[0, 10, 20, 30].map((m) => (
+            <Choice key={m} value={m} current={prefs.breakEvery} label={m ? `Every ${m} min` : "Off"} onPick={(v) => update({ breakEvery: v })} />
+          ))}
+        </div>
+
+        <p className="text-[11px] mt-6" style={{ color: "var(--text-muted)" }}>
+          Time is measured on this device while Loop is open on screen.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// The reminder card shown over the app.
+function TimeNudge({ kind, minutes, onClose, onSnooze }) {
+  return (
+    <div className="absolute inset-0 z-[90] flex items-center justify-center px-8" style={{ background: "rgba(0,0,0,0.6)" }}>
+      <div className="w-full rounded-3xl p-6 text-center" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+        <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3" style={{ background: ACCENT }}>
+          <Clock size={26} color="var(--on-accent)" />
+        </div>
+        <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>
+          {kind === "limit" ? "You've reached your daily limit" : "Time for a break?"}
+        </p>
+        <p className="text-sm mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          {kind === "limit"
+            ? `You've spent ${minutes} minutes on Loop today — the limit you set.`
+            : `You've been scrolling for ${minutes} minutes. Stretch, drink some water, look away for a moment.`}
+        </p>
+        <button onClick={onClose} className="mt-5 w-full rounded-xl h-11 text-sm" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+          {kind === "limit" ? "Close for today" : "OK"}
+        </button>
+        <button onClick={onSnooze} className="mt-1 w-full h-10 text-sm" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+          Remind me in 15 minutes
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Plain back-arrow header used by the newer screens.
+function ScreenHeader({ title, onBack, right }) {
+  return (
+    <div className="flex items-center gap-3 px-4 h-14 shrink-0 sticky top-0 z-10" style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}>
+      <button onClick={onBack} aria-label="Back">
+        <ChevronLeft size={24} color="var(--text)" />
+      </button>
+      <span className="text-[17px] flex-1 truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{title}</span>
+      {right}
+    </div>
+  );
+}
+
+// Settings → Account status: is anything removed or limited?
+function AccountStatusScreen({ onBack }) {
+  const [state, setState] = useState(null);
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const [{ data: removed }, { data: ban }] = await Promise.all([
+        supabase.from("posts").select("id, media_url, media_type, removed_at, removed_reason").eq("user_id", user.id).not("removed_at", "is", null).order("removed_at", { ascending: false }),
+        supabase.from("user_bans").select("until, reason").eq("user_id", user.id).maybeSingle(),
+      ]);
+      const activeBan = ban && (!ban.until || new Date(ban.until).getTime() > Date.now()) ? ban : null;
+      setState({ removed: removed || [], ban: activeBan });
+    })();
+  }, []);
+  const good = state && state.removed.length === 0 && !state.ban;
+  const Row = ({ title, sub, ok }) => (
+    <div className="flex items-start gap-3 px-4 py-3.5" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+      <span className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background: ok ? "#1DB954" : "var(--heart)" }}>
+        {ok ? <Check size={14} color="#fff" strokeWidth={3} /> : <span style={{ color: "#fff", fontWeight: 800, fontSize: 13 }}>!</span>}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 600 }}>{title}</p>
+        <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</p>
+      </div>
+    </div>
+  );
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Account status" onBack={onBack} />
+      {!state ? (
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading…</p>
+      ) : (
+        <>
+          <div className="flex flex-col items-center text-center px-6 pt-8 pb-6">
+            <div className="w-20 h-20 rounded-full flex items-center justify-center" style={{ background: good ? "rgba(29,185,84,0.15)" : "rgba(237,73,86,0.15)" }}>
+              {good ? <Check size={40} color="#1DB954" strokeWidth={2.6} /> : <Shield size={36} color="var(--heart)" />}
+            </div>
+            <p className="text-lg mt-4" style={{ color: "var(--text)", fontWeight: 700 }}>
+              {good ? "Your account is in good standing" : state.ban ? "Your account is limited" : "Some of your content was removed"}
+            </p>
+            <p className="text-[13px] mt-1.5" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+              See whether anything you shared went against Loop's Community Guidelines.
+            </p>
+          </div>
+          <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+            <Row
+              ok={state.removed.length === 0}
+              title="Removed content"
+              sub={state.removed.length === 0 ? "Nothing you've posted has been removed." : `${state.removed.length} ${state.removed.length === 1 ? "post was" : "posts were"} removed.`}
+            />
+            <Row
+              ok={!state.ban}
+              title="Features you can use"
+              sub={
+                state.ban
+                  ? state.ban.until
+                    ? `Posting, commenting, messaging and following are paused until ${new Date(state.ban.until).toLocaleString()}.`
+                    : "This account is disabled."
+                  : "You can post, comment, message and follow as usual."
+              }
+            />
+          </div>
+          {state.removed.length > 0 && (
+            <div className="px-4 pt-4">
+              <p className="text-[13px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Removed posts</p>
+              {state.removed.map((rp) => (
+                <div key={rp.id} className="flex items-center gap-3 py-2">
+                  <div className="w-14 h-14 rounded-lg overflow-hidden shrink-0" style={{ background: "var(--surface)" }}>
+                    {rp.media_type === "photo" ? (
+                      <img src={rp.media_url} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <video src={rp.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{rp.removed_reason || "Community Guidelines"}</p>
+                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Removed {new Date(rp.removed_at).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Settings → Favourites: people whose posts you see first.
+function FavouritesScreen({ onBack, onOpenProfile }) {
+  const [rows, setRows] = useState(null);
+  const load = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { data } = await supabase.from("favorites").select("target_id").eq("user_id", user?.id ?? "");
+    const ids = (data || []).map((f) => f.target_id);
+    if (!ids.length) {
+      setRows([]);
+      return;
+    }
+    const { data: profs } = await supabase.from("profiles").select("id, username, full_name, avatar_url").in("id", ids);
+    setRows(profs || []);
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const remove = async (id) => {
+    setRows((prev) => prev.filter((x) => x.id !== id));
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    await supabase.from("favorites").delete().eq("user_id", user?.id ?? "").eq("target_id", id);
+    invalidateFavorites();
+  };
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Favourites" onBack={onBack} />
+      <p className="px-4 pt-3 pb-2 text-[13px]" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+        Posts from your favourites show with a ★ in your feed. Add someone from the ⋯ menu on their post. They won't be told.
+      </p>
+      {rows === null ? (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center py-12">
+          <Star size={34} color="var(--text-muted)" strokeWidth={1.5} />
+          <p className="text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>No favourites yet</p>
+        </div>
+      ) : (
+        rows.map((pp) => (
+          <div key={pp.id} className="flex items-center gap-3 px-4 py-2">
+            <button onClick={() => onOpenProfile?.(pp.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+              <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={46} />
+              <div className="min-w-0">
+                <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{pp.username}</p>
+                {pp.full_name && <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
+              </div>
+            </button>
+            <button onClick={() => remove(pp.id)} className="rounded-lg px-3.5 h-8 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}>
+              Remove
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// Settings → Hidden words: comments containing these are tucked away for you.
+function HiddenWordsScreen({ onBack }) {
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data } = await supabase.from("profile_private").select("hidden_words").eq("user_id", user?.id ?? "").maybeSingle();
+      setText((data?.hidden_words || []).join(", "));
+    })();
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    const words = [...new Set(text.split(/[,\n]/).map((w) => w.trim().toLowerCase()).filter(Boolean))].slice(0, 200);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const { error } = await supabase.from("profile_private").upsert({ user_id: user?.id, hidden_words: words }, { onConflict: "user_id" });
+    setSaving(false);
+    hiddenWordsPromise = null;
+    setNote(error ? error.message : "Saved");
+    setTimeout(() => setNote(""), 1800);
+  };
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Hidden words" onBack={onBack} />
+      <div className="px-4 pt-4">
+        <p className="text-[13px] mb-3" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+          Comments with these words or emojis are hidden from you. You can still open them if you want. Separate words with commas.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={5}
+          placeholder="e.g. spam, scam, 🤡"
+          className="w-full rounded-2xl px-4 py-3 text-sm outline-none resize-none"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+        <button onClick={save} disabled={saving} className="w-full rounded-xl h-11 text-sm mt-3" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {note && <p className="text-xs text-center mt-2" style={{ color: "var(--text-muted)" }}>{note}</p>}
+      </div>
+    </div>
+  );
+}
+
+// Cached per session: your hidden words and your favourites.
+let hiddenWordsPromise = null;
+function getHiddenWords() {
+  if (!hiddenWordsPromise) {
+    hiddenWordsPromise = (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data } = await supabase.from("profile_private").select("hidden_words").eq("user_id", user?.id ?? "").maybeSingle();
+      return (data?.hidden_words || []).map((w) => String(w).toLowerCase()).filter(Boolean);
+    })().catch(() => []);
+  }
+  return hiddenWordsPromise;
+}
+let favoritesPromise = null;
+function getFavorites() {
+  if (!favoritesPromise) {
+    favoritesPromise = (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data, error } = await supabase.from("favorites").select("target_id").eq("user_id", user?.id ?? "");
+      return new Set(error ? [] : (data || []).map((f) => f.target_id));
+    })().catch(() => new Set());
+  }
+  return favoritesPromise;
+}
+function invalidateFavorites() {
+  favoritesPromise = null;
 }
 
 function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
@@ -8392,6 +9232,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   const [avatarVideoUrl, setAvatarVideoUrl] = useState(null);
   const [birthday, setBirthday] = useState("");
   const [contactEmail, setContactEmail] = useState("");
+  const [category, setCategory] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [fullName, setFullName] = useState("");
@@ -8412,7 +9253,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
       setError("");
       const { data, error: err } = await supabase
         .from("profiles")
-        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender, contact_email, contact_phone")
+        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender, contact_email, contact_phone, category")
         .eq("id", currentUserId)
         .maybeSingle();
       if (err) setError(err.message);
@@ -8424,6 +9265,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         setAvatarUrl(data.avatar_url || null);
         setAvatarVideoUrl(data.avatar_video_url || null);
         setContactEmail(data.contact_email || "");
+        setCategory(data.category || "");
         setContactPhone(data.contact_phone || "");
         // Birthday lives in its own owner-only table so nobody else can read it.
         supabase
@@ -8553,6 +9395,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         avatar_url: avatarUrl,
         avatar_video_url: avatarVideoUrl,
         contact_email: contactEmail.trim() || null,
+        category: category.trim().slice(0, 30) || null,
         contact_phone: contactPhone.trim() || null,
         links: cleanLinks,
         gender,
@@ -8753,6 +9596,27 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
             <Plus size={15} /> Add link
           </button>
         )}
+
+        <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Category</label>
+        <div className="flex flex-wrap gap-1.5 mb-1">
+          {["", "Artist", "Creator", "Musician", "Photographer", "Blogger", "Gamer", "Business", "Education", "Public figure"].map((c) => (
+            <button
+              key={c || "none"}
+              type="button"
+              onClick={() => setCategory(c)}
+              className="rounded-full px-3 h-8 text-xs"
+              style={{
+                fontWeight: 600,
+                background: category === c ? "var(--text)" : "var(--bg-sunken)",
+                color: category === c ? "var(--bg)" : "var(--text)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              {c || "None"}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] mt-1 mb-4" style={{ color: "var(--text-muted)" }}>Shown under your name on your profile.</p>
 
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Contact options</label>
         <div className="rounded-2xl overflow-hidden mb-1" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
@@ -9901,7 +10765,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private, contact_email, contact_phone")
+      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private, contact_email, contact_phone, is_verified, category")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -9915,7 +10779,20 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
     if (!isViewingOwnPosts) {
       postsQuery = postsQuery.eq("archived", false);
     }
-    const { data: postsData } = await postsQuery.order("created_at", { ascending: false });
+    const { data: ownPosts } = await postsQuery.order("created_at", { ascending: false });
+    // Collab posts they accepted show on their grid too.
+    let collabPosts = [];
+    const { data: collabRows } = await supabase.from("post_collaborators").select("post_id").eq("user_id", targetId).eq("status", "accepted");
+    const collabIds = (collabRows || []).map((c) => c.post_id);
+    if (collabIds.length) {
+      const { data } = await supabase
+        .from("posts")
+        .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason, views_count, user_id")
+        .in("id", collabIds)
+        .eq("archived", false);
+      collabPosts = (data || []).map((pp) => ({ ...pp, pinned: false, isCollab: true }));
+    }
+    const postsData = [...(ownPosts || []), ...collabPosts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const sortedPosts = (postsData || []).slice().sort((a, b) => {
       if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
       return 0;
@@ -10240,6 +11117,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
             <span className="text-base truncate" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
               {profile.username}
             </span>
+            {profile.is_verified && <VerifiedBadge size={15} />}
             {isOwnProfile && <ChevronLeft size={16} color="var(--text-muted)" style={{ transform: "rotate(-90deg)" }} />}
           </button>
           {profile.is_private && (
@@ -10344,6 +11222,9 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
         <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>
           {profile.full_name || profile.username}
         </p>
+        {profile.category && (
+          <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>{profile.category}</p>
+        )}
         {profile.bio && (
           <p className="text-[13px] mt-0.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{profile.bio}</p>
         )}
@@ -10590,6 +11471,11 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
                   </span>
                 )
               )}
+              {p.isCollab && (
+                <div className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
+                  <Users size={14} color="#FFFFFF" />
+                </div>
+              )}
               {tab === "posts" && p.pinned && (
                 <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
                   <Pin size={10} color="var(--accent-end)" />
@@ -10719,6 +11605,22 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
                   <StoryMenuRow icon={<Shield size={17} color="var(--heart)" />} label="Ban permanently" danger onClick={() => modBanProfile(null)} />
                 )}
                 <StoryMenuRow icon={<Shield size={17} color="var(--text)" />} label="Lift suspension" onClick={modUnbanProfile} />
+                {staffRole === "admin" && (
+                  <StoryMenuRow
+                    icon={<VerifiedBadge size={17} />}
+                    label={profile.is_verified ? "Remove verified badge" : "Give verified badge"}
+                    onClick={async () => {
+                      setSheet(null);
+                      const on = !profile.is_verified;
+                      const { error } = await supabase.rpc("admin_set_verified", { p_user: profile.id, p_on: on });
+                      if (error) flashNote(error.message);
+                      else {
+                        setProfile((prev) => ({ ...prev, is_verified: on }));
+                        flashNote(on ? "Verified badge given" : "Badge removed");
+                      }
+                    }}
+                  />
+                )}
               </>
             )}
           </div>
@@ -12165,18 +13067,124 @@ const MSG_COLS =
 // ---- Chat customisation ----
 // Themes colour your own bubbles; fonts apply to the whole thread.
 // Both are stored on the conversation, so everyone in the chat sees them.
+// Chat themes: a background for the whole chat plus matching bubbles.
+// Patterns are tiny inline SVGs, so nothing extra is downloaded.
+const svgUrl = (svg) => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+const PAT = {
+  hearts: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56'><path d='M14 20c-2.5-3-7-1.5-7 2 0 3 4 5.5 7 8 3-2.5 7-5 7-8 0-3.5-4.5-5-7-2z' fill='${c}'/><path d='M42 46c-1.8-2.1-5-1-5 1.4 0 2.1 2.8 3.9 5 5.6 2.2-1.7 5-3.5 5-5.6 0-2.4-3.2-3.5-5-1.4z' fill='${c}'/></svg>`),
+  stars: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><circle cx='8' cy='12' r='1.2' fill='${c}'/><circle cx='52' cy='6' r='0.8' fill='${c}'/><circle cx='30' cy='34' r='1' fill='${c}'/><circle cx='70' cy='44' r='1.4' fill='${c}'/><circle cx='14' cy='62' r='0.9' fill='${c}'/><circle cx='46' cy='70' r='1.1' fill='${c}'/><path d='M62 20l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z' fill='${c}'/></svg>`),
+  dots: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22'><circle cx='3' cy='3' r='1.6' fill='${c}'/></svg>`),
+  waves: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='80' height='26'><path d='M0 13c10 0 10-8 20-8s10 8 20 8 10-8 20-8 10 8 20 8' fill='none' stroke='${c}' stroke-width='1.6'/></svg>`),
+  leaves: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><path d='M14 30c0-10 8-16 18-16-1 10-8 17-18 16z' fill='${c}'/><path d='M44 58c0-7 6-11 12-11-1 7-6 11-12 11z' fill='${c}'/></svg>`),
+  confetti: (c1, c2) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><rect x='8' y='10' width='6' height='2.4' rx='1.2' transform='rotate(30 11 11)' fill='${c1}'/><rect x='40' y='30' width='6' height='2.4' rx='1.2' transform='rotate(-25 43 31)' fill='${c2}'/><circle cx='22' cy='46' r='1.8' fill='${c2}'/><circle cx='50' cy='8' r='1.5' fill='${c1}'/></svg>`),
+};
 const CHAT_THEMES = [
-  { key: "default", name: "Default",   bubble: "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%)", on: "var(--on-accent)" },
-  { key: "sunset",  name: "Sunset",    bubble: "linear-gradient(135deg, #FF7E5F 0%, #FEB47B 100%)", on: "#3A1A0E" },
-  { key: "ocean",   name: "Ocean",     bubble: "linear-gradient(135deg, #2E3192 0%, #1BFFFF 100%)", on: "#04222B" },
-  { key: "forest",  name: "Forest",    bubble: "linear-gradient(135deg, #134E5E 0%, #71B280 100%)", on: "#08201A" },
-  { key: "berry",   name: "Berry",     bubble: "linear-gradient(135deg, #B24592 0%, #F15F79 100%)", on: "#2E0B22" },
-  { key: "mono",    name: "Monochrome",bubble: "linear-gradient(135deg, #434343 0%, #000000 100%)", on: "#FFFFFF" },
-  { key: "citrus",  name: "Citrus",    bubble: "linear-gradient(135deg, #F7971E 0%, #FFD200 100%)", on: "#2E1E00" },
-  { key: "lavender",name: "Lavender",  bubble: "linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)", on: "#FFFFFF" },
-  { key: "mint",    name: "Mint",      bubble: "linear-gradient(135deg, #00B09B 0%, #96C93D 100%)", on: "#04241E" },
-  { key: "rose",    name: "Rose",      bubble: "linear-gradient(135deg, #ED4264 0%, #FFEDBC 100%)", on: "#33060F" },
+  { key: "default", name: "Default", bubble: "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%)", on: "var(--on-accent)" },
+  {
+    key: "love", name: "Love",
+    bg: `${PAT.hearts("rgba(237,66,100,0.16)")}, linear-gradient(180deg, #FFE8EE 0%, #FFF3F5 100%)`,
+    bubble: "linear-gradient(135deg, #ED4264 0%, #F15F79 100%)", on: "#FFFFFF",
+    other: "#FFFFFF", otherText: "#3A0D18", muted: "rgba(58,13,24,0.55)",
+  },
+  {
+    key: "night", name: "Night sky",
+    bg: `${PAT.stars("rgba(255,255,255,0.55)")}, linear-gradient(180deg, #0B1026 0%, #1B2A4A 100%)`,
+    bubble: "linear-gradient(135deg, #4FACFE 0%, #00F2FE 100%)", on: "#00243A",
+    other: "rgba(255,255,255,0.12)", otherText: "#EEF4FF", muted: "rgba(238,244,255,0.6)",
+  },
+  {
+    key: "ocean", name: "Ocean",
+    bg: `${PAT.waves("rgba(255,255,255,0.10)")}, linear-gradient(180deg, #0F2027 0%, #203A43 50%, #2C5364 100%)`,
+    bubble: "linear-gradient(135deg, #2E3192 0%, #1BFFFF 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.13)", otherText: "#EAF6FF", muted: "rgba(234,246,255,0.6)",
+  },
+  {
+    key: "forest", name: "Forest",
+    bg: `${PAT.leaves("rgba(255,255,255,0.07)")}, linear-gradient(180deg, #0B3D2E 0%, #1E5B45 100%)`,
+    bubble: "linear-gradient(135deg, #71B280 0%, #A8E063 100%)", on: "#08201A",
+    other: "rgba(255,255,255,0.12)", otherText: "#EFFFF6", muted: "rgba(239,255,246,0.6)",
+  },
+  {
+    key: "sunset", name: "Sunset",
+    bg: "linear-gradient(165deg, #FF9A76 0%, #FECFEF 100%)",
+    bubble: "linear-gradient(135deg, #FF5E62 0%, #FF9966 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.85)", otherText: "#3A1A0E", muted: "rgba(58,26,14,0.6)",
+  },
+  {
+    key: "galaxy", name: "Galaxy",
+    bg: `${PAT.stars("rgba(255,255,255,0.45)")}, radial-gradient(circle at 30% 20%, #5B2A86 0%, #24123B 55%, #0E0718 100%)`,
+    bubble: "linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.12)", otherText: "#F3EAFF", muted: "rgba(243,234,255,0.6)",
+  },
+  {
+    key: "bangladesh", name: "Bangladesh",
+    bg: "radial-gradient(circle at 45% 40%, rgba(244,42,65,0.9) 0 22%, transparent 23%), linear-gradient(180deg, #006A4E 0%, #00543D 100%)",
+    bubble: "linear-gradient(135deg, #F42A41 0%, #C8102E 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.14)", otherText: "#FFFFFF", muted: "rgba(255,255,255,0.65)",
+  },
+  {
+    key: "desert", name: "Desert",
+    bg: "linear-gradient(180deg, #F6D365 0%, #FDA085 100%)",
+    bubble: "linear-gradient(135deg, #8E5A2B 0%, #C1803D 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.8)", otherText: "#3B230C", muted: "rgba(59,35,12,0.6)",
+  },
+  {
+    key: "candy", name: "Candy",
+    bg: `${PAT.confetti("rgba(240,147,251,0.55)", "rgba(245,87,108,0.45)")}, #FDF0FF`,
+    bubble: "linear-gradient(135deg, #F093FB 0%, #F5576C 100%)", on: "#FFFFFF",
+    other: "#FFFFFF", otherText: "#3A1036", muted: "rgba(58,16,54,0.55)",
+  },
+  {
+    key: "mint", name: "Mint",
+    bg: `${PAT.waves("rgba(0,176,155,0.18)")}, #E6FFF7`,
+    bubble: "linear-gradient(135deg, #00B09B 0%, #96C93D 100%)", on: "#04241E",
+    other: "#FFFFFF", otherText: "#06302A", muted: "rgba(6,48,42,0.55)",
+  },
+  {
+    key: "citrus", name: "Citrus",
+    bg: `${PAT.dots("rgba(247,151,30,0.25)")}, #FFF7D6`,
+    bubble: "linear-gradient(135deg, #F7971E 0%, #FFD200 100%)", on: "#2E1E00",
+    other: "#FFFFFF", otherText: "#2E1E00", muted: "rgba(46,30,0,0.55)",
+  },
+  {
+    key: "mono", name: "Monochrome",
+    bg: `${PAT.dots("rgba(0,0,0,0.10)")}, #F2F2F2`,
+    bubble: "linear-gradient(135deg, #434343 0%, #000000 100%)", on: "#FFFFFF",
+    other: "#FFFFFF", otherText: "#111111", muted: "rgba(17,17,17,0.5)",
+  },
+  {
+    key: "rose", name: "Rose",
+    bg: "linear-gradient(180deg, #FBE3E8 0%, #FFF1EB 100%)",
+    bubble: "linear-gradient(135deg, #ED4264 0%, #FFEDBC 100%)", on: "#33060F",
+    other: "#FFFFFF", otherText: "#33060F", muted: "rgba(51,6,15,0.55)",
+  },
+  {
+    key: "berry", name: "Berry",
+    bg: "linear-gradient(180deg, #3A0F2E 0%, #5E1742 100%)",
+    bubble: "linear-gradient(135deg, #B24592 0%, #F15F79 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.12)", otherText: "#FFEAF4", muted: "rgba(255,234,244,0.6)",
+  },
+  {
+    key: "lavender", name: "Lavender",
+    bg: `${PAT.dots("rgba(142,45,226,0.16)")}, #F3ECFF`,
+    bubble: "linear-gradient(135deg, #8E2DE2 0%, #B06AB3 100%)", on: "#FFFFFF",
+    other: "#FFFFFF", otherText: "#2A0F45", muted: "rgba(42,15,69,0.55)",
+  },
 ];
+
+// Style for the message area of a themed chat: the background, plus the
+// colours used inside it so received bubbles and times stay readable.
+function chatAreaStyle(t) {
+  if (!t || !t.bg) return {};
+  return {
+    background: t.bg,
+    "--surface": t.other,
+    "--text": t.otherText,
+    "--text-muted": t.muted,
+    "--text-secondary": t.muted,
+    "--border": "transparent",
+  };
+}
 
 // System stacks only — no extra webfont downloads, so nothing flashes
 // or blocks while a chat opens.
@@ -12199,7 +13207,6 @@ const fontOf = (key) => CHAT_FONTS.find((f) => f.key === key) || CHAT_FONTS[0];
 function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
   const [pickedTheme, setPickedTheme] = useState(theme || "default");
   const [pickedFont, setPickedFont] = useState(font || "default");
-  const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -12222,80 +13229,89 @@ function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
   };
 
   return (
-    <StorySheetShell title="Customise chat" onClose={onClose}>
+    <StorySheetShell title="Chat theme" onClose={onClose}>
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
 
-      {preview && (
-        <div className="mx-4 mb-3 rounded-2xl p-3" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", fontFamily: f.stack }}>
-          <div className="flex justify-start mb-2">
-            <div className="px-3.5 py-2 text-sm" style={{ background: "var(--surface)", color: "var(--text)", borderRadius: "16px 16px 16px 4px", border: "1px solid var(--border)" }}>
-              How does this look?
+      {/* Live preview */}
+      <div className="mx-4 mb-4 rounded-3xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+        <div className="px-3.5 pt-3 pb-4" style={{ background: "var(--bg)", fontFamily: f.stack, ...chatAreaStyle(t) }}>
+          <p className="text-center text-[10px] mb-2.5" style={{ color: "var(--text-muted)" }}>Today 9:41 PM</p>
+          <div className="flex justify-start mb-1.5">
+            <div className="px-3.5 py-2 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", borderRadius: "18px 18px 18px 5px", border: t.bg ? "none" : "1px solid var(--border)" }}>
+              Did you see the new theme? 😍
+            </div>
+          </div>
+          <div className="flex justify-end mb-1.5">
+            <div className="px-3.5 py-2 text-[13px]" style={{ background: t.bubble, color: t.on, borderRadius: "18px 18px 5px 18px" }}>
+              Yes! It looks amazing
             </div>
           </div>
           <div className="flex justify-end">
-            <div className="px-3.5 py-2 text-sm" style={{ background: t.bubble, color: t.on, borderRadius: "16px 16px 4px 16px" }}>
-              Looks great 🔥
+            <div className="px-3.5 py-2 text-[13px]" style={{ background: t.bubble, color: t.on, borderRadius: "18px 5px 18px 18px" }}>
+              Using it right now 🔥
             </div>
           </div>
-        </div>
-      )}
-
-      <div className="flex gap-3 px-4">
-        {/* Theme — left */}
-        <div className="flex-1 min-w-0">
-          <p className="text-[11px] mb-2 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>Theme</p>
-          <div className="flex flex-col gap-1.5" style={{ maxHeight: 250, overflowY: "auto" }}>
-            {CHAT_THEMES.map((th) => (
-              <button
-                key={th.key}
-                onClick={() => setPickedTheme(th.key)}
-                className="flex items-center gap-2 rounded-xl px-2 py-2 text-left"
-                style={{
-                  background: pickedTheme === th.key ? "var(--bg-sunken)" : "transparent",
-                  border: pickedTheme === th.key ? "1px solid var(--accent-solid)" : "1px solid transparent",
-                }}
-              >
-                <span className="rounded-full shrink-0" style={{ width: 22, height: 22, background: th.bubble }} />
-                <span className="text-xs truncate" style={{ color: "var(--text)" }}>{th.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Font — right */}
-        <div className="flex-1 min-w-0">
-          <p className="text-[11px] mb-2 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>Font</p>
-          <div className="flex flex-col gap-1.5" style={{ maxHeight: 250, overflowY: "auto" }}>
-            {CHAT_FONTS.map((ft) => (
-              <button
-                key={ft.key}
-                onClick={() => setPickedFont(ft.key)}
-                className="rounded-xl px-2.5 py-2 text-left"
-                style={{
-                  background: pickedFont === ft.key ? "var(--bg-sunken)" : "transparent",
-                  border: pickedFont === ft.key ? "1px solid var(--accent-solid)" : "1px solid transparent",
-                  fontFamily: ft.stack,
-                }}
-              >
-                <span className="text-xs truncate block" style={{ color: "var(--text)" }}>{ft.name}</span>
-              </button>
-            ))}
-          </div>
+          <p className="text-right text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>Seen</p>
         </div>
       </div>
 
-      <div className="flex gap-2.5 px-4 pt-4 pb-6">
-        <button
-          onClick={() => setPreview((v) => !v)}
-          className="flex-1 rounded-full h-11 text-sm transition-transform active:scale-95"
-          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
-        >
-          {preview ? "Hide preview" : "Preview"}
-        </button>
+      <p className="px-4 text-[12px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Themes</p>
+      <div className="grid grid-cols-3 gap-2.5 px-4">
+        {CHAT_THEMES.map((th) => {
+          const on = pickedTheme === th.key;
+          return (
+            <button
+              key={th.key}
+              onClick={() => setPickedTheme(th.key)}
+              className="flex flex-col items-center gap-1.5 transition-transform active:scale-95"
+            >
+              <span
+                className="relative w-full rounded-2xl overflow-hidden flex flex-col justify-end gap-1 p-2"
+                style={{
+                  aspectRatio: "3 / 4",
+                  background: th.bg || "var(--bg-sunken)",
+                  border: on ? "2.5px solid var(--accent-solid)" : "1px solid var(--border)",
+                }}
+              >
+                <span className="self-start rounded-full" style={{ width: "62%", height: 10, background: th.other || "var(--surface)" }} />
+                <span className="self-end rounded-full" style={{ width: "55%", height: 10, background: th.bubble }} />
+                <span className="self-end rounded-full" style={{ width: "40%", height: 10, background: th.bubble }} />
+                {on && (
+                  <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "var(--accent-solid)" }}>
+                    <Check size={12} color="var(--on-accent)" strokeWidth={3} />
+                  </span>
+                )}
+              </span>
+              <span className="text-[11px]" style={{ color: "var(--text)", fontWeight: on ? 700 : 500 }}>{th.name}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="px-4 text-[12px] mt-4 mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Font</p>
+      <div className="flex gap-2 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
+        {CHAT_FONTS.map((ft) => (
+          <button
+            key={ft.key}
+            onClick={() => setPickedFont(ft.key)}
+            className="rounded-full px-3.5 h-9 text-[13px] shrink-0"
+            style={{
+              fontFamily: ft.stack,
+              background: pickedFont === ft.key ? "var(--text)" : "var(--surface)",
+              color: pickedFont === ft.key ? "var(--bg)" : "var(--text)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            {ft.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="px-4 pt-4 pb-6">
         <button
           onClick={apply}
           disabled={busy}
-          className="flex-1 rounded-full h-11 text-sm transition-transform active:scale-95"
+          className="w-full rounded-full h-11 text-sm transition-transform active:scale-95"
           style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
         >
           {busy ? "Applying..." : "Apply"}
@@ -14214,6 +15230,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-3 py-3"
+        style={chatAreaStyle(chatTheme)}
         onClick={() => {
           setMenuFor(null);
           setPickerFor(null);
@@ -14725,7 +15742,7 @@ function NotificationsScreen({ onBack }) {
 
     const { data: notifData } = await supabase
       .from("notifications")
-      .select("id, type, actor_id, created_at")
+      .select("id, type, actor_id, created_at, post_id")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(50);
@@ -14739,12 +15756,26 @@ function NotificationsScreen({ onBack }) {
     const actorIds = [...new Set(notifData.map((n) => n.actor_id))];
     const { data: profilesData } = await supabase
       .from("profiles")
-      .select("id, username")
+      .select("id, username, avatar_url")
       .in("id", actorIds);
+
+    // Where a collab invite stands now (pending / accepted / declined).
+    const collabPostIds = notifData.filter((n) => n.type === "collab" && n.post_id).map((n) => n.post_id);
+    let collabStatus = {};
+    if (collabPostIds.length) {
+      const { data: cs } = await supabase
+        .from("post_collaborators")
+        .select("post_id, status")
+        .eq("user_id", user.id)
+        .in("post_id", collabPostIds);
+      collabStatus = Object.fromEntries((cs || []).map((c) => [c.post_id, c.status]));
+    }
 
     const merged = notifData.map((n) => ({
       ...n,
       username: (profilesData || []).find((p) => p.id === n.actor_id)?.username || "unknown",
+      avatarUrl: (profilesData || []).find((p) => p.id === n.actor_id)?.avatar_url || null,
+      collabStatus: n.type === "collab" ? collabStatus[n.post_id] || "gone" : null,
     }));
 
     const rel = await getRelations();
@@ -14752,8 +15783,22 @@ function NotificationsScreen({ onBack }) {
     setLoading(false);
   };
 
+  const answerCollab = async (n, status) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, collabStatus: status } : x)));
+    const { error } = await supabase.from("post_collaborators").update({ status }).eq("post_id", n.post_id).eq("user_id", user?.id ?? "");
+    if (error) {
+      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, collabStatus: "pending" } : x)));
+      alert(error.message);
+    }
+  };
+
   const actionText = (type) =>
-    type === "like"
+    type === "collab"
+      ? "invited you to collaborate on a post"
+      : type === "like"
       ? "liked your post"
       : type === "follow"
       ? "started following you"
@@ -14770,7 +15815,9 @@ function NotificationsScreen({ onBack }) {
       : "";
 
   const iconFor = (type) =>
-    type === "like"
+    type === "collab"
+      ? Users
+      : type === "like"
       ? Heart
       : type === "comment" || type === "mention"
       ? MessageCircle
@@ -14808,15 +15855,28 @@ function NotificationsScreen({ onBack }) {
             const Icon = iconFor(n.type);
             return (
               <div key={n.id} className="flex items-center gap-3 px-4 py-2.5">
-                <div className="w-11 h-11 rounded-full shrink-0" style={{ background: ACCENT, padding: 2 }}>
-                  <div className="w-full h-full rounded-full bg-[var(--bg)] flex items-center justify-center text-xs" style={{ color: "var(--text)" }}>
-                    {n.username[0].toUpperCase()}
-                  </div>
-                </div>
+                <Avatar username={n.username} avatarUrl={n.avatarUrl} size={44} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm" style={{ color: "var(--text)" }}>
                     <span style={{ fontWeight: 600 }}>{n.username}</span> {actionText(n.type)}
+                    <span className="text-xs" style={{ color: "var(--text-muted)" }}> · {timeAgo(n.created_at)}</span>
                   </p>
+                  {n.type === "collab" && (
+                    n.collabStatus === "pending" ? (
+                      <div className="flex gap-2 mt-2">
+                        <button onClick={() => answerCollab(n, "accepted")} className="rounded-lg px-4 h-8 text-xs" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+                          Accept
+                        </button>
+                        <button onClick={() => answerCollab(n, "declined")} className="rounded-lg px-4 h-8 text-xs" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}>
+                          Decline
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                        {n.collabStatus === "accepted" ? "You're a collaborator — it's on your profile" : n.collabStatus === "declined" ? "Declined" : "This invite is no longer available"}
+                      </p>
+                    )
+                  )}
                 </div>
                 <Icon size={17} color={colorFor(n.type)} className="shrink-0" />
               </div>
@@ -15651,6 +16711,69 @@ const PEOPLE_LIST_META = {
   muted: { title: "Muted", hint: "You stay following them, but their posts, reels and stories stop appearing. They aren't told." },
 };
 
+// #hashtag page: every post whose caption uses the tag.
+function HashtagScreen({ tag, onBack, onOpenPost }) {
+  const [posts, setPosts] = useState(null);
+  useEffect(() => {
+    (async () => {
+      const safe = tag.replace(/[%_]/g, "");
+      const { data } = await supabase
+        .from("posts")
+        .select("id, user_id, media_url, media_type, media_count, created_at, views_count")
+        .ilike("caption", `%#${safe}%`)
+        .eq("archived", false)
+        .is("removed_at", null)
+        .lte("created_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(90);
+      const rel = await getRelations();
+      setPosts((data || []).filter((pp) => !isHiddenFromFeed(rel, pp.user_id)));
+    })();
+  }, [tag]);
+  return (
+    <div className="flex-1 overflow-y-auto pb-6" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title={`#${tag}`} onBack={onBack} />
+      <div className="flex items-center gap-4 px-4 py-5">
+        <div className="w-20 h-20 rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <span style={{ color: "var(--text)", fontSize: 34, fontWeight: 700 }}>#</span>
+        </div>
+        <div>
+          <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>#{tag}</p>
+          <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+            {posts === null ? "…" : `${formatCount(posts.length)} ${posts.length === 1 ? "post" : "posts"}`}
+          </p>
+        </div>
+      </div>
+      {posts === null ? (
+        <div className="grid grid-cols-3 gap-0.5">
+          {Array.from({ length: 9 }, (_, i) => (
+            <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
+          ))}
+        </div>
+      ) : posts.length === 0 ? (
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>No posts with #{tag} yet</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-0.5">
+          {posts.map((pp) => (
+            <button key={pp.id} onClick={() => onOpenPost(pp.id)} className="relative aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
+              {pp.media_type === "photo" ? (
+                <img src={pp.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+              ) : (
+                <video src={pp.media_url + "#t=0.5"} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+              )}
+              {pp.media_type !== "photo" && (
+                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
+                  <Play size={13} color="#fff" fill="#fff" />
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Moderation (Admin + Moderators) ----
 // Reports come in here. One tap dismisses, removes the post/comment, or
 // suspends the account; every decision is written to the log. Only the
@@ -15666,6 +16789,8 @@ const MOD_ACTION_LABEL = {
   unban: "Suspension lifted",
   add_moderator: "Made moderator",
   remove_moderator: "Removed as moderator",
+  verify: "Gave verified badge",
+  unverify: "Removed verified badge",
 };
 const modLabel = (a) => MOD_ACTION_LABEL[a] || (a?.startsWith("ban") ? `Suspended ${a.slice(3)} days` : a);
 
@@ -16082,6 +17207,45 @@ export default function App() {
   const [meId, setMeId] = useState(null);
   const [moderationOpen, setModerationOpen] = useState(false);
   const [messageTarget, setMessageTarget] = useState(null); // profile to open a chat with
+  const [timeNudge, setTimeNudge] = useState(null); // { kind, minutes }
+  const [hashtag, setHashtag] = useState(null);
+  useEffect(() => {
+    const onTag = (e) => setHashtag(e.detail);
+    window.addEventListener("loop:hashtag", onTag);
+    return () => window.removeEventListener("loop:hashtag", onTag);
+  }, []);
+  const sessionSecondsRef = React.useRef(0);
+  const snoozeUntilRef = React.useRef(0);
+  const limitShownDayRef = React.useRef("");
+
+  // Count time while Loop is open on screen, and nudge for breaks / limits.
+  useEffect(() => {
+    const TICK = 15;
+    const id = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      recordTimeSpent(TICK);
+      sessionSecondsRef.current += TICK;
+      if (Date.now() < snoozeUntilRef.current) return;
+      const prefs = readTimePrefs();
+      const today = readTimeSpent()[localDay()] || 0;
+      if (prefs.dailyLimit > 0 && today >= prefs.dailyLimit * 60 && limitShownDayRef.current !== localDay()) {
+        limitShownDayRef.current = localDay();
+        setTimeNudge({ kind: "limit", minutes: prefs.dailyLimit });
+      } else if (prefs.breakEvery > 0 && sessionSecondsRef.current >= prefs.breakEvery * 60) {
+        sessionSecondsRef.current = 0;
+        setTimeNudge({ kind: "break", minutes: prefs.breakEvery });
+      }
+    }, TICK * 1000);
+    const onVis = () => {
+      // Coming back after a while away starts a fresh scrolling session.
+      if (document.visibilityState === "hidden") sessionSecondsRef.current = Math.max(0, sessionSecondsRef.current - 60);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
   const [myBan, setMyBan] = useState(null); // { until, reason } while suspended
   const [myDeletion, setMyDeletion] = useState(null); // { delete_after } while deletion is pending
   useEffect(() => {
@@ -16209,7 +17373,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null;
 
   // ---- Back button ----
   // Every screen that opens on top (a profile, a post, Settings, Your
@@ -16236,6 +17400,7 @@ export default function App() {
     [commentsPostId !== null, () => setCommentsPostId(null)],
     [settingsOpen, () => setSettingsOpen(false)],
     [viewPostId !== null, () => setViewPostId(null)],
+    [hashtag !== null, () => setHashtag(null)],
     [viewProfileId !== null, () => setViewProfileId(null)],
     [active !== "feed", () => setActive("feed")],
   ];
@@ -16306,7 +17471,7 @@ export default function App() {
 
   if (checkingSession) {
     return (
-      <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+      <div className="loop-page w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
         <div className="flex flex-col items-center gap-4">
           <LoopLogo size={96} />
@@ -16318,7 +17483,7 @@ export default function App() {
 
   if (authScreen) {
     return (
-      <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+      <div className="loop-page w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
         <div
           className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
@@ -16348,13 +17513,13 @@ export default function App() {
   }
 
   return (
-    <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+    <div className="loop-page w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
       <style>{THEME_CSS}</style>
       <div
         className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen)}>
+        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen) + String(hashtag)}>
           {myDeletion ? (
             <PendingDeletionScreen
               deleteAfter={myDeletion.delete_after}
@@ -16483,6 +17648,8 @@ export default function App() {
               onOpenReport={(postId) => setReportPostId(postId)}
               onDeleted={() => {}}
             />
+          ) : hashtag !== null ? (
+            <HashtagScreen tag={hashtag} onBack={() => setHashtag(null)} onOpenPost={(id) => setViewPostId(id)} />
           ) : viewProfileId !== null ? (
             <ProfileScreen
               userId={viewProfileId}
@@ -16552,6 +17719,18 @@ export default function App() {
         </ErrorBoundary>
 
         <NotificationPrompt userId={meId} />
+        {timeNudge && (
+          <TimeNudge
+            kind={timeNudge.kind}
+            minutes={timeNudge.minutes}
+            onClose={() => setTimeNudge(null)}
+            onSnooze={() => {
+              snoozeUntilRef.current = Date.now() + 15 * 60 * 1000;
+              if (timeNudge.kind === "limit") limitShownDayRef.current = "";
+              setTimeNudge(null);
+            }}
+          />
+        )}
 
         {/* Bottom nav */}
         {!overlayOpen && (
