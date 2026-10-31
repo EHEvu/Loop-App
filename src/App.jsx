@@ -178,6 +178,19 @@ const THEME_CSS = `
     --tag-border: #A0202E;
     --tag-text: #FFD0D4;
   }
+  /* On a phone the app fills the screen — no rounded frame or border
+     around it. On a computer it stays phone-sized in the middle. */
+  .loop-frame { max-height: 100dvh; }
+  @media (max-width: 520px) {
+    .loop-frame {
+      max-width: none !important;
+      width: 100% !important;
+      height: 100dvh !important;
+      max-height: none !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+    }
+  }
   @keyframes loopHeartBurst {
     0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0; }
     15% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
@@ -354,13 +367,11 @@ function LoopLogo({ size = 72 }) {
 function Avatar({ username, avatarUrl, size = 40 }) {
   const letter = (username || "u")[0].toUpperCase();
   return (
-    <div className="rounded-full shrink-0 overflow-hidden flex items-center justify-center" style={{ width: size, height: size, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: avatarUrl ? 0 : 2 }}>
+    <div className="rounded-full shrink-0 overflow-hidden flex items-center justify-center" style={{ width: size, height: size, background: "var(--border)" }}>
       {avatarUrl ? (
-        <img src={avatarUrl} alt="" className="w-full h-full object-cover rounded-full" />
+        <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
       ) : (
-        <div className="w-full h-full rounded-full bg-[var(--surface)] flex items-center justify-center" style={{ color: "var(--text)", fontSize: size * 0.4, fontWeight: 600 }}>
-          {letter}
-        </div>
+        <span style={{ color: "var(--text)", fontSize: size * 0.42, fontWeight: 600 }}>{letter}</span>
       )}
     </div>
   );
@@ -3036,18 +3047,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           {postIndex === followingCount + 4 && <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />}
           <div className="mb-1">
             <div className="flex items-center gap-2.5 px-4 py-2.5">
-              <button
-                onClick={() => onOpenProfile(post.user_id)}
-                className="shrink-0"
-                style={{ width: 36, height: 36, borderRadius: "9999px", background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
-              >
-                <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
-                  {post.avatarUrl ? (
-                    <img src={post.avatarUrl} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    post.username[0].toUpperCase()
-                  )}
-                </div>
+              <button onClick={() => onOpenProfile(post.user_id)} className="shrink-0">
+                <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
               </button>
               <div className="flex flex-col leading-tight flex-1 min-w-0">
                 <button onClick={() => onOpenProfile(post.user_id)} className="text-[13px] text-left truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</button>
@@ -3961,14 +3962,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
       >
         <div className="flex items-center gap-2.5 mb-2.5">
           <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-full shrink-0" style={{ background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}>
-              <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center text-[11px]" style={{ background: "rgba(20,20,20,0.9)", color: "#FFFFFF", fontWeight: 600 }}>
-                {reel.avatarUrl ? (
-                  <img src={reel.avatarUrl} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  reel.username[0].toUpperCase()
-                )}
-              </div>
+            <div className="w-9 h-9 rounded-full shrink-0 overflow-hidden flex items-center justify-center text-[13px]" style={{ background: "rgba(255,255,255,0.22)", color: "#FFFFFF", fontWeight: 600 }}>
+              {reel.avatarUrl ? <img src={reel.avatarUrl} alt="" className="w-full h-full object-cover" /> : reel.username[0].toUpperCase()}
             </div>
             <span className="text-[13px] truncate" style={{ color: "#FFFFFF", fontWeight: 600 }}>{reel.username}</span>
           </button>
@@ -4973,9 +4968,24 @@ function CommentHistorySheet({ comment, onClose }) {
         {rows === null ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
         ) : rows.length === 0 ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>
-            This comment was edited before edit history was turned on, so earlier versions weren't kept.
-          </p>
+          <>
+            <div className="rounded-2xl px-3 py-2.5 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px]" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>Current</span>
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmt(comment.edited_at || comment.created_at)}</span>
+              </div>
+              <p className="text-[13px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{comment.content || "—"}</p>
+            </div>
+            <div className="rounded-2xl px-3 py-2.5" style={{ border: "1px dashed var(--border)" }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px]" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Original</span>
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmt(comment.created_at)}</span>
+              </div>
+              <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+                This edit was made before Loop started keeping edit history, so the original words weren't saved. Every edit from now on is kept here.
+              </p>
+            </div>
+          </>
         ) : (
           versions
             .slice()
@@ -7474,18 +7484,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             <ChevronLeft size={24} color="var(--text)" />
           </button>
           <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2.5 min-w-0">
-            <div
-              className="shrink-0"
-              style={{ width: 36, height: 36, borderRadius: "9999px", background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 2 }}
-            >
-              <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center text-[11px]" style={{ background: "var(--bg)", color: "var(--text)", fontWeight: 600 }}>
-                {post.avatarUrl ? (
-                  <img src={post.avatarUrl} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  post.username[0].toUpperCase()
-                )}
-              </div>
-            </div>
+            <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
             <div className="flex flex-col leading-tight min-w-0 text-left">
               <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
               {post.location && (
@@ -9860,6 +9859,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
   const [similar, setSimilar] = useState(null);
   const [reelSort, setReelSort] = useState("latest"); // latest | views
   const [reelSortMenu, setReelSortMenu] = useState(false);
+  const [hasStory, setHasStory] = useState(false);
   const avatarInputRef = React.useRef(null);
   const avatarPressRef = React.useRef(null);
   const avatarLongRef = React.useRef(false);
@@ -10032,6 +10032,18 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
     const { error } = await supabase.from("follows").insert({ follower_id: myId, following_id: pp.id });
     if (!error) await supabase.from("notifications").insert({ user_id: pp.id, actor_id: myId, type: "follow" });
   };
+
+  // A coloured ring only when they have a story from the last 24 hours.
+  useEffect(() => {
+    if (!profile?.id) return;
+    supabase
+      .from("stories")
+      .select("id")
+      .eq("user_id", profile.id)
+      .gt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+      .limit(1)
+      .then(({ data, error }) => setHasStory(!error && (data || []).length > 0));
+  }, [profile?.id]);
 
   const flashNote = (msg) => {
     setReportNote(msg);
@@ -10239,7 +10251,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
             <button onClick={() => setSheet("create")} className="transition-transform active:scale-90">
               <PlusSquare size={22} color="var(--text)" />
             </button>
-            <button onClick={() => setSheet("menu")} className="transition-transform active:scale-90">
+            <button onClick={() => onOpenSettings?.()} className="transition-transform active:scale-90">
               <SlidersHorizontal size={21} color="var(--text)" />
             </button>
           </div>
@@ -10288,9 +10300,17 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
               else setAvatarViewer(true);
             }}
             className="rounded-full flex items-center justify-center transition-transform active:scale-95"
-            style={{ width: 88, height: 88, background: "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)", padding: 3 }}
+            style={{
+              width: 88,
+              height: 88,
+              background: hasStory ? "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)" : "transparent",
+              padding: hasStory ? 3 : 0,
+            }}
           >
-            <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center" style={{ background: "var(--surface)", border: "3px solid var(--bg)" }}>
+            <div
+              className="w-full h-full rounded-full overflow-hidden flex items-center justify-center"
+              style={{ background: "var(--border)", border: hasStory ? "3px solid var(--bg)" : "none" }}
+            >
               {profile.avatar_video_url ? (
                 <video src={profile.avatar_video_url} poster={profile.avatar_url || undefined} className="w-full h-full object-cover" autoPlay muted loop playsInline />
               ) : profile.avatar_url ? (
@@ -10474,13 +10494,20 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
                   setTab(t);
                 }
               }}
-              className="w-full flex items-center justify-center gap-1 py-3 transition-transform active:scale-95"
+              className="w-full flex items-center justify-center py-3"
               style={{ borderBottom: tab === t ? "1.5px solid var(--text)" : "1.5px solid transparent" }}
             >
-              <ProfileTabIcon kind={t} active={tab === t} />
-              {t === "reels" && tab === "reels" && (
-                <ChevronLeft size={14} color="var(--text)" style={{ transform: reelSortMenu ? "rotate(90deg)" : "rotate(-90deg)", transition: "transform 0.15s" }} />
-              )}
+              <span className="relative inline-flex">
+                <ProfileTabIcon kind={t} active={tab === t} />
+                {t === "reels" && tab === "reels" && (
+                  <ChevronLeft
+                    size={14}
+                    color="var(--text)"
+                    className="absolute top-1/2"
+                    style={{ left: "calc(100% + 3px)", marginTop: -7, transform: reelSortMenu ? "rotate(90deg)" : "rotate(-90deg)", transition: "transform 0.15s" }}
+                  />
+                )}
+              </span>
             </button>
             {t === "reels" && reelSortMenu && (
               <>
@@ -16184,6 +16211,73 @@ export default function App() {
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
   const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion;
 
+  // ---- Back button ----
+  // Every screen that opens on top (a profile, a post, Settings, Your
+  // activity…) adds a step to the browser history, so the phone's Back
+  // button / swipe goes back one screen instead of leaving Loop, and the
+  // on-screen back arrows and the phone's Back stay in step.
+  // Order = which screen is on top when several are open (same order as
+  // the screen picker below).
+  const overlayStack = [
+    [moderationOpen, () => setModerationOpen(false)],
+    [reportPostId !== null, () => setReportPostId(null)],
+    [editProfileOpen, () => setEditProfileOpen(false)],
+    [activityOpen, () => setActivityOpen(false)],
+    [archiveOpen, () => setArchiveOpen(false)],
+    [peopleList !== null, () => setPeopleList(null)],
+    [profileFeed !== null, () => setProfileFeed(null)],
+    [savedOpen, () => setSavedOpen(false)],
+    [inboxOpen, () => {
+      setInboxOpen(false);
+      setMessageTarget(null);
+    }],
+    [notificationsOpen, () => setNotificationsOpen(false)],
+    [interestsOpen, () => setInterestsOpen(false)],
+    [commentsPostId !== null, () => setCommentsPostId(null)],
+    [settingsOpen, () => setSettingsOpen(false)],
+    [viewPostId !== null, () => setViewPostId(null)],
+    [viewProfileId !== null, () => setViewProfileId(null)],
+    [active !== "feed", () => setActive("feed")],
+  ];
+  const navDepth = authScreen || myBan || myDeletion ? 0 : overlayStack.filter((o) => o[0]).length;
+  const overlayStackRef = React.useRef(overlayStack);
+  overlayStackRef.current = overlayStack;
+  const prevDepthRef = React.useRef(0);
+  const skipPopRef = React.useRef(0);
+  const closingFromPopRef = React.useRef(false);
+
+  useEffect(() => {
+    const prev = prevDepthRef.current;
+    prevDepthRef.current = navDepth;
+    if (navDepth > prev) {
+      for (let k = prev; k < navDepth; k++) window.history.pushState({ loop: k + 1 }, "");
+    } else if (navDepth < prev) {
+      if (closingFromPopRef.current) {
+        closingFromPopRef.current = false;
+        return;
+      }
+      // Closed with an on-screen arrow: drop the matching history steps.
+      skipPopRef.current += 1;
+      window.history.go(-(prev - navDepth));
+    }
+  }, [navDepth]);
+
+  useEffect(() => {
+    const onPop = () => {
+      if (skipPopRef.current > 0) {
+        skipPopRef.current -= 1;
+        return;
+      }
+      const top = overlayStackRef.current.find((o) => o[0]);
+      if (top) {
+        closingFromPopRef.current = true;
+        top[1]();
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   React.useEffect(() => {
     // A reset link lands here with "type=recovery" in the URL. Check it up
     // front too — the PASSWORD_RECOVERY event and getSession() can resolve in
@@ -16227,7 +16321,7 @@ export default function App() {
       <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
         <div
-          className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
+          className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
           style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
         >
           {authScreen === "login" ? (
@@ -16257,7 +16351,7 @@ export default function App() {
     <div className="w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
       <style>{THEME_CSS}</style>
       <div
-        className="flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
+        className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
         <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen)}>
@@ -16360,27 +16454,21 @@ export default function App() {
               accentEnd={accentEnd}
               onAccentChange={setCustomAccent}
               onOpenSaved={() => {
-                setSettingsOpen(false);
                 setSavedOpen(true);
               }}
               onOpenEditProfile={() => {
-                setSettingsOpen(false);
                 setEditProfileOpen(true);
               }}
               onOpenArchive={() => {
-                setSettingsOpen(false);
                 setArchiveOpen(true);
               }}
               onOpenActivity={() => {
-                setSettingsOpen(false);
                 setActivityOpen(true);
               }}
               onOpenPeopleList={(kind) => {
-                setSettingsOpen(false);
                 setPeopleList(kind);
               }}
               onOpenModeration={() => {
-                setSettingsOpen(false);
                 setModerationOpen(true);
               }}
             />
