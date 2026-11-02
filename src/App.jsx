@@ -20,6 +20,7 @@ import {
   Settings,
   Mail,
   Link2,
+  ExternalLink,
   QrCode,
   Phone,
   History,
@@ -93,6 +94,8 @@ const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end
 // action accent: gold in dark, blue in light (per the user's brand direction).
 const THEME_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Cinzel+Decorative:wght@400;700;900&display=swap');
+  /* Chat fonts. Phones only download a font when a chat actually uses it. */
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Playfair+Display:wght@400;600&family=Space+Mono&family=Nunito:wght@400;700&family=Lora:wght@400;600&family=Montserrat:wght@400;600&family=Oswald:wght@400;600&family=Pacifico&family=Caveat:wght@400;700&family=Hind+Siliguri:wght@400;600&display=swap');
   :root {
     /* ---- DARK: pure black, gold accent (premium) ---- */
     --bg: #000000;
@@ -341,6 +344,13 @@ async function compressImage(file, maxSide = 1440, quality = 0.82) {
   }
 }
 
+// A post is a photo only if it really is an image file — some videos were
+// saved as "photo" when they were posted through Post instead of Reel.
+const VIDEO_URL_RE = /\.(mp4|mov|webm|m4v|3gp|mkv|avi)(\?|#|$)/i;
+function isPhotoPost(p) {
+  return !!p && p.media_type === "photo" && !VIDEO_URL_RE.test(p.media_url || "");
+}
+
 function LoopLogo({ size = 72 }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -389,7 +399,7 @@ function Avatar({ username, avatarUrl, size = 40 }) {
 // end of that line; tapping it opens the whole caption with "less" at the end.
 // "more" only appears when there really is more (measured, or a line break).
 // `light` renders it for dark video overlays (Reels).
-function CaptionText({ username, caption, onOpenProfile, onMention, light = false }) {
+function CaptionText({ username, caption, onOpenProfile, onMention, onTap, light = false }) {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const ref = React.useRef(null);
@@ -414,6 +424,11 @@ function CaptionText({ username, caption, onOpenProfile, onMention, light = fals
   const toggleColor = light ? "rgba(255,255,255,0.72)" : "var(--text-muted)";
   const toggle = (e) => {
     e.stopPropagation();
+    // Reels: a tap opens the caption and comments together, like Instagram.
+    if (onTap) {
+      onTap();
+      return;
+    }
     setExpanded((v) => !v);
   };
   const name = username ? (
@@ -442,7 +457,7 @@ function CaptionText({ username, caption, onOpenProfile, onMention, light = fals
 
   const showMore = overflows || hasMoreLines;
   return (
-    <div className="flex items-baseline text-sm" style={{ lineHeight: 1.4 }} onClick={showMore ? toggle : undefined}>
+    <div className="flex items-baseline text-sm" style={{ lineHeight: 1.4 }} onClick={showMore || onTap ? toggle : undefined}>
       <span ref={ref} className="min-w-0" style={{ color: bodyColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {name}
         {firstLine}
@@ -700,20 +715,70 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
 }
 
 // Shows "with @user1, @user2" under a caption when people are tagged
-function TaggedPeopleLine({ tags, onOpenProfile }) {
+function TaggedPeopleLine({ tags, onOpenProfile, light = false }) {
   if (!tags || tags.length === 0) return null;
+  const color = light ? "#FFFFFF" : "var(--text)";
   return (
-    <p className="text-[11px] mb-1" style={{ color: "var(--text-muted)" }}>
-      with{" "}
+    <div className="flex items-center gap-1.5 flex-wrap mt-1 mb-1">
+      <CircleUserRound size={14} color={color} />
       {tags.map((t, i) => (
         <React.Fragment key={t.tagged_user_id}>
-          <button onClick={() => onOpenProfile?.(t.tagged_user_id)} style={{ color: "var(--text)", fontWeight: 600 }}>
-            @{t.username}
+          <button onClick={(e) => { e.stopPropagation(); onOpenProfile?.(t.tagged_user_id); }} className="text-[13px]" style={{ color, fontWeight: 600 }}>
+            {t.username}
           </button>
-          {i < tags.length - 1 ? ", " : ""}
+          {i < tags.length - 1 && <span style={{ color, opacity: 0.6 }}>·</span>}
         </React.Fragment>
       ))}
-    </p>
+    </div>
+  );
+}
+
+// The little person button on a photo/video: tap it to show who's tagged.
+function MediaTagOverlay({ tags, onOpenProfile }) {
+  const [open, setOpen] = useState(false);
+  if (!tags || tags.length === 0) return null;
+  return (
+    <>
+      {open && (
+        <div
+          className="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-2 px-6"
+          style={{ background: "rgba(0,0,0,0.25)" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(false);
+          }}
+        >
+          {tags.map((t) => (
+            <button
+              key={t.tagged_user_id}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenProfile?.(t.tagged_user_id);
+              }}
+              className="relative rounded-lg px-3 py-1.5 text-[13px]"
+              style={{ background: "rgba(0,0,0,0.78)", color: "#FFFFFF", fontWeight: 600 }}
+            >
+              <span
+                className="absolute left-1/2 -top-1.5 -translate-x-1/2"
+                style={{ width: 0, height: 0, borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderBottom: "6px solid rgba(0,0,0,0.78)" }}
+              />
+              {t.username}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        aria-label="Tagged people"
+        className="absolute left-2.5 bottom-2.5 z-[6] w-7 h-7 rounded-full flex items-center justify-center"
+        style={{ background: "rgba(0,0,0,0.6)" }}
+      >
+        <CircleUserRound size={15} color="#FFFFFF" fill="rgba(255,255,255,0.15)" />
+      </button>
+    </>
   );
 }
 
@@ -3294,20 +3359,21 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             </div>
 
             <div
-              className="w-full overflow-hidden flex items-center justify-center"
+              className="relative w-full overflow-hidden flex items-center justify-center"
               style={{ background: "var(--bg-sunken)", aspectRatio: postAspectCss(post) }}
             >
               {post.media && post.media.length > 1 ? (
                 <FeedPhotoTap onLike={() => !post.liked && toggleLike(post)}>
                   <PostMediaCarousel media={post.media} />
                 </FeedPhotoTap>
-              ) : post.media_type === "photo" ? (
+              ) : isPhotoPost(post) ? (
                 <FeedPhotoTap onLike={() => !post.liked && toggleLike(post)}>
                   <img src={post.media_url} alt="" className="w-full h-full object-cover" />
                 </FeedPhotoTap>
               ) : (
-                <FeedVideo post={post} onOpenReel={onOpenReel} onLike={() => !post.liked && toggleLike(post)} />
+                <FeedVideo post={post.media_type === "photo" ? { ...post, media_type: "video" } : post} onOpenReel={onOpenReel} onLike={() => !post.liked && toggleLike(post)} />
               )}
+              <MediaTagOverlay tags={post.tags} onOpenProfile={onOpenProfile} />
             </div>
 
             <PollBlock postId={post.id} currentUserId={userId} />
@@ -3421,7 +3487,6 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   )}
                 </p>
               )}
-              <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
               <CaptionText
                 username={post.username}
                 caption={post.caption}
@@ -3526,6 +3591,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           postAvatar={commentSheetFor.avatarUrl}
           postCreatedAt={commentSheetFor.created_at}
           postLink={commentSheetFor.link_url}
+          postTags={commentSheetFor.tags}
           commentsDisabled={commentSheetFor.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentSheetFor(null)}
@@ -4256,8 +4322,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
             <MapPin size={11} /> {reel.location}
           </span>
         )}
-        <TaggedPeopleLine tags={reel.tags} onOpenProfile={onOpenProfile} />
-        <CaptionText caption={reel.caption} light onMention={(n) => openProfileByUsername(n, onOpenProfile)} />
+        <CaptionText
+          caption={reel.caption}
+          light
+          onMention={(n) => openProfileByUsername(n, onOpenProfile)}
+          onTap={reel.comments_disabled ? undefined : () => setCommentSheetOpen(true)}
+        />
+        <TaggedPeopleLine tags={reel.tags} onOpenProfile={onOpenProfile} light />
         <PostLinkChip url={reel.link_url} light />
       </div>
 
@@ -4431,6 +4502,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
           postAvatar={reel.avatarUrl}
           postCreatedAt={reel.created_at}
           postLink={reel.link_url}
+          postTags={reel.tags}
           commentsDisabled={reel.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentSheetOpen(false)}
@@ -4488,6 +4560,7 @@ function ReelCommentsSheet({
   postAvatar,
   postCreatedAt,
   postLink,
+  postTags,
   commentsDisabled,
   onOpenProfile,
   onClose,
@@ -4835,6 +4908,15 @@ function ReelCommentsSheet({
                 })}
               </p>
             )}
+            {postTags && postTags.length > 0 && (
+              <TaggedPeopleLine
+                tags={postTags}
+                onOpenProfile={(id) => {
+                  onClose?.();
+                  onOpenProfile?.(id);
+                }}
+              />
+            )}
             <PostLinkChip url={postLink} />
           </div>
         )}
@@ -5098,7 +5180,19 @@ async function openProfileByUsername(name, onOpenProfile) {
   if (data?.id) onOpenProfile(data.id);
 }
 
-// "🔗 youtube.com" chip for a post's link.
+// A post's link as a tidy pill: "YouTube · youtu.be ↗".
+const SITE_NAMES = [
+  [/(^|\.)(youtube\.com|youtu\.be)$/, "YouTube"],
+  [/(^|\.)(facebook\.com|fb\.watch|fb\.com)$/, "Facebook"],
+  [/(^|\.)instagram\.com$/, "Instagram"],
+  [/(^|\.)tiktok\.com$/, "TikTok"],
+  [/(^|\.)(x\.com|twitter\.com)$/, "X"],
+  [/(^|\.)wa\.me$|(^|\.)whatsapp\.com$/, "WhatsApp"],
+  [/(^|\.)t\.me$/, "Telegram"],
+  [/(^|\.)github\.com$/, "GitHub"],
+  [/(^|\.)linkedin\.com$/, "LinkedIn"],
+  [/(^|\.)spotify\.com$/, "Spotify"],
+];
 function PostLinkChip({ url, light = false }) {
   if (!url) return null;
   let host = url;
@@ -5107,17 +5201,28 @@ function PostLinkChip({ url, light = false }) {
   } catch (e) {
     // keep raw
   }
+  const site = (SITE_NAMES.find(([re]) => re.test(host)) || [])[1];
   return (
     <a
       href={url}
       target="_blank"
       rel="noopener noreferrer nofollow"
       onClick={(e) => e.stopPropagation()}
-      className="inline-flex items-center gap-1.5 mt-1.5 text-[13px]"
-      style={{ color: light ? "#FFFFFF" : "var(--text)", fontWeight: 700 }}
+      className="inline-flex items-center gap-2 mt-2 rounded-full pl-1.5 pr-3 py-1 max-w-full"
+      style={{
+        background: light ? "rgba(255,255,255,0.16)" : "var(--surface)",
+        border: light ? "1px solid rgba(255,255,255,0.22)" : "1px solid var(--border)",
+        backdropFilter: light ? "blur(8px)" : "none",
+      }}
     >
-      <Link2 size={15} color={light ? "#FFFFFF" : "var(--text)"} style={{ transform: "rotate(-45deg)" }} />
-      {host}
+      <span className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: light ? "rgba(255,255,255,0.22)" : "var(--bg-sunken)" }}>
+        <Link2 size={13} color={light ? "#FFFFFF" : "var(--text)"} style={{ transform: "rotate(-45deg)" }} />
+      </span>
+      <span className="text-[12px] truncate" style={{ color: light ? "#FFFFFF" : "var(--text)", fontWeight: 700 }}>{site || host}</span>
+      {site && (
+        <span className="text-[11px] truncate" style={{ color: light ? "rgba(255,255,255,0.7)" : "var(--text-muted)" }}>{host}</span>
+      )}
+      <ExternalLink size={12} color={light ? "rgba(255,255,255,0.8)" : "var(--text-muted)"} className="shrink-0" />
     </a>
   );
 }
@@ -5240,15 +5345,15 @@ function CommentRow({
           </>
         )}
       </div>
-      <div className="flex flex-col items-center shrink-0" style={{ width: 34 }}>
+      <div className="flex flex-col items-center shrink-0 pt-0.5" style={{ width: 30 }}>
         <button onClick={() => onReact("like")} className="flex flex-col items-center p-1 transition-transform active:scale-90" aria-label="Like comment">
-          <Heart size={19} color={comment.myReaction === "like" ? "var(--heart)" : "var(--text-muted)"} fill={comment.myReaction === "like" ? "var(--heart)" : "none"} strokeWidth={1.9} />
-          <span className="text-[11px] leading-none mt-0.5" style={{ color: "var(--text-muted)", minHeight: 11 }}>
+          <Heart size={14} color={comment.myReaction === "like" ? "var(--heart)" : "var(--text-muted)"} fill={comment.myReaction === "like" ? "var(--heart)" : "none"} strokeWidth={2} />
+          <span className="text-[10px] leading-none mt-1" style={{ color: "var(--text-muted)", minHeight: 10 }}>
             {comment.likeCount > 0 ? formatCount(comment.likeCount) : ""}
           </span>
         </button>
         <button onClick={() => onReact("dislike")} className="p-1 mt-0.5 transition-transform active:scale-90" aria-label="Dislike comment">
-          <ThumbsDown size={17} color={comment.myReaction === "dislike" ? "var(--accent-end)" : "var(--text-muted)"} fill={comment.myReaction === "dislike" ? "var(--accent-end)" : "none"} strokeWidth={1.9} />
+          <ThumbsDown size={13} color={comment.myReaction === "dislike" ? "var(--accent-end)" : "var(--text-muted)"} fill={comment.myReaction === "dislike" ? "var(--accent-end)" : "none"} strokeWidth={2} />
         </button>
       </div>
     </div>
@@ -5260,13 +5365,17 @@ function CommentRow({
 // current text.
 function CommentHistorySheet({ comment, onClose }) {
   const [rows, setRows] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
   useEffect(() => {
     supabase
       .from("comment_edits")
       .select("old_content, edited_at")
       .eq("comment_id", comment.id)
       .order("edited_at", { ascending: true })
-      .then(({ data, error }) => setRows(error ? [] : data || []));
+      .then(({ data, error }) => {
+        if (error) setLoadErr(error.message);
+        setRows(error ? [] : data || []);
+      });
   }, [comment.id]);
   const fmt = (d) => new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   // Version n was written at: created_at for the first, then each edit time.
@@ -5282,6 +5391,8 @@ function CommentHistorySheet({ comment, onClose }) {
       <div className="px-4 pb-6">
         {rows === null ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : loadErr ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--heart)" }}>Couldn't load the history: {loadErr}</p>
         ) : rows.length === 0 ? (
           <>
             <div className="rounded-2xl px-3 py-2.5 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -5579,7 +5690,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
               className="aspect-square relative overflow-hidden"
               style={{ background: "var(--bg-sunken)" }}
             >
-              {p.media_type === "photo" ? (
+              {isPhotoPost(p) ? (
                 <img src={p.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
               ) : (
                 <video src={p.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
@@ -5589,7 +5700,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
                   <Layers size={13} color="#FFFFFF" />
                 </span>
               ) : (
-                p.media_type !== "photo" && (
+                !isPhotoPost(p) && (
                   <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                     <Video size={13} color="#FFFFFF" />
                   </span>
@@ -5796,8 +5907,8 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
   );
 }
 
-function UploadScreen() {
-  const [mode, setMode] = useState("photo");
+function UploadScreen({ initialMode = "photo" }) {
+  const [mode, setMode] = useState(initialMode);
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   // "photo" mode carries a carousel: 1-20 photos and/or videos, mixed.
@@ -6136,7 +6247,7 @@ function UploadScreen() {
         // A carousel is a feed post regardless of what its individual slides
         // are — only single-video uploads through Reel mode ever get tagged
         // "reel", matching how Reels actually work on Instagram.
-        media_type: mode,
+        media_type: mode === "reel" ? "reel" : items.length === 1 && items[0].type === "video" ? "video" : "photo",
         aspect_ratio: mode === "reel" ? "9:16" : aspect,
         link_url: cleanLink,
         caption,
@@ -7844,7 +7955,12 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
     const { data: reposts } = await supabase.from("reposts").select("user_id").eq("post_id", postId);
     const { data: allSaves } = await supabase.from("saves").select("user_id").eq("post_id", postId);
     const { data: comments } = await supabase.from("comments").select("id").eq("post_id", postId);
-    const { data: tagsData } = await supabase.from("post_tags").select("tagged_user_id").eq("post_id", postId);
+    const { data: tagRows } = await supabase.from("post_tags").select("tagged_user_id").eq("post_id", postId);
+    let tagsData = [];
+    if (tagRows && tagRows.length) {
+      const { data: tp } = await supabase.from("profiles").select("id, username").in("id", tagRows.map((t) => t.tagged_user_id));
+      tagsData = tagRows.map((t) => ({ tagged_user_id: t.tagged_user_id, username: (tp || []).find((x) => x.id === t.tagged_user_id)?.username || "unknown" }));
+    }
     const counts = await fetchPostCounts([p.id]);
 
     setPost(applyCounts({
@@ -7947,17 +8063,21 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       </div>
 
       <div
-        className="w-full flex items-center justify-center"
+        className="relative w-full overflow-hidden flex items-center justify-center"
         style={{ background: "var(--bg-sunken)", aspectRatio: postAspectCss(post) }}
-        onDoubleClick={toggleLike}
       >
         {post.media && post.media.length > 1 ? (
-          <PostMediaCarousel media={post.media} />
-        ) : post.media_type === "photo" ? (
-          <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+          <FeedPhotoTap onLike={() => !post.liked && toggleLike()}>
+            <PostMediaCarousel media={post.media} />
+          </FeedPhotoTap>
+        ) : isPhotoPost(post) ? (
+          <FeedPhotoTap onLike={() => !post.liked && toggleLike()}>
+            <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+          </FeedPhotoTap>
         ) : (
-          <video src={post.media_url} className="w-full h-full object-cover" controls />
+          <FeedVideo post={{ ...post, media_type: "video" }} onLike={() => !post.liked && toggleLike()} />
         )}
+        <MediaTagOverlay tags={post.tags} onOpenProfile={onOpenProfile} />
       </div>
 
       <div className="flex items-center justify-between px-4 pt-2.5">
@@ -8027,7 +8147,6 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       )}
 
       <div className="px-4 pt-1.5 pb-8">
-        <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
         <CaptionText
           username={post.username}
           caption={post.caption}
@@ -8059,6 +8178,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
           postAvatar={post.avatarUrl}
           postCreatedAt={post.created_at}
           postLink={post.link_url}
+          postTags={post.tags}
           commentsDisabled={post.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentSheetOpen(false)}
@@ -8345,7 +8465,7 @@ function AccountStatusScreen({ onBack }) {
               {state.removed.map((rp) => (
                 <div key={rp.id} className="flex items-center gap-3 py-2">
                   <div className="w-14 h-14 rounded-lg overflow-hidden shrink-0" style={{ background: "var(--surface)" }}>
-                    {rp.media_type === "photo" ? (
+                    {isPhotoPost(rp) ? (
                       <img src={rp.media_url} alt="" className="w-full h-full object-cover" />
                     ) : (
                       <video src={rp.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
@@ -9115,11 +9235,11 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
 }
 
 // ---- Profile photo or short video ----
-// A video avatar (10 seconds or less) plays on the profile header. Everywhere
+// A video avatar (30 seconds or less) plays on the profile header. Everywhere
 // else in the app shows a still, so a frame is captured from the video at
 // upload time and stored as the normal avatar_url — no other screen needs
 // to know videos exist.
-const AVATAR_VIDEO_MAX_SECONDS = 10;
+const AVATAR_VIDEO_MAX_SECONDS = 30;
 
 function readVideoMeta(file) {
   return new Promise((resolve, reject) => {
@@ -9918,17 +10038,21 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
               </div>
 
               <div
-                className="w-full flex items-center justify-center"
+                className="relative w-full overflow-hidden flex items-center justify-center"
                 style={{ background: "var(--bg-sunken)", aspectRatio: postAspectCss(post) }}
-                onDoubleClick={() => !post.liked && toggleLike(post)}
               >
                 {post.media && post.media.length > 1 ? (
-                  <PostMediaCarousel media={post.media} />
-                ) : post.media_type === "photo" ? (
-                  <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+                  <FeedPhotoTap onLike={() => !post.liked && toggleLike(post)}>
+                    <PostMediaCarousel media={post.media} />
+                  </FeedPhotoTap>
+                ) : isPhotoPost(post) ? (
+                  <FeedPhotoTap onLike={() => !post.liked && toggleLike(post)}>
+                    <img src={post.media_url} alt="" className="w-full h-full object-cover" />
+                  </FeedPhotoTap>
                 ) : (
-                  <video src={post.media_url} className="w-full h-full object-cover" controls playsInline preload="metadata" />
+                  <FeedVideo post={{ ...post, media_type: "video" }} onLike={() => !post.liked && toggleLike(post)} />
                 )}
+                <MediaTagOverlay tags={post.tags} onOpenProfile={onOpenProfile} />
               </div>
 
               <div className="flex items-center justify-between px-4 pt-2.5">
@@ -9995,7 +10119,6 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
               </div>
 
               <div className="px-4 pt-2">
-                <TaggedPeopleLine tags={post.tags} onOpenProfile={onOpenProfile} />
                 <CaptionText
                   username={post.username}
                   caption={post.caption}
@@ -10037,6 +10160,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
           postAvatar={commentFor.avatarUrl}
           postCreatedAt={commentFor.created_at}
           postLink={commentFor.link_url}
+          postTags={commentFor.tags}
           commentsDisabled={commentFor.comments_disabled}
           onOpenProfile={onOpenProfile}
           onClose={() => setCommentFor(null)}
@@ -10732,7 +10856,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
   // Reels are just video posts — no separate table, so split by media_type.
   // A carousel is never a Reel, even if its cover happens to be a video —
   // the media_count guard keeps carousels out of this split.
-  const reelsRaw = posts.filter((p) => p.media_type !== "photo" && (p.media_count || 1) <= 1);
+  const reelsRaw = posts.filter((p) => !isPhotoPost(p) && (p.media_count || 1) <= 1);
   const reels =
     reelSort === "views"
       ? reelsRaw.slice().sort((a, b) => (b.views_count || 0) - (a.views_count || 0))
@@ -11447,7 +11571,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
               className="aspect-square flex items-center justify-center relative overflow-hidden"
               style={{ background: "var(--surface)" }}
             >
-              {p.media_type === "photo" ? (
+              {isPhotoPost(p) ? (
                 <img src={p.media_url} alt="" className="w-full h-full object-cover" />
               ) : (
                 <video src={p.media_url} className="w-full h-full object-cover" />
@@ -11465,7 +11589,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
                   <Layers size={12} color="#FFFFFF" />
                 </span>
               ) : (
-                (tab === "reels" || (tab === "posts" && p.media_type !== "photo")) && (
+                (tab === "reels" || (tab === "posts" && !isPhotoPost(p))) && (
                   <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                     <Play size={12} color="#FFFFFF" fill="#FFFFFF" />
                   </span>
@@ -13192,14 +13316,16 @@ const CHAT_FONTS = [
   { key: "default",   name: "Default",   stack: "inherit" },
   { key: "sora",      name: "Sora",      stack: "'Sora', sans-serif" },
   { key: "cinzel",    name: "Cinzel",    stack: "'Cinzel', serif" },
-  { key: "serif",     name: "Serif",     stack: "Georgia, 'Times New Roman', serif" },
-  { key: "mono",      name: "Mono",      stack: "'Courier New', ui-monospace, monospace" },
-  { key: "rounded",   name: "Rounded",   stack: "'Trebuchet MS', 'Segoe UI', sans-serif" },
-  { key: "classic",   name: "Classic",   stack: "'Palatino Linotype', Palatino, serif" },
-  { key: "wide",      name: "Wide",      stack: "Verdana, Geneva, sans-serif" },
-  { key: "condensed", name: "Condensed", stack: "'Arial Narrow', Arial, sans-serif" },
-  { key: "playful",   name: "Playful",   stack: "'Comic Sans MS', 'Segoe UI', cursive" },
-];
+  { key: "serif",     name: "Serif",     stack: "'Playfair Display', Georgia, serif" },
+  { key: "mono",      name: "Mono",      stack: "'Space Mono', ui-monospace, monospace" },
+  { key: "rounded",   name: "Rounded",   stack: "'Nunito', sans-serif" },
+  { key: "classic",   name: "Classic",   stack: "'Lora', serif" },
+  { key: "wide",      name: "Wide",      stack: "'Montserrat', sans-serif" },
+  { key: "condensed", name: "Condensed", stack: "'Oswald', sans-serif" },
+  { key: "playful",   name: "Playful",   stack: "'Pacifico', cursive" },
+  { key: "hand",      name: "Handwriting", stack: "'Caveat', cursive" },
+  { key: "bangla",    name: "বাংলা",      stack: "'Hind Siliguri', sans-serif" },
+]
 
 const themeOf = (key) => CHAT_THEMES.find((t) => t.key === key) || CHAT_THEMES[0];
 const fontOf = (key) => CHAT_FONTS.find((f) => f.key === key) || CHAT_FONTS[0];
@@ -13232,9 +13358,10 @@ function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
     <StorySheetShell title="Chat theme" onClose={onClose}>
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
 
-      {/* Live preview */}
-      <div className="mx-4 mb-4 rounded-3xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-        <div className="px-3.5 pt-3 pb-4" style={{ background: "var(--bg)", fontFamily: f.stack, ...chatAreaStyle(t) }}>
+      {/* Live preview — stays at the top while you scroll the themes */}
+      <div className="sticky top-0 z-10 px-4 pb-3" style={{ background: "var(--bg)" }}>
+      <div className="rounded-3xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+        <div className="px-3.5 pt-2.5 pb-3" style={{ background: "var(--bg)", fontFamily: f.stack, ...chatAreaStyle(t) }}>
           <p className="text-center text-[10px] mb-2.5" style={{ color: "var(--text-muted)" }}>Today 9:41 PM</p>
           <div className="flex justify-start mb-1.5">
             <div className="px-3.5 py-2 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", borderRadius: "18px 18px 18px 5px", border: t.bg ? "none" : "1px solid var(--border)" }}>
@@ -13251,8 +13378,9 @@ function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
               Using it right now 🔥
             </div>
           </div>
-          <p className="text-right text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>Seen</p>
+          <p className="text-right text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>Seen · {t.name} · {f.name}</p>
         </div>
+      </div>
       </div>
 
       <p className="px-4 text-[12px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Themes</p>
@@ -13553,7 +13681,7 @@ function ShareSheet({ item, currentUserId, onClose }) {
   const [flash, setFlash] = useState("");
 
   const link = `${window.location.origin}/p/${item.id}`;
-  const label = item.media_type === "photo" ? "📷 Shared a post" : "🎬 Shared a reel";
+  const label = isPhotoPost(item) ? "📷 Shared a post" : "🎬 Shared a reel";
 
   const say = (m) => {
     setFlash(m);
@@ -13595,7 +13723,7 @@ function ShareSheet({ item, currentUserId, onClose }) {
       sender_id: currentUserId,
       // Videos don't render in a bubble, so only photos travel as media;
       // either way the link goes along so the post is reachable.
-      image_url: item.media_type === "photo" ? item.media_url : null,
+      image_url: isPhotoPost(item) ? item.media_url : null,
       content: item.caption ? `${label} · ${item.caption}\n${link}` : `${label}\n${link}`,
     });
     if (error) throw error;
@@ -13767,7 +13895,7 @@ function MediaTile({ post, onClick, selected, selectable, badge }) {
       className="aspect-square relative overflow-hidden"
       style={{ background: "var(--bg-sunken)" }}
     >
-      {post.media_type === "photo" ? (
+      {isPhotoPost(post) ? (
         <img src={post.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
       ) : (
         <video src={post.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
@@ -13777,7 +13905,7 @@ function MediaTile({ post, onClick, selected, selectable, badge }) {
           <Layers size={13} color="#FFFFFF" />
         </span>
       ) : (
-        post.media_type !== "photo" && (
+        !isPhotoPost(post) && (
           <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
             <Video size={13} color="#FFFFFF" />
           </span>
@@ -14116,7 +14244,7 @@ function CollectionEditSheet({ collection, posts, onClose, onSaved }) {
 
   // Only photos make sensible covers — a video frame can't be read here
   // without decoding it, so those are left out of the picker.
-  const coverChoices = posts.filter((p) => p.media_type === "photo");
+  const coverChoices = posts.filter((p) => isPhotoPost(p));
 
   const save = async () => {
     const trimmed = name.trim();
@@ -16712,8 +16840,13 @@ const PEOPLE_LIST_META = {
 };
 
 // #hashtag page: every post whose caption uses the tag.
-function HashtagScreen({ tag, onBack, onOpenPost }) {
+function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
   const [posts, setPosts] = useState(null);
+  const [openAt, setOpenAt] = useState(null); // index of the post being viewed
+  const [me, setMe] = useState(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMe(data?.user?.id || null));
+  }, []);
   useEffect(() => {
     (async () => {
       const safe = tag.replace(/[%_]/g, "");
@@ -16730,6 +16863,19 @@ function HashtagScreen({ tag, onBack, onOpenPost }) {
       setPosts((data || []).filter((pp) => !isHiddenFromFeed(rel, pp.user_id)));
     })();
   }, [tag]);
+  if (openAt !== null && posts && posts[openAt]) {
+    return (
+      <ProfileFeedScreen
+        postIds={posts.map((x) => x.id)}
+        startIndex={openAt}
+        title="posts"
+        currentUserId={me}
+        onBack={() => setOpenAt(null)}
+        onOpenProfile={onOpenProfile}
+        onOpenReport={onOpenReport}
+      />
+    );
+  }
   return (
     <div className="flex-1 overflow-y-auto pb-6" style={{ background: "var(--bg)" }}>
       <ScreenHeader title={`#${tag}`} onBack={onBack} />
@@ -16755,13 +16901,13 @@ function HashtagScreen({ tag, onBack, onOpenPost }) {
       ) : (
         <div className="grid grid-cols-3 gap-0.5">
           {posts.map((pp) => (
-            <button key={pp.id} onClick={() => onOpenPost(pp.id)} className="relative aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
-              {pp.media_type === "photo" ? (
+            <button key={pp.id} onClick={() => setOpenAt(posts.indexOf(pp))} className="relative aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
+              {isPhotoPost(pp) ? (
                 <img src={pp.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
               ) : (
                 <video src={pp.media_url + "#t=0.5"} className="w-full h-full object-cover" muted playsInline preload="metadata" />
               )}
-              {pp.media_type !== "photo" && (
+              {!isPhotoPost(pp) && (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
                   <Play size={13} color="#fff" fill="#fff" />
                 </span>
@@ -17209,6 +17355,8 @@ export default function App() {
   const [messageTarget, setMessageTarget] = useState(null); // profile to open a chat with
   const [timeNudge, setTimeNudge] = useState(null); // { kind, minutes }
   const [hashtag, setHashtag] = useState(null);
+  const [uploadMode, setUploadMode] = useState("photo");
+  const [uploadNonce, setUploadNonce] = useState(0);
   useEffect(() => {
     const onTag = (e) => setHashtag(e.detail);
     window.addEventListener("loop:hashtag", onTag);
@@ -17385,6 +17533,7 @@ export default function App() {
   const overlayStack = [
     [moderationOpen, () => setModerationOpen(false)],
     [reportPostId !== null, () => setReportPostId(null)],
+    [hashtag !== null, () => setHashtag(null)],
     [editProfileOpen, () => setEditProfileOpen(false)],
     [activityOpen, () => setActivityOpen(false)],
     [archiveOpen, () => setArchiveOpen(false)],
@@ -17400,7 +17549,6 @@ export default function App() {
     [commentsPostId !== null, () => setCommentsPostId(null)],
     [settingsOpen, () => setSettingsOpen(false)],
     [viewPostId !== null, () => setViewPostId(null)],
-    [hashtag !== null, () => setHashtag(null)],
     [viewProfileId !== null, () => setViewProfileId(null)],
     [active !== "feed", () => setActive("feed")],
   ];
@@ -17536,6 +17684,19 @@ export default function App() {
             <ModerationScreen onBack={() => setModerationOpen(false)} />
           ) : reportPostId !== null ? (
             <ReportScreen postId={reportPostId} onBack={() => setReportPostId(null)} />
+          ) : hashtag !== null ? (
+            <HashtagScreen
+              key={hashtag}
+              tag={hashtag}
+              onBack={() => setHashtag(null)}
+              onOpenProfile={(id) => {
+                setHashtag(null);
+                setProfileFeed(null);
+                setViewPostId(null);
+                setViewProfileId(id);
+              }}
+              onOpenReport={(id) => setReportPostId(id)}
+            />
           ) : editProfileOpen ? (
             <EditProfileScreen
               currentUserId={meId}
@@ -17648,8 +17809,6 @@ export default function App() {
               onOpenReport={(postId) => setReportPostId(postId)}
               onDeleted={() => {}}
             />
-          ) : hashtag !== null ? (
-            <HashtagScreen tag={hashtag} onBack={() => setHashtag(null)} onOpenPost={(id) => setViewPostId(id)} />
           ) : viewProfileId !== null ? (
             <ProfileScreen
               userId={viewProfileId}
@@ -17703,7 +17862,11 @@ export default function App() {
               onOpenArchive={() => setArchiveOpen(true)}
               onOpenSaved={() => setSavedOpen(true)}
               onOpenPeopleList={(kind) => setPeopleList(kind)}
-              onCreate={() => setActive("upload")}
+              onCreate={(kind) => {
+                setUploadMode(kind === "reel" ? "reel" : "photo");
+                setUploadNonce((n) => n + 1);
+                setActive("upload");
+              }}
               onOpenModeration={() => setModerationOpen(true)}
               onAddAccount={async () => {
                 await supabase.auth.signOut();
@@ -17713,6 +17876,8 @@ export default function App() {
                 setProfileFeed({ postIds: posts.map((x) => x.id), index, title })
               }
             />
+          ) : active === "upload" ? (
+            <UploadScreen key={`upload-${uploadNonce}`} initialMode={uploadMode} />
           ) : (
             <ActiveScreen />
           )}
@@ -17735,8 +17900,8 @@ export default function App() {
         {/* Bottom nav */}
         {!overlayOpen && (
           <div
-            className="flex items-center justify-around px-2 py-3 shrink-0"
-            style={{ background: "var(--bg)", borderTop: "1px solid var(--border-subtle)" }}
+            className="flex items-center justify-around px-2 pt-3 shrink-0"
+            style={{ background: "var(--bg)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}
           >
             {TABS.map((tab) => {
               const Icon = tab.icon;
@@ -17746,6 +17911,10 @@ export default function App() {
                   key={tab.key}
                   onClick={() => {
                     if (tab.key === "reels") setReelStartId(null);
+                    if (tab.key === "upload" && active !== "upload") {
+                      setUploadMode("photo");
+                      setUploadNonce((n) => n + 1);
+                    }
                     setActive(tab.key);
                   }}
                   className="flex flex-col items-center justify-center gap-1"
