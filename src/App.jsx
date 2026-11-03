@@ -11720,7 +11720,7 @@ function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
   if (items.length === 0 && !isOwn) return null;
 
   return (
-    <div className="relative flex gap-4 px-4 pb-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+    <div className="flex gap-4 px-4 pb-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
       {isOwn && (
         <button onClick={onNew} className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95" style={{ width: 64 }}>
           <div
@@ -11791,7 +11791,14 @@ function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
       )}
 
       {flash && (
-        <p className="absolute left-0 right-0 text-center text-[11px]" style={{ color: "var(--accent-solid)", marginTop: 72 }}>{flash}</p>
+        <div className="fixed left-0 right-0 bottom-20 z-[85] flex justify-center px-6 pointer-events-none">
+          <span
+            className="rounded-full px-4 py-2 text-[12px]"
+            style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600 }}
+          >
+            {flash}
+          </span>
+        </div>
       )}
 
       {manage && (
@@ -12444,6 +12451,11 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   const [reportNote, setReportNote] = useState("");
   const [avatarViewer, setAvatarViewer] = useState(false);
   const [birthdayInfo, setBirthdayInfo] = useState(null); // { date, shared }
+  const [coverFor, setCoverFor] = useState(null); // a video of yours whose cover you're changing
+  const [coverBusy, setCoverBusy] = useState(false);
+  const [coverNote, setCoverNote] = useState("");
+  const gridPressRef = React.useRef(null);
+  const gridHeldRef = React.useRef(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [storyFile, setStoryFile] = useState(null);
   const [viewStoryFor, setViewStoryFor] = useState(null); // profile id
@@ -13231,11 +13243,51 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
           gridFor.map((p, i) => (
             <button
               key={p.id}
-              onClick={() => onOpenProfileFeed?.({ posts: gridFor, index: i, title: tab })}
+              onClick={() => {
+                // A press-and-hold already did its job; don't also open the post.
+                if (gridHeldRef.current) {
+                  gridHeldRef.current = false;
+                  return;
+                }
+                onOpenProfileFeed?.({ posts: gridFor, index: i, title: tab });
+              }}
+              onTouchStart={() => {
+                if (!isOwnProfile || isPhotoPost(p)) return;
+                gridHeldRef.current = false;
+                gridPressRef.current = setTimeout(() => {
+                  gridHeldRef.current = true;
+                  setCoverNote("");
+                  setCoverFor(p);
+                }, 450);
+              }}
+              onTouchEnd={() => clearTimeout(gridPressRef.current)}
+              onTouchMove={() => clearTimeout(gridPressRef.current)}
+              onContextMenu={(e) => {
+                if (!isOwnProfile || isPhotoPost(p)) return;
+                e.preventDefault();
+                gridHeldRef.current = true;
+                setCoverNote("");
+                setCoverFor(p);
+              }}
               className="aspect-square flex items-center justify-center relative overflow-hidden"
               style={{ background: "var(--surface)" }}
             >
               <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />
+              {isOwnProfile && !isPhotoPost(p) && !p.removed_at && (
+                <span
+                  role="button"
+                  aria-label="Change cover"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCoverNote("");
+                    setCoverFor(p);
+                  }}
+                  className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center"
+                  style={{ background: "rgba(0,0,0,0.55)" }}
+                >
+                  <ImageIcon size={12} color="#FFFFFF" />
+                </span>
+              )}
               {tab === "reposts" && (
                 <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
               )}
@@ -13482,6 +13534,40 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       )}
 
       {qrOpen && <ProfileQRScreen profile={profile} onBack={() => setQrOpen(false)} />}
+
+      {coverFor && (
+        <StorySheetShell title="Cover" onClose={() => setCoverFor(null)}>
+          <div className="px-4 pb-6">
+            <p className="text-[12px] mb-3" style={{ color: "var(--text-muted)" }}>
+              Choose the moment people see before this video plays. It shows here on your profile, in Explore, under a
+              hashtag — everywhere.
+            </p>
+            <CoverPicker
+              videoUrl={coverFor.media_url}
+              coverUrl={coverFor.cover_url}
+              label="This video"
+              onPick={async (f) => {
+                setCoverBusy(true);
+                setCoverNote("");
+                try {
+                  const small = await compressImage(f, 1080);
+                  const url = await uploadCoverBlob(small, myId);
+                  const { error } = await supabase.from("posts").update({ cover_url: url }).eq("id", coverFor.id);
+                  if (error) throw error;
+                  setPosts((prev) => prev.map((pp) => (pp.id === coverFor.id ? { ...pp, cover_url: url } : pp)));
+                  coverMemo.set(coverFor.id, url);
+                  setCoverFor(null);
+                } catch (e) {
+                  setCoverNote(e?.message || "That cover didn't save");
+                }
+                setCoverBusy(false);
+              }}
+            />
+            {coverBusy && <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Saving…</p>}
+            {coverNote && <p className="text-[11px]" style={{ color: "var(--heart)" }}>{coverNote}</p>}
+          </div>
+        </StorySheetShell>
+      )}
 
       {/* Add a story from this screen: the avatar "+" and Create → Story */}
       <input
