@@ -95,7 +95,7 @@ const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end
 const THEME_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Cinzel+Decorative:wght@400;700;900&display=swap');
   /* Chat fonts. Phones only download a font when a chat actually uses it. */
-  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Playfair+Display:wght@400;600&family=Space+Mono&family=Nunito:wght@400;700&family=Lora:wght@400;600&family=Montserrat:wght@400;600&family=Oswald:wght@400;600&family=Pacifico&family=Caveat:wght@400;700&family=Hind+Siliguri:wght@400;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Playfair+Display:wght@400;600&family=Space+Mono&family=Nunito:wght@400;700&family=Lora:wght@400;600&family=Montserrat:wght@400;600&family=Oswald:wght@400;600&family=Pacifico&family=Caveat:wght@400;700&display=swap');
   :root {
     /* ---- DARK: pure black, gold accent (premium) ---- */
     --bg: #000000;
@@ -229,6 +229,10 @@ class ErrorBoundary extends React.Component {
   componentDidCatch(error, info) {
     console.error("Loop screen crashed:", error, info);
   }
+  componentDidUpdate(prevProps) {
+    // Moving to another screen clears a stale error.
+    if (this.state.error && prevProps.children !== this.props.children) this.setState({ error: null });
+  }
   render() {
     if (this.state.error) {
       return (
@@ -237,13 +241,25 @@ class ErrorBoundary extends React.Component {
           <p className="text-xs mb-4" style={{ color: "var(--text-muted)", wordBreak: "break-word" }}>
             {String(this.state.error?.message || this.state.error)}
           </p>
-          <button
-            onClick={() => this.setState({ error: null })}
-            className="text-xs px-4 py-2 rounded-full"
-            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
-          >
-            Try again
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => this.setState({ error: null })}
+              className="text-xs px-4 py-2 rounded-full"
+              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+            >
+              Try again
+            </button>
+            <button
+              onClick={() => window.location.reload()}
+              className="text-xs px-4 py-2 rounded-full"
+              style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
+            >
+              Reload Loop
+            </button>
+          </div>
+          <p className="text-[11px] mt-4 px-4" style={{ color: "var(--text-muted)" }}>
+            If your browser offered to translate this page, turn that off — translating breaks the app.
+          </p>
         </div>
       );
     }
@@ -350,6 +366,9 @@ const VIDEO_URL_RE = /\.(mp4|mov|webm|m4v|3gp|mkv|avi)(\?|#|$)/i;
 function isPhotoPost(p) {
   return !!p && p.media_type === "photo" && !VIDEO_URL_RE.test(p.media_url || "");
 }
+
+// A video URL that makes the browser paint its first frame as a thumbnail.
+const videoThumb = (url) => (url ? `${url}${url.includes("#") ? "" : "#t=0.1"}` : url);
 
 function LoopLogo({ size = 72 }) {
   const [failed, setFailed] = useState(false);
@@ -733,44 +752,95 @@ function TaggedPeopleLine({ tags, onOpenProfile, light = false }) {
   );
 }
 
-// The little person button on a photo/video: tap it to show who's tagged.
-function MediaTagOverlay({ tags, onOpenProfile }) {
+// Everyone tagged in a post, with a Follow button each — Instagram's
+// "In this photo" sheet.
+function InThisPostSheet({ tags, isVideo, onClose, onOpenProfile }) {
+  const [me, setMe] = useState(null);
+  const [people, setPeople] = useState(null);
+  const [following, setFollowing] = useState(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ids = [...new Set((tags || []).map((t) => t.tagged_user_id))];
+      const [{ data: { user } }, { data: profs }] = await Promise.all([
+        supabase.auth.getUser(),
+        ids.length ? supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").in("id", ids) : Promise.resolve({ data: [] }),
+      ]);
+      if (cancelled) return;
+      setMe(user?.id || null);
+      setPeople(profs || []);
+      if (user?.id && ids.length) {
+        const { data: f } = await supabase.from("follows").select("following_id").eq("follower_id", user.id).in("following_id", ids);
+        if (!cancelled) setFollowing(new Set((f || []).map((x) => x.following_id)));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tags]);
+
+  const toggle = async (pp) => {
+    if (!me) return;
+    const was = following.has(pp.id);
+    setFollowing((prev) => {
+      const next = new Set(prev);
+      was ? next.delete(pp.id) : next.add(pp.id);
+      return next;
+    });
+    if (was) {
+      await supabase.from("follows").delete().eq("follower_id", me).eq("following_id", pp.id);
+    } else {
+      const { error } = await supabase.from("follows").insert({ follower_id: me, following_id: pp.id });
+      if (!error) await supabase.from("notifications").insert({ user_id: pp.id, actor_id: me, type: "follow" });
+    }
+  };
+
+  return (
+    <StorySheetShell title={isVideo ? "In this video" : "In this photo"} onClose={onClose}>
+      <div className="px-4 pb-6">
+        {people === null ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : people.length === 0 ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Nobody is tagged here</p>
+        ) : (
+          people.map((pp) => (
+            <div key={pp.id} className="flex items-center gap-3 py-2">
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenProfile?.(pp.id);
+                }}
+                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+              >
+                <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={46} />
+                <div className="min-w-0">
+                  <p className="text-sm truncate flex items-center gap-1" style={{ color: "var(--text)", fontWeight: 700 }}>
+                    {pp.username}
+                    {pp.is_verified && <VerifiedBadge size={13} />}
+                  </p>
+                  {pp.full_name && <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
+                </div>
+              </button>
+              {pp.id !== me && <FollowPill following={following.has(pp.id)} onClick={() => toggle(pp)} />}
+            </div>
+          ))
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// The little person button on a photo/video: tap it for the list above.
+function MediaTagOverlay({ tags, isVideo, onOpenProfile }) {
   const [open, setOpen] = useState(false);
   if (!tags || tags.length === 0) return null;
   return (
     <>
-      {open && (
-        <div
-          className="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-2 px-6"
-          style={{ background: "rgba(0,0,0,0.25)" }}
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen(false);
-          }}
-        >
-          {tags.map((t) => (
-            <button
-              key={t.tagged_user_id}
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenProfile?.(t.tagged_user_id);
-              }}
-              className="relative rounded-lg px-3 py-1.5 text-[13px]"
-              style={{ background: "rgba(0,0,0,0.78)", color: "#FFFFFF", fontWeight: 600 }}
-            >
-              <span
-                className="absolute left-1/2 -top-1.5 -translate-x-1/2"
-                style={{ width: 0, height: 0, borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderBottom: "6px solid rgba(0,0,0,0.78)" }}
-              />
-              {t.username}
-            </button>
-          ))}
-        </div>
-      )}
       <button
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((v) => !v);
+          setOpen(true);
         }}
         aria-label="Tagged people"
         className="absolute left-2.5 bottom-2.5 z-[6] w-7 h-7 rounded-full flex items-center justify-center"
@@ -778,6 +848,9 @@ function MediaTagOverlay({ tags, onOpenProfile }) {
       >
         <CircleUserRound size={15} color="#FFFFFF" fill="rgba(255,255,255,0.15)" />
       </button>
+      {open && (
+        <InThisPostSheet tags={tags} isVideo={isVideo} onClose={() => setOpen(false)} onOpenProfile={onOpenProfile} />
+      )}
     </>
   );
 }
@@ -2379,6 +2452,97 @@ function StoriesBar({ onOpenProfile }) {
   );
 }
 
+// Opens the story viewer for one person, or for one highlight, from any
+// screen. Loads what it needs, then hands StoryViewer the same shape the
+// stories bar gives it.
+function StandaloneStoryViewer({ profileId, highlight, currentUserId, onClose, onOpenProfile }) {
+  const [group, setGroup] = useState(undefined); // undefined = loading, null = nothing to show
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let rows = [];
+      if (highlight) {
+        const { data: links } = await supabase
+          .from("story_highlight_items")
+          .select("story_id")
+          .eq("highlight_id", highlight.id);
+        const ids = (links || []).map((l) => l.story_id);
+        if (ids.length) {
+          const { data } = await supabase
+            .from("stories")
+            .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled")
+            .in("id", ids)
+            .order("created_at", { ascending: true });
+          rows = data || [];
+        }
+      } else {
+        const { data } = await supabase
+          .from("stories")
+          .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled")
+          .eq("user_id", profileId)
+          .eq("archived", false)
+          .gt("expires_at", new Date().toISOString())
+          .order("created_at", { ascending: true });
+        rows = data || [];
+      }
+      if (cancelled) return;
+      if (rows.length === 0) {
+        setGroup(null);
+        return;
+      }
+      const ownerId = highlight ? highlight.user_id || rows[0].user_id : profileId;
+      const { data: prof } = await supabase.from("profiles").select("id, username, avatar_url").eq("id", ownerId).maybeSingle();
+      if (cancelled) return;
+      setGroup({
+        userId: ownerId,
+        username: prof?.username || "unknown",
+        avatarUrl: prof?.avatar_url || null,
+        items: rows,
+        allSeen: true,
+        isSelf: ownerId === currentUserId,
+        highlightTitle: highlight?.title || null,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId, highlight?.id, currentUserId]);
+
+  if (group === undefined) {
+    return (
+      <div className="fixed inset-0 z-[90] flex items-center justify-center" style={{ background: "#000" }}>
+        <span className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>Loading…</span>
+      </div>
+    );
+  }
+  if (group === null) {
+    return (
+      <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3 px-8 text-center" style={{ background: "#000" }}>
+        <p className="text-sm" style={{ color: "#FFFFFF", fontWeight: 600 }}>
+          {highlight ? "This highlight is empty" : "No story to show"}
+        </p>
+        <p className="text-xs" style={{ color: "rgba(255,255,255,0.6)" }}>
+          {highlight ? "Its stories were deleted. You can remove the highlight by holding it on the profile." : "Nothing here in the last 24 hours."}
+        </p>
+        <button onClick={onClose} className="mt-2 rounded-full px-5 h-10 text-sm" style={{ background: "rgba(255,255,255,0.16)", color: "#FFFFFF", fontWeight: 700 }}>
+          Close
+        </button>
+      </div>
+    );
+  }
+  return (
+    <StoryViewer
+      groups={[group]}
+      startGroupIndex={0}
+      currentUserId={currentUserId}
+      onOpenProfile={onOpenProfile}
+      onClose={onClose}
+      onChanged={() => {}}
+    />
+  );
+}
+
 // ---- Carousel posts (multiple photos/videos in one post) ----
 // Renders a swipeable strip. Deliberately has no double-tap-to-like of its
 // own — the surrounding media box in every caller already carries that
@@ -2796,7 +2960,7 @@ function FeedVideo({ post, onOpenReel, onLike }) {
 
   return (
     <div className="relative w-full h-full" onClick={onTap}>
-      <video ref={ref} src={post.media_url} className="w-full h-full object-cover" muted={muted} loop playsInline preload="metadata" />
+      <video ref={ref} src={post.media_url} poster={post.cover_url || undefined} className="w-full h-full object-cover" muted={muted} loop playsInline preload="metadata" />
       <HeartBurst burstKey={burst} size={84} />
       {paused && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -2945,6 +3109,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         verified: !!prof[p.user_id]?.is_verified,
         collabs: collabMap[p.id] || [],
         isFavorite: favs.has(p.user_id),
+        iFollow: followSet.has(p.user_id),
         likedBy: likerFor[p.id] ? { id: likerFor[p.id], username: prof[likerFor[p.id]]?.username } : null,
       };
     }).map((p) => applyCounts(p, counts[p.id]));
@@ -2962,7 +3127,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       while (gathered.length < FEED_PAGE && !st.done) {
         let q = supabase
           .from("posts")
-          .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, aspect_ratio, link_url")
+          .select("id, media_url, media_type, media_count, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, aspect_ratio, link_url, cover_url")
           .eq("archived", false)
           .is("removed_at", null)
           .lte("created_at", new Date().toISOString()) // your own scheduled posts wait
@@ -3268,6 +3433,27 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     flashFeed(on ? `Added ${post.username} to favourites` : `Removed ${post.username} from favourites`);
   };
 
+  const toggleFollowAuthor = async (post) => {
+    if (!userId) return;
+    const was = !!post.iFollow;
+    setPosts((prev) => prev.map((p) => (p.user_id === post.user_id ? { ...p, iFollow: !was } : p)));
+    if (was) {
+      await supabase.from("follows").delete().eq("follower_id", userId).eq("following_id", post.user_id);
+      feedRef.current.followIds = (feedRef.current.followIds || []).filter((id) => id !== post.user_id);
+      flashFeed(`Unfollowed ${post.username}`);
+      return;
+    }
+    const { error } = await supabase.from("follows").insert({ follower_id: userId, following_id: post.user_id });
+    if (error) {
+      setPosts((prev) => prev.map((p) => (p.user_id === post.user_id ? { ...p, iFollow: was } : p)));
+      flashFeed(error.message);
+      return;
+    }
+    feedRef.current.followIds = [...(feedRef.current.followIds || []), post.user_id];
+    await supabase.from("notifications").insert({ user_id: post.user_id, actor_id: userId, type: "follow" });
+    flashFeed(`Following ${post.username}`);
+  };
+
   const unfollowFromPost = async (post) => {
     setPostMenuFor(null);
     if (!userId) return;
@@ -3353,6 +3539,19 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 )}
               </div>
 
+              {post.suggested && post.user_id !== userId && (
+                <button
+                  onClick={() => toggleFollowAuthor(post)}
+                  className="rounded-lg px-3.5 h-8 text-[13px] shrink-0 transition-transform active:scale-95"
+                  style={
+                    post.iFollow
+                      ? { background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", fontWeight: 700 }
+                      : { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }
+                  }
+                >
+                  {post.iFollow ? "Following" : "Follow"}
+                </button>
+              )}
               <button onClick={() => setPostMenuFor(post)} className="p-1 -mr-1" aria-label="More">
                 <Ellipsis size={19} color="var(--text)" />
               </button>
@@ -3373,7 +3572,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               ) : (
                 <FeedVideo post={post.media_type === "photo" ? { ...post, media_type: "video" } : post} onOpenReel={onOpenReel} onLike={() => !post.liked && toggleLike(post)} />
               )}
-              <MediaTagOverlay tags={post.tags} onOpenProfile={onOpenProfile} />
+              <MediaTagOverlay tags={post.tags} isVideo={!isPhotoPost(post)} onOpenProfile={onOpenProfile} />
             </div>
 
             <PollBlock postId={post.id} currentUserId={userId} />
@@ -3779,7 +3978,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
     }).map((p) => applyCounts(p, counts[p.id]));
   };
 
-  const REEL_COLS = "id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, link_url";
+  const REEL_COLS = "id, media_url, media_type, caption, created_at, user_id, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, views_count, location, link_url, cover_url";
 
   const loadMoreReels = async () => {
     const st = reelsRef.current;
@@ -4072,6 +4271,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
           key={reel.id}
           ref={videoRef}
           src={reel.media_url}
+          poster={reel.cover_url || undefined}
           className="w-full h-full object-cover"
           playsInline
           autoPlay
@@ -4802,12 +5002,29 @@ function ReelCommentsSheet({
       setEditingId(null);
       return;
     }
-    setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: trimmed, edited_at: new Date().toISOString() } : c)));
     setEditingId(null);
-    const { error } = await supabase.from("comments").update({ content: trimmed }).eq("id", comment.id);
-    if (error) {
-      setComments((prev) => prev.map((c) => (c.id === comment.id ? comment : c)));
-      alert(error.message.includes("15 minutes") ? "Comments can only be edited within 15 minutes of posting." : error.message);
+    // Keep the previous words first, so "View edit history" always has them.
+    const { error: histErr } = await supabase
+      .from("comment_edits")
+      .insert({ comment_id: comment.id, old_content: comment.content || "" });
+    const { data: saved, error } = await supabase
+      .from("comments")
+      .update({ content: trimmed })
+      .eq("id", comment.id)
+      .select("id, content, edited_at")
+      .maybeSingle();
+    if (error || !saved) {
+      alert(
+        error?.message?.includes("15 minutes")
+          ? "Comments can only be edited within 15 minutes of posting."
+          : error?.message || "That edit didn't save."
+      );
+      return;
+    }
+    setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: saved.content, edited_at: saved.edited_at || new Date().toISOString() } : c)));
+    if (histErr) {
+      // The edit itself went through; only the history entry didn't.
+      console.warn("Couldn't keep the edit history:", histErr.message);
     }
   };
 
@@ -5408,7 +5625,7 @@ function CommentHistorySheet({ comment, onClose }) {
                 <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmt(comment.created_at)}</span>
               </div>
               <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                This edit was made before Loop started keeping edit history, so the original words weren't saved. Every edit from now on is kept here.
+                The earlier words weren't kept for this one. Edits made from now on are.
               </p>
             </div>
           </>
@@ -5693,7 +5910,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
               {isPhotoPost(p) ? (
                 <img src={p.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
               ) : (
-                <video src={p.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                <video src={videoThumb(p.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
               )}
               {p.media_count > 1 ? (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
@@ -5799,6 +6016,102 @@ function detectAspect(file) {
       img.src = url;
     }
   });
+}
+
+// A caption box that offers usernames as soon as you type "@", so a
+// mention always lands on a real account.
+function CaptionBox({ value, onChange, placeholder, rows = 3 }) {
+  const ref = React.useRef(null);
+  const [matches, setMatches] = useState([]);
+  const [term, setTerm] = useState(null); // the @word being typed, or null
+
+  // What's being typed right before the cursor?
+  const readTerm = (el) => {
+    if (!el) return null;
+    const upto = el.value.slice(0, el.selectionStart ?? el.value.length);
+    const m = upto.match(/(^|[\s\n(])@([a-zA-Z0-9_.]{1,30})$/);
+    return m ? m[2] : null;
+  };
+
+  useEffect(() => {
+    if (term === null || term === "") {
+      setMatches([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const safe = term.replace(/[%_,()]/g, "");
+      const [{ data }, rel, { data: { user } }] = await Promise.all([
+        supabase.from("profiles").select("id, username, full_name, avatar_url").ilike("username", `${safe}%`).limit(8),
+        getRelations(),
+        supabase.auth.getUser(),
+      ]);
+      if (cancelled) return;
+      setMatches((data || []).filter((pp) => pp.id !== user?.id && !isBlockedEither(rel, pp.id)).slice(0, 6));
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [term]);
+
+  const pick = (username) => {
+    const el = ref.current;
+    if (!el) return;
+    const pos = el.selectionStart ?? value.length;
+    const before = value.slice(0, pos).replace(/@([a-zA-Z0-9_.]{1,30})$/, `@${username} `);
+    const next = before + value.slice(pos);
+    onChange(next);
+    setTerm(null);
+    setMatches([]);
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(before.length, before.length);
+    }, 0);
+  };
+
+  return (
+    <div className="mb-3">
+      <textarea
+        ref={ref}
+        placeholder={placeholder}
+        rows={rows}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setTerm(readTerm(e.target));
+        }}
+        onKeyUp={(e) => setTerm(readTerm(e.currentTarget))}
+        onClick={(e) => setTerm(readTerm(e.currentTarget))}
+        onBlur={() => setTimeout(() => setTerm(null), 150)}
+        className="w-full rounded-xl px-3 py-2.5 text-sm outline-none resize-none"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+      />
+      {matches.length > 0 && (
+        <div className="rounded-xl overflow-hidden mt-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          {matches.map((pp) => (
+            <button
+              key={pp.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => pick(pp.username)}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-left"
+              style={{ borderTop: "1px solid var(--border)" }}
+            >
+              <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={30} />
+              <div className="min-w-0">
+                <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{pp.username}</p>
+                {pp.full_name && <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+        Type @ to mention someone, # for a tag.
+      </p>
+    </div>
+  );
 }
 
 // Tag people: search by username, pick from the list, shown as chips.
@@ -5926,6 +6239,9 @@ function UploadScreen({ initialMode = "photo" }) {
   const [collabPeople, setCollabPeople] = useState([]); // invited collaborators (max 3)
   const [aspect, setAspect] = useState("4:5");
   const [linkUrl, setLinkUrl] = useState("");
+  const [coverFile, setCoverFile] = useState(null); // custom reel cover
+  const [coverUrl, setCoverUrl] = useState(null); // its preview
+  const coverInputRef = React.useRef(null);
   const [pollEnabled, setPollEnabled] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
   const [pollOptions, setPollOptions] = useState(["", ""]);
@@ -6109,6 +6425,9 @@ function UploadScreen({ initialMode = "photo" }) {
     setCollabPeople([]);
     setAspect("4:5");
     setLinkUrl("");
+    if (coverUrl) URL.revokeObjectURL(coverUrl);
+    setCoverFile(null);
+    setCoverUrl(null);
     setPollEnabled(false);
     setPollQuestion("");
     setPollOptions(["", ""]);
@@ -6184,10 +6503,17 @@ function UploadScreen({ initialMode = "photo" }) {
       return;
     }
 
-    let coverUrl;
+    let coverImage;
+    let customCover = null;
     let carouselUploads = null; // set only when items.length > 1
 
     if (mode === "reel") {
+      if (coverFile) {
+        const small = await compressImage(coverFile, 1080);
+        const coverPath = `${user.id}/${Date.now()}-cover-${small.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const { error: coverErr } = await supabase.storage.from("posts").upload(coverPath, small);
+        if (!coverErr) customCover = supabase.storage.from("posts").getPublicUrl(coverPath).data.publicUrl;
+      }
       const filePath = `${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, file);
       if (uploadError) {
@@ -6198,7 +6524,7 @@ function UploadScreen({ initialMode = "photo" }) {
       const {
         data: { publicUrl },
       } = supabase.storage.from("posts").getPublicUrl(filePath);
-      coverUrl = publicUrl;
+      coverImage = publicUrl;
     } else if (items.length === 1) {
       // The overwhelming common case — identical to the original single-post
       // path, so it never touches post_media at all.
@@ -6214,7 +6540,7 @@ function UploadScreen({ initialMode = "photo" }) {
       const {
         data: { publicUrl },
       } = supabase.storage.from("posts").getPublicUrl(filePath);
-      coverUrl = publicUrl;
+      coverImage = publicUrl;
     } else {
       // Carousel: upload every item in parallel. Promise.all keeps results
       // in the original selection order regardless of which finishes first.
@@ -6236,14 +6562,15 @@ function UploadScreen({ initialMode = "photo" }) {
         setError(e.message || "One of the files failed to upload");
         return;
       }
-      coverUrl = carouselUploads[0].url;
+      coverImage = carouselUploads[0].url;
     }
 
     const { data: insertedPost, error: insertError } = await supabase
       .from("posts")
       .insert({
         user_id: user.id,
-        media_url: coverUrl,
+        media_url: coverImage,
+        cover_url: customCover,
         // A carousel is a feed post regardless of what its individual slides
         // are — only single-video uploads through Reel mode ever get tagged
         // "reel", matching how Reels actually work on Instagram.
@@ -6458,7 +6785,7 @@ function UploadScreen({ initialMode = "photo" }) {
           >
             <input type="file" accept="video/*" onChange={handleFileChange} className="hidden" />
             {previewUrl ? (
-              <video src={previewUrl} className="w-full h-full object-cover" controls />
+              <video src={previewUrl} poster={coverUrl || undefined} className="w-full h-full object-cover" controls />
             ) : (
               <>
                 <Video size={28} color="var(--text-muted)" />
@@ -6571,14 +6898,61 @@ function UploadScreen({ initialMode = "photo" }) {
           </div>
         )}
 
-        <textarea
-          placeholder="Write a caption..."
-          rows={3}
-          value={caption}
-          onChange={(e) => setCaption(e.target.value)}
-          className="w-full rounded-xl px-3 py-2.5 text-sm mb-3 outline-none resize-none"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-        />
+        {mode === "reel" && file && (
+          <div className="rounded-xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <input
+              ref={coverInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                if (coverUrl) URL.revokeObjectURL(coverUrl);
+                setCoverFile(f);
+                setCoverUrl(URL.createObjectURL(f));
+              }}
+            />
+            <div className="flex items-center gap-3 px-3 py-2.5">
+              <div className="rounded-lg overflow-hidden shrink-0" style={{ width: 44, height: 58, background: "var(--bg-sunken)" }}>
+                {coverUrl ? (
+                  <img src={coverUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <video src={videoThumb(previewUrl)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Cover</p>
+                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  {coverUrl ? "Your own picture" : "The video's first moment"}
+                </p>
+              </div>
+              <button
+                onClick={() => coverInputRef.current?.click()}
+                className="rounded-lg px-3 h-8 text-xs shrink-0"
+                style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
+              >
+                {coverUrl ? "Change" : "Choose"}
+              </button>
+              {coverUrl && (
+                <button
+                  onClick={() => {
+                    URL.revokeObjectURL(coverUrl);
+                    setCoverFile(null);
+                    setCoverUrl(null);
+                  }}
+                  aria-label="Remove cover"
+                  className="shrink-0"
+                >
+                  <X size={15} color="var(--text-muted)" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <CaptionBox value={caption} onChange={setCaption} placeholder="Write a caption..." />
 
         <div
           className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-3"
@@ -6812,7 +7186,7 @@ function DraftRow({ draft, onOpen, onDelete }) {
         <div className="rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 52, height: 52, background: "var(--surface)", border: "1px solid var(--border)" }}>
           {thumb ? (
             isVideo ? (
-              <video src={thumb} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+              <video src={videoThumb(thumb)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
             ) : (
               <img src={thumb} alt="" className="w-full h-full object-cover" />
             )
@@ -7411,7 +7785,7 @@ function SettingsScreen({
   if (view === "changePassword") {
     return (
       <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
-        <Header title="Change Password" back={() => setView("menu")} />
+        <Header title="Change Password" back={() => setView("security")} />
         <div className="px-4 pt-5">
           <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>New password</label>
           <input
@@ -7664,6 +8038,7 @@ function SettingsScreen({
     await supabase.auth.signOut();
   };
 
+  if (view === "security") return <SecurityScreen onBack={() => setView("menu")} onChangePassword={() => setView("changePassword")} />;
   if (view === "time") return <TimeManagementScreen onBack={() => setView("menu")} />;
   if (view === "status") return <AccountStatusScreen onBack={() => setView("menu")} />;
   if (view === "favourites") return <FavouritesScreen onBack={() => setView("menu")} />;
@@ -7785,7 +8160,7 @@ function SettingsScreen({
       title: "Your account",
       rows: [
         { icon: CircleUserRound, label: "Edit profile", onClick: () => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile")) },
-        { icon: KeyRound, label: "Password and security", onClick: () => setView("changePassword") },
+        { icon: KeyRound, label: "Password and security", onClick: () => setView("security") },
         { icon: Mail, label: "Email address", onClick: () => setView("changeEmail") },
         { icon: Shield, label: "Account status", onClick: () => setView("status") },
       ],
@@ -8077,7 +8452,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
         ) : (
           <FeedVideo post={{ ...post, media_type: "video" }} onLike={() => !post.liked && toggleLike()} />
         )}
-        <MediaTagOverlay tags={post.tags} onOpenProfile={onOpenProfile} />
+        <MediaTagOverlay tags={post.tags} isVideo={!isPhotoPost(post)} onOpenProfile={onOpenProfile} />
       </div>
 
       <div className="flex items-center justify-between px-4 pt-2.5">
@@ -8252,6 +8627,251 @@ function recordTimeSpent(seconds) {
     keep.forEach((k) => (trimmed[k] = data[k]));
     localStorage.setItem(TIME_KEY, JSON.stringify(trimmed));
   } catch {}
+}
+
+// Unlock with your fingerprint or face.
+// This guards the Loop session that's already saved in this browser — the
+// kind of lock that stops someone who picks up your unlocked phone. It is
+// stored on this device only; it is not a way to sign in somewhere new.
+const QUICK_UNLOCK_KEY = "loop_quick_unlock";
+const b64uToBytes = (v) => {
+  const pad = "=".repeat((4 - (v.length % 4)) % 4);
+  const bin = atob((v + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+};
+const bytesToB64u = (buf) => {
+  const arr = new Uint8Array(buf);
+  let str = "";
+  for (let i = 0; i < arr.length; i++) str += String.fromCharCode(arr[i]);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+function readQuickUnlock() {
+  try {
+    return JSON.parse(localStorage.getItem(QUICK_UNLOCK_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+function writeQuickUnlock(v) {
+  try {
+    if (v) localStorage.setItem(QUICK_UNLOCK_KEY, JSON.stringify(v));
+    else localStorage.removeItem(QUICK_UNLOCK_KEY);
+  } catch {}
+}
+const quickUnlockSupported = () =>
+  typeof window !== "undefined" &&
+  !!window.PublicKeyCredential &&
+  !!navigator.credentials &&
+  window.isSecureContext;
+
+async function registerQuickUnlock(userId, label) {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const cred = await navigator.credentials.create({
+    publicKey: {
+      challenge,
+      rp: { name: "Loop", id: window.location.hostname },
+      user: { id: new TextEncoder().encode(userId), name: label, displayName: label },
+      pubKeyCredParams: [
+        { type: "public-key", alg: -7 },
+        { type: "public-key", alg: -257 },
+      ],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
+      timeout: 60000,
+      attestation: "none",
+    },
+  });
+  if (!cred) throw new Error("No passkey was created");
+  return { id: bytesToB64u(cred.rawId), userId, created: Date.now() };
+}
+
+async function verifyQuickUnlock(saved) {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const got = await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      allowCredentials: saved?.id ? [{ type: "public-key", id: b64uToBytes(saved.id) }] : [],
+      userVerification: "required",
+      timeout: 60000,
+      rpId: window.location.hostname,
+    },
+  });
+  return !!got;
+}
+
+// The screen shown over Loop while it's locked.
+function LockScreen({ onUnlock, onForget }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const tryUnlock = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const ok = await verifyQuickUnlock(readQuickUnlock());
+      if (ok) onUnlock();
+      else setError("That didn't match. Try again.");
+    } catch (e) {
+      setError(e?.name === "NotAllowedError" ? "Cancelled." : e?.message || "Couldn't check that here.");
+    }
+    setBusy(false);
+  };
+  useEffect(() => {
+    tryUnlock();
+  }, []);
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-8 text-center" style={{ background: "var(--bg)" }}>
+      <LoopLogo size={72} />
+      <p className="text-lg mt-4" style={{ color: "var(--text)", fontWeight: 700 }}>Loop is locked</p>
+      <p className="text-sm mt-1.5" style={{ color: "var(--text-secondary)" }}>Use your fingerprint or face to carry on.</p>
+      {error && <p className="text-xs mt-3" style={{ color: "var(--heart)" }}>{error}</p>}
+      <button
+        onClick={tryUnlock}
+        disabled={busy}
+        className="mt-6 w-full rounded-xl h-12 text-sm"
+        style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+      >
+        {busy ? "Waiting…" : "Unlock"}
+      </button>
+      <button onClick={onForget} className="mt-2 w-full h-11 text-sm" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+        Log out instead
+      </button>
+    </div>
+  );
+}
+
+// Settings → Password and security.
+function SecurityScreen({ onBack, onChangePassword }) {
+  const [account, setAccount] = useState(null);
+  const [unlock, setUnlock] = useState(readQuickUnlock);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const supported = quickUnlockSupported();
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      const u = data?.user;
+      setAccount({
+        email: u?.email || null,
+        phone: u?.phone || null,
+        provider: u?.app_metadata?.provider || "email",
+        created: u?.created_at || null,
+        lastSignIn: u?.last_sign_in_at || null,
+      });
+    });
+  }, []);
+
+  const say = (m) => {
+    setNote(m);
+    setTimeout(() => setNote(""), 2400);
+  };
+
+  const turnOn = async () => {
+    setBusy(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const saved = await registerQuickUnlock(user.id, user.email || "Loop account");
+      writeQuickUnlock(saved);
+      setUnlock(saved);
+      say("Unlock is on for this device");
+    } catch (e) {
+      say(e?.name === "NotAllowedError" ? "Cancelled" : e?.message || "This device wouldn't set that up");
+    }
+    setBusy(false);
+  };
+
+  const turnOff = () => {
+    writeQuickUnlock(null);
+    setUnlock(null);
+    say("Unlock is off for this device");
+  };
+
+  const Row = ({ icon: Icon, label, value, onClick, danger }) => (
+    <button
+      onClick={onClick}
+      disabled={!onClick}
+      className="w-full flex items-center gap-3.5 px-4 py-3.5 text-left"
+      style={{ borderTop: "1px solid var(--border-subtle)" }}
+    >
+      <Icon size={20} color={danger ? "var(--heart)" : "var(--text)"} strokeWidth={1.8} />
+      <span className="flex-1 min-w-0">
+        <span className="block text-[15px]" style={{ color: danger ? "var(--heart)" : "var(--text)" }}>{label}</span>
+        {value && <span className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{value}</span>}
+      </span>
+      {onClick && <ChevronRight size={18} color="var(--text-muted)" />}
+    </button>
+  );
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Password and security" onBack={onBack} />
+
+      <p className="px-4 pt-4 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>How you log in</p>
+      <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <Row
+          icon={Mail}
+          label="Email address"
+          value={account ? account.email || "No email on this account" : "…"}
+        />
+        <Row
+          icon={Phone}
+          label="Phone number"
+          value={account ? account.phone || "No phone on this account" : "…"}
+        />
+      </div>
+      <p className="px-4 pt-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+        This is what you type to log in, and where a reset link is sent. It isn't shown on your profile — the contact details
+        people can see live in Edit profile.
+      </p>
+
+      <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Security</p>
+      <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <Row icon={KeyRound} label="Change password" onClick={onChangePassword} />
+        <div className="flex items-center gap-3.5 px-4 py-3.5" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+          <Lock size={20} color="var(--text)" strokeWidth={1.8} />
+          <span className="flex-1 min-w-0">
+            <span className="block text-[15px]" style={{ color: "var(--text)" }}>Unlock with fingerprint or face</span>
+            <span className="block text-[12px]" style={{ color: "var(--text-muted)" }}>
+              {!supported ? "This browser can't do it" : unlock ? "On for this device" : "Off"}
+            </span>
+          </span>
+          <button
+            onClick={unlock ? turnOff : turnOn}
+            disabled={!supported || busy}
+            className="rounded-lg px-3.5 h-8 text-[13px] shrink-0"
+            style={
+              unlock
+                ? { background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }
+                : { background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: !supported || busy ? 0.5 : 1 }
+            }
+          >
+            {busy ? "…" : unlock ? "Turn off" : "Turn on"}
+          </button>
+        </div>
+      </div>
+      <p className="px-4 pt-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+        Asks for your fingerprint or face before Loop opens on this phone. It guards the session saved here; on a new device you
+        still log in with your password.
+      </p>
+      {note && <p className="px-4 pt-3 text-xs" style={{ color: "var(--accent-solid)" }}>{note}</p>}
+
+      <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>This account</p>
+      <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        <Row
+          icon={Clock}
+          label="Joined"
+          value={account?.created ? new Date(account.created).toLocaleDateString(undefined, { dateStyle: "long" }) : "…"}
+        />
+        <Row
+          icon={Shield}
+          label="Last login"
+          value={account?.lastSignIn ? new Date(account.lastSignIn).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "…"}
+        />
+      </div>
+    </div>
+  );
 }
 
 // Settings → Time management.
@@ -8468,7 +9088,7 @@ function AccountStatusScreen({ onBack }) {
                     {isPhotoPost(rp) ? (
                       <img src={rp.media_url} alt="" className="w-full h-full object-cover" />
                     ) : (
-                      <video src={rp.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                      <video src={videoThumb(rp.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                     )}
                   </div>
                   <div className="min-w-0">
@@ -9000,22 +9620,89 @@ function AccountSwitcherSheet({ currentUserId, onClose, onSwitched, onAddAccount
 }
 
 // ---- Share profile ----
-function ShareProfileSheet({ profile, currentUserId, onClose }) {
+// The QR card: a big code on a colourful background, like Instagram's.
+const QR_CARD_COLOURS = [
+  ["#F58529", "#DD2A7B"],
+  ["#0F2027", "#2C5364"],
+  ["#00B09B", "#96C93D"],
+  ["#8E2DE2", "#4A00E0"],
+  ["#006A4E", "#F42A41"],
+];
+function ProfileQRScreen({ profile, onBack }) {
   const [qr, setQr] = useState("");
-  const [flash, setFlash] = useState("");
-  const [sendOpen, setSendOpen] = useState(false);
-
+  const [colour, setColour] = useState(0);
+  const [note, setNote] = useState("");
   const link = `${window.location.origin}/u/${profile.username}`;
 
   useEffect(() => {
     let cancelled = false;
-    QRCode.toDataURL(link, { width: 220, margin: 1, errorCorrectionLevel: "M" })
+    QRCode.toDataURL(link, { width: 640, margin: 1, errorCorrectionLevel: "M" })
       .then((url) => !cancelled && setQr(url))
       .catch(() => !cancelled && setQr(""));
     return () => {
       cancelled = true;
     };
   }, [link]);
+
+  const say = (m) => {
+    setNote(m);
+    setTimeout(() => setNote(""), 1800);
+  };
+
+  const download = () => {
+    if (!qr) return;
+    const a = document.createElement("a");
+    a.href = qr;
+    a.download = `loop-${profile.username}-qr.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    say("Saved to your downloads");
+  };
+
+  const [a, b] = QR_CARD_COLOURS[colour];
+  return (
+    <div className="absolute inset-0 z-[78] flex flex-col" style={{ background: `linear-gradient(160deg, ${a} 0%, ${b} 100%)` }}>
+      <div className="flex items-center gap-3 px-4 h-14 shrink-0">
+        <button onClick={onBack} aria-label="Back">
+          <ChevronLeft size={24} color="#FFFFFF" />
+        </button>
+        <span className="text-[16px] flex-1" style={{ color: "#FFFFFF", fontWeight: 700 }}>QR code</span>
+        <button onClick={download} aria-label="Save">
+          <Download size={21} color="#FFFFFF" />
+        </button>
+      </div>
+
+      <button
+        onClick={() => setColour((c) => (c + 1) % QR_CARD_COLOURS.length)}
+        className="flex-1 flex flex-col items-center justify-center px-8"
+      >
+        <div className="rounded-3xl p-5 flex flex-col items-center" style={{ background: "#FFFFFF", width: "min(78vw, 300px)" }}>
+          {qr ? (
+            <img src={qr} alt="Profile QR code" className="w-full" style={{ imageRendering: "pixelated" }} />
+          ) : (
+            <div className="w-full flex items-center justify-center" style={{ aspectRatio: "1 / 1" }}>
+              <span className="text-xs" style={{ color: "#666" }}>Generating…</span>
+            </div>
+          )}
+          <span className="text-[15px] mt-3" style={{ color: "#111", fontWeight: 800 }}>@{profile.username}</span>
+        </div>
+        <span className="text-[12px] mt-5" style={{ color: "rgba(255,255,255,0.85)" }}>Tap to change the colour</span>
+        <span className="text-[12px] mt-1" style={{ color: "rgba(255,255,255,0.7)" }}>Scan this to open the profile</span>
+      </button>
+
+      {note && (
+        <p className="text-center text-xs pb-3" style={{ color: "#FFFFFF", fontWeight: 600 }}>{note}</p>
+      )}
+    </div>
+  );
+}
+
+function ShareProfileSheet({ profile, currentUserId, onClose, onOpenQR }) {
+  const [flash, setFlash] = useState("");
+  const [sendOpen, setSendOpen] = useState(false);
+
+  const link = `${window.location.origin}/u/${profile.username}`;
 
   const say = (m) => {
     setFlash(m);
@@ -9058,18 +9745,28 @@ function ShareProfileSheet({ profile, currentUserId, onClose }) {
     <StorySheetShell title="Share profile" onClose={onClose}>
       {flash && <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
 
-      <div className="flex flex-col items-center pb-4">
-        <div className="rounded-3xl p-4 flex items-center justify-center" style={{ background: "#FFFFFF", minWidth: 252, minHeight: 252 }}>
-          {qr ? <img src={qr} alt="Profile QR code" width={220} height={220} /> : <span className="text-xs" style={{ color: "#666" }}>Generating...</span>}
+      <div className="flex items-center gap-3 px-4 pb-3">
+        <Avatar username={profile.username} avatarUrl={profile.avatar_url} size={48} />
+        <div className="min-w-0">
+          <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>@{profile.username}</p>
+          <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{link.replace(/^https?:\/\//, "")}</p>
         </div>
-        <span className="text-sm mt-3" style={{ color: "var(--text)", fontWeight: 700 }}>@{profile.username}</span>
-        <span className="text-[11px] mt-0.5 px-8 text-center" style={{ color: "var(--text-muted)", wordBreak: "break-all" }}>{link}</span>
       </div>
 
       <div className="pb-6">
-        <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={copy} />
         <StoryMenuRow icon={<ShareIcon size={17} color="var(--text)" />} label="Send in Loop" onClick={() => setSendOpen(true)} />
-        <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Share to..." onClick={share} />
+        <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={copy} />
+        <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Share to…" onClick={share} />
+        {onOpenQR && (
+          <StoryMenuRow
+            icon={<QrCode size={17} color="var(--text)" />}
+            label="QR code"
+            onClick={() => {
+              onClose();
+              onOpenQR();
+            }}
+          />
+        )}
       </div>
     </StorySheetShell>
   );
@@ -9313,6 +10010,34 @@ async function uploadAvatarMedia(userId, file) {
   return { avatar_url: photoUrl, avatar_video_url: null };
 }
 
+// Only me / Public, used for the contact details on a profile.
+function VisibilityPicker({ value, onChange }) {
+  return (
+    <div className="flex gap-1.5 px-4 pb-2.5">
+      {[
+        [false, "Only me", Lock],
+        [true, "Public", Users],
+      ].map(([v, label, Icon]) => (
+        <button
+          key={label}
+          type="button"
+          onClick={() => onChange(v)}
+          className="flex items-center gap-1.5 rounded-full px-3 h-7 text-[12px]"
+          style={{
+            fontWeight: 600,
+            background: value === v ? "var(--text)" : "var(--surface)",
+            color: value === v ? "var(--bg)" : "var(--text-muted)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <Icon size={12} />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ---- Edit profile ----
 
 // Instagram's username rules: lowercase letters, numbers, dots and
@@ -9352,6 +10077,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   const [avatarVideoUrl, setAvatarVideoUrl] = useState(null);
   const [birthday, setBirthday] = useState("");
   const [contactEmail, setContactEmail] = useState("");
+  const [emailPublic, setEmailPublic] = useState(false);
+  const [phonePublic, setPhonePublic] = useState(false);
   const [category, setCategory] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -9373,7 +10100,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
       setError("");
       const { data, error: err } = await supabase
         .from("profiles")
-        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender, contact_email, contact_phone, category")
+        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender, contact_email, contact_phone, contact_email_public, contact_phone_public, category")
         .eq("id", currentUserId)
         .maybeSingle();
       if (err) setError(err.message);
@@ -9385,6 +10112,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         setAvatarUrl(data.avatar_url || null);
         setAvatarVideoUrl(data.avatar_video_url || null);
         setContactEmail(data.contact_email || "");
+        setEmailPublic(!!data.contact_email_public);
+        setPhonePublic(!!data.contact_phone_public);
         setCategory(data.category || "");
         setContactPhone(data.contact_phone || "");
         // Birthday lives in its own owner-only table so nobody else can read it.
@@ -9517,6 +10246,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         contact_email: contactEmail.trim() || null,
         category: category.trim().slice(0, 30) || null,
         contact_phone: contactPhone.trim() || null,
+        contact_email_public: !!contactEmail.trim() && emailPublic,
+        contact_phone_public: !!contactPhone.trim() && phonePublic,
         links: cleanLinks,
         gender,
       })
@@ -9740,31 +10471,33 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
 
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Contact options</label>
         <div className="rounded-2xl overflow-hidden mb-1" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-3 px-4 h-12" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-3 px-4 h-12">
             <Mail size={16} color="var(--text-muted)" />
             <input
               type="email"
               value={contactEmail}
               onChange={(e) => setContactEmail(e.target.value)}
-              placeholder="Public email (optional)"
+              placeholder="Email address (optional)"
               className="flex-1 bg-transparent outline-none text-sm"
               style={{ color: "var(--text)" }}
             />
           </div>
-          <div className="flex items-center gap-3 px-4 h-12">
+          {contactEmail.trim() !== "" && <VisibilityPicker value={emailPublic} onChange={setEmailPublic} />}
+          <div className="flex items-center gap-3 px-4 h-12" style={{ borderTop: "1px solid var(--border)" }}>
             <Phone size={16} color="var(--text-muted)" />
             <input
               type="tel"
               value={contactPhone}
               onChange={(e) => setContactPhone(e.target.value)}
-              placeholder="Phone for calls (optional)"
+              placeholder="Phone number (optional)"
               className="flex-1 bg-transparent outline-none text-sm"
               style={{ color: "var(--text)" }}
             />
           </div>
+          {contactPhone.trim() !== "" && <VisibilityPicker value={phonePublic} onChange={setPhonePublic} />}
         </div>
         <p className="text-[11px] mt-1 mb-4" style={{ color: "var(--text-muted)" }}>
-          Anyone can see these. Your profile shows an Email, Call or Contact button for whichever you fill in.
+          Set one to Public and your profile shows an Email, Call or Contact button. Only me keeps it hidden from everyone else.
         </p>
 
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Birthday</label>
@@ -10052,7 +10785,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 ) : (
                   <FeedVideo post={{ ...post, media_type: "video" }} onLike={() => !post.liked && toggleLike(post)} />
                 )}
-                <MediaTagOverlay tags={post.tags} onOpenProfile={onOpenProfile} />
+                <MediaTagOverlay tags={post.tags} isVideo={!isPhotoPost(post)} onOpenProfile={onOpenProfile} />
               </div>
 
               <div className="flex items-center justify-between px-4 pt-2.5">
@@ -10215,6 +10948,9 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
 function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [manage, setManage] = useState(null); // highlight being held
+  const pressRef = React.useRef(null);
+  const heldRef = React.useRef(false);
 
   const load = async () => {
     const { data: hs } = await supabase
@@ -10225,6 +10961,7 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
 
     const ids = (hs || []).map((h) => h.id);
     let firstStory = {};
+    const countFor = {};
     if (ids.length > 0) {
       const { data: links } = await supabase
         .from("story_highlight_items")
@@ -10239,7 +10976,9 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
         const byId = {};
         (stories || []).forEach((st) => (byId[st.id] = st));
         (links || []).forEach((l) => {
-          if (!firstStory[l.highlight_id] && byId[l.story_id]) firstStory[l.highlight_id] = byId[l.story_id];
+          if (!byId[l.story_id]) return;
+          countFor[l.highlight_id] = (countFor[l.highlight_id] || 0) + 1;
+          if (!firstStory[l.highlight_id]) firstStory[l.highlight_id] = byId[l.story_id];
         });
       }
     }
@@ -10247,10 +10986,35 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
     setItems(
       (hs || []).map((h) => ({
         ...h,
-        preview: h.cover_url || (firstStory[h.id]?.media_type === "photo" ? firstStory[h.id].media_url : null),
+        preview: h.cover_url || firstStory[h.id]?.media_url || null,
+        previewIsVideo: !h.cover_url && firstStory[h.id] && firstStory[h.id].media_type !== "photo",
+        count: (countFor[h.id] || 0),
       }))
     );
     setLoading(false);
+  };
+
+  const remove = async (h) => {
+    setManage(null);
+    if (!window.confirm(`Delete the highlight "${h.title}"? The stories in it aren't deleted.`)) return;
+    const { error } = await supabase.from("story_highlights").delete().eq("id", h.id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setItems((prev) => prev.filter((x) => x.id !== h.id));
+  };
+
+  const rename = async (h) => {
+    const name = window.prompt("Highlight name", h.title);
+    setManage(null);
+    if (!name || !name.trim() || name.trim() === h.title) return;
+    const { error } = await supabase.from("story_highlights").update({ title: name.trim().slice(0, 30) }).eq("id", h.id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setItems((prev) => prev.map((x) => (x.id === h.id ? { ...x, title: name.trim().slice(0, 30) } : x)));
   };
 
   useEffect(() => {
@@ -10276,7 +11040,29 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
       {items.map((h) => (
         <button
           key={h.id}
-          onClick={() => onOpen(h)}
+          onClick={() => {
+            if (heldRef.current) {
+              heldRef.current = false;
+              return;
+            }
+            onOpen(h);
+          }}
+          onTouchStart={() => {
+            if (!isOwn) return;
+            heldRef.current = false;
+            pressRef.current = setTimeout(() => {
+              heldRef.current = true;
+              setManage(h);
+            }, 450);
+          }}
+          onTouchEnd={() => clearTimeout(pressRef.current)}
+          onTouchMove={() => clearTimeout(pressRef.current)}
+          onContextMenu={(e) => {
+            if (!isOwn) return;
+            e.preventDefault();
+            heldRef.current = true;
+            setManage(h);
+          }}
           className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95"
           style={{ width: 64 }}
         >
@@ -10288,7 +11074,9 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
               className="w-full h-full rounded-full overflow-hidden flex items-center justify-center"
               style={{ background: "var(--surface)", border: "2px solid var(--bg)" }}
             >
-              {h.preview ? (
+              {h.preview && h.previewIsVideo ? (
+                <video src={videoThumb(h.preview)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+              ) : h.preview ? (
                 <img src={h.preview} alt="" className="w-full h-full object-cover" />
               ) : (
                 <Star size={20} color="var(--text-muted)" />
@@ -10298,6 +11086,18 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
           <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>{h.title}</span>
         </button>
       ))}
+
+      {manage && (
+        <StorySheetShell title={manage.title} onClose={() => setManage(null)}>
+          <div className="pb-6">
+            <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+              {manage.count === 0 ? "This highlight has no stories left." : `${manage.count} ${manage.count === 1 ? "story" : "stories"}`}
+            </p>
+            <StoryMenuRow icon={<Pencil size={17} color="var(--text)" />} label="Rename" onClick={() => rename(manage)} />
+            <StoryMenuRow icon={<Trash2 size={17} color="var(--heart)" />} label="Delete highlight" danger onClick={() => remove(manage)} />
+          </div>
+        </StorySheetShell>
+      )}
     </div>
   );
 }
@@ -10396,7 +11196,7 @@ function NewHighlightSheet({ currentUserId, onClose, onCreated }) {
                 {st.media_type === "photo" ? (
                   <img src={st.media_url} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  <video src={st.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                  <video src={videoThumb(st.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                 )}
                 {on && (
                   <span className="absolute bottom-1 right-1 rounded-full flex items-center justify-center" style={{ width: 18, height: 18, background: ACCENT }}>
@@ -10700,7 +11500,7 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
 
 // Big profile photo (long-press someone's picture): blurred backdrop,
 // large circle, and Follow · Share profile · Copy link · QR code.
-function AvatarViewer({ profile, isOwn, isFollowing, onFollow, onEditPhoto, onShare, onClose }) {
+function AvatarViewer({ profile, isOwn, isFollowing, onFollow, onEditPhoto, onShare, onQR, onClose }) {
   const [copied, setCopied] = useState(false);
   const link = `${window.location.origin}/u/${profile.username}`;
   const copy = async () => {
@@ -10762,7 +11562,7 @@ function AvatarViewer({ profile, isOwn, isFollowing, onFollow, onEditPhoto, onSh
         )}
         <Action icon={<CircleUserRound size={22} color="#fff" />} label="Share profile" onClick={onShare} />
         <Action icon={<Link2 size={22} color="#fff" />} label={copied ? "Copied!" : "Copy link"} onClick={copy} />
-        <Action icon={<QrCode size={22} color="#fff" />} label="QR code" onClick={onShare} />
+        <Action icon={<QrCode size={22} color="#fff" />} label="QR code" onClick={onQR} />
       </div>
     </div>
   );
@@ -10773,12 +11573,12 @@ function ContactSheet({ profile, onClose }) {
   return (
     <StorySheetShell title={`Contact ${profile.username}`} onClose={onClose}>
       <div className="pb-6">
-        {profile.contact_email && (
+        {profile.contact_email && profile.contact_email_public && (
           <a href={`mailto:${profile.contact_email}`} onClick={onClose} className="block">
             <StoryMenuRow icon={<Mail size={17} color="var(--text)" />} label="Email" trailing={<span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{profile.contact_email}</span>} />
           </a>
         )}
-        {profile.contact_phone && (
+        {profile.contact_phone && profile.contact_phone_public && (
           <a href={`tel:${profile.contact_phone.replace(/[^0-9+]/g, "")}`} onClick={onClose} className="block">
             <StoryMenuRow icon={<Phone size={17} color="var(--text)" />} label="Call" trailing={<span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{profile.contact_phone}</span>} />
           </a>
@@ -10843,6 +11643,11 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
   const staffRole = useStaffRole();
   const [reportNote, setReportNote] = useState("");
   const [avatarViewer, setAvatarViewer] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [storyFile, setStoryFile] = useState(null);
+  const [viewStoryFor, setViewStoryFor] = useState(null); // profile id
+  const [viewHighlight, setViewHighlight] = useState(null);
+  const storyInputRef = React.useRef(null);
   const [showSuggest, setShowSuggest] = useState(false);
   const [similar, setSimilar] = useState(null);
   const [reelSort, setReelSort] = useState("latest"); // latest | views
@@ -10889,7 +11694,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private, contact_email, contact_phone, is_verified, category")
+      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private, contact_email, contact_phone, contact_email_public, contact_phone_public, is_verified, category")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -10898,7 +11703,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
 
     let postsQuery = supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason, views_count")
+      .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason, views_count, cover_url")
       .eq("user_id", targetId);
     if (!isViewingOwnPosts) {
       postsQuery = postsQuery.eq("archived", false);
@@ -11282,8 +12087,14 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
                 avatarLongRef.current = false;
                 return;
               }
-              if (isOwnProfile) onAddStory?.();
-              else onOpenProfileStory?.(profile.id);
+              if (isOwnProfile) {
+                if (hasStory) setViewStoryFor(profile.id);
+                else storyInputRef.current?.click();
+              } else if (hasStory) {
+                setViewStoryFor(profile.id);
+              } else {
+                setAvatarViewer(true);
+              }
             }}
             onTouchStart={() => {
               avatarLongRef.current = false;
@@ -11396,17 +12207,19 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
                 Message
               </button>
             )}
-            {(profile.contact_email || profile.contact_phone) && (
+            {((profile.contact_email && profile.contact_email_public) || (profile.contact_phone && profile.contact_phone_public)) && (
               <button
                 onClick={() => {
-                  if (profile.contact_email && !profile.contact_phone) window.location.href = `mailto:${profile.contact_email}`;
-                  else if (profile.contact_phone && !profile.contact_email) window.location.href = `tel:${profile.contact_phone.replace(/[^0-9+]/g, "")}`;
+                  const e = profile.contact_email_public ? profile.contact_email : null;
+                  const ph = profile.contact_phone_public ? profile.contact_phone : null;
+                  if (e && !ph) window.location.href = `mailto:${e}`;
+                  else if (ph && !e) window.location.href = `tel:${ph.replace(/[^0-9+]/g, "")}`;
                   else setSheet("contact");
                 }}
                 className="flex-1 rounded-lg h-9 text-[13px] transition-transform active:scale-[0.98]"
                 style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700 }}
               >
-                {profile.contact_email && profile.contact_phone ? "Contact" : profile.contact_email ? "Email" : "Call"}
+                {profile.contact_email_public && profile.contact_phone_public ? "Contact" : profile.contact_email_public ? "Email" : "Call"}
               </button>
             )}
             <button
@@ -11482,7 +12295,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
         profileId={profile.id}
         isOwn={isOwnProfile}
         onNew={() => setSheet("newHighlight")}
-        onOpen={(h) => onOpenHighlight?.(h)}
+        onOpen={(h) => setViewHighlight({ ...h, user_id: profile.id })}
       />
 
       <div
@@ -11574,7 +12387,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
               {isPhotoPost(p) ? (
                 <img src={p.media_url} alt="" className="w-full h-full object-cover" />
               ) : (
-                <video src={p.media_url} className="w-full h-full object-cover" />
+                <video src={videoThumb(p.cover_url || p.media_url)} poster={p.cover_url || undefined} className="w-full h-full object-cover" muted playsInline preload="metadata" />
               )}
               {tab === "reposts" && (
                 <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
@@ -11767,6 +12580,10 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
             setAvatarViewer(false);
             setSheet("shareProfile");
           }}
+          onQR={() => {
+            setAvatarViewer(false);
+            setQrOpen(true);
+          }}
           onClose={() => setAvatarViewer(false)}
         />
       )}
@@ -11809,7 +12626,54 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
       )}
 
       {sheet === "shareProfile" && (
-        <ShareProfileSheet profile={profile} currentUserId={myId} onClose={() => setSheet(null)} />
+        <ShareProfileSheet
+          profile={profile}
+          currentUserId={myId}
+          onClose={() => setSheet(null)}
+          onOpenQR={() => setQrOpen(true)}
+        />
+      )}
+
+      {qrOpen && <ProfileQRScreen profile={profile} onBack={() => setQrOpen(false)} />}
+
+      {/* Add a story from this screen: the avatar "+" and Create → Story */}
+      <input
+        ref={storyInputRef}
+        type="file"
+        accept="image/*,video/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) setStoryFile(f);
+        }}
+      />
+      {storyFile && (
+        <StoryComposer
+          file={storyFile}
+          onCancel={() => setStoryFile(null)}
+          onPublished={() => {
+            setStoryFile(null);
+            setHasStory(true);
+            setHighlightsKey((k) => k + 1);
+          }}
+        />
+      )}
+      {viewStoryFor && (
+        <StandaloneStoryViewer
+          profileId={viewStoryFor}
+          currentUserId={myId}
+          onClose={() => setViewStoryFor(null)}
+          onOpenProfile={onOpenProfile}
+        />
+      )}
+      {viewHighlight && (
+        <StandaloneStoryViewer
+          highlight={viewHighlight}
+          currentUserId={myId}
+          onClose={() => setViewHighlight(null)}
+          onOpenProfile={onOpenProfile}
+        />
       )}
 
       {sheet === "create" && (
@@ -11828,7 +12692,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
               label="Story"
               onClick={() => {
                 setSheet(null);
-                onAddStory?.();
+                storyInputRef.current?.click();
               }}
             />
             <StoryMenuRow
@@ -13324,7 +14188,6 @@ const CHAT_FONTS = [
   { key: "condensed", name: "Condensed", stack: "'Oswald', sans-serif" },
   { key: "playful",   name: "Playful",   stack: "'Pacifico', cursive" },
   { key: "hand",      name: "Handwriting", stack: "'Caveat', cursive" },
-  { key: "bangla",    name: "বাংলা",      stack: "'Hind Siliguri', sans-serif" },
 ]
 
 const themeOf = (key) => CHAT_THEMES.find((t) => t.key === key) || CHAT_THEMES[0];
@@ -13898,7 +14761,7 @@ function MediaTile({ post, onClick, selected, selectable, badge }) {
       {isPhotoPost(post) ? (
         <img src={post.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
       ) : (
-        <video src={post.media_url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+        <video src={videoThumb(post.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
       )}
       {post.media_count > 1 ? (
         <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
@@ -14780,7 +15643,7 @@ function SavedScreen({ onBack, onOpenPost }) {
                     c.previewType === "photo" || c.cover_url ? (
                       <img src={c.previewUrl} alt="" className="w-full h-full object-cover" />
                     ) : (
-                      <video src={c.previewUrl} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                      <video src={videoThumb(c.previewUrl)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                     )
                   ) : (
                     <Bookmark size={24} color="var(--toggle-off)" />
@@ -14835,6 +15698,180 @@ function SavedScreen({ onBack, onOpenPost }) {
   );
 }
 
+// Reads a date out of whatever someone types into the chat search:
+// 3/11/2026, 2026-11-03, "3 Nov", "November 3". Returns a local midnight.
+function parseChatDate(input) {
+  const t = (input || "").trim();
+  if (!t || /^\d{1,2}$/.test(t)) return null;
+  const now = new Date();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  m = t.match(/^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?$/);
+  if (m) {
+    // Day first, the way dates are written in Bangladesh.
+    let year = m[3] ? +m[3] : now.getFullYear();
+    if (year < 100) year += 2000;
+    return new Date(year, +m[2] - 1, +m[1]);
+  }
+  const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  m = t.toLowerCase().match(/^(\d{1,2})\s+([a-z]{3,})\.?\s*(\d{4})?$/) || null;
+  let day, monName, yr;
+  if (m) {
+    day = +m[1];
+    monName = m[2];
+    yr = m[3];
+  } else {
+    const m2 = t.toLowerCase().match(/^([a-z]{3,})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?$/);
+    if (!m2) return null;
+    monName = m2[1];
+    day = +m2[2];
+    yr = m2[3];
+  }
+  const mi = MONTHS.findIndex((x) => monName.startsWith(x));
+  if (mi < 0 || !day || day > 31) return null;
+  return new Date(yr ? +yr : now.getFullYear(), mi, day);
+}
+
+// "Send this later": pick a time, and the message goes out on its own.
+function ScheduleMessageSheet({ conversationId, currentUserId, presetText, onClose, onScheduled }) {
+  const [text, setText] = useState(presetText || "");
+  const [when, setWhen] = useState(() => {
+    const d = new Date(Date.now() + 60 * 60 * 1000);
+    d.setMinutes(0, 0, 0);
+    return toLocalInputValue(d);
+  });
+  const [pending, setPending] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    const { data } = await supabase
+      .from("scheduled_messages")
+      .select("id, content, send_at")
+      .eq("conversation_id", conversationId)
+      .is("sent_at", null)
+      .order("send_at", { ascending: true });
+    setPending(data || []);
+  };
+  useEffect(() => {
+    load();
+  }, [conversationId]);
+
+  const save = async () => {
+    setError("");
+    const body = text.trim();
+    if (!body) {
+      setError("Write the message first");
+      return;
+    }
+    const at = when ? new Date(when) : null;
+    if (!at || isNaN(at.getTime()) || at.getTime() < Date.now() + 60 * 1000) {
+      setError("Pick a time at least a minute from now");
+      return;
+    }
+    setBusy(true);
+    const { error: err } = await supabase.from("scheduled_messages").insert({
+      conversation_id: conversationId,
+      sender_id: currentUserId,
+      content: body,
+      send_at: at.toISOString(),
+    });
+    setBusy(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setText("");
+    onScheduled?.(at);
+    load();
+  };
+
+  const cancel = async (id) => {
+    setPending((prev) => prev.filter((x) => x.id !== id));
+    await supabase.from("scheduled_messages").delete().eq("id", id);
+  };
+
+  const quick = (label, d) => (
+    <button
+      key={label}
+      onClick={() => setWhen(toLocalInputValue(d))}
+      className="rounded-full px-3 h-8 text-xs shrink-0"
+      style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 600, border: "1px solid var(--border)" }}
+    >
+      {label}
+    </button>
+  );
+  const tomorrow9 = new Date();
+  tomorrow9.setDate(tomorrow9.getDate() + 1);
+  tomorrow9.setHours(9, 0, 0, 0);
+  const tonight8 = new Date();
+  tonight8.setHours(20, 0, 0, 0);
+  if (tonight8.getTime() < Date.now()) tonight8.setDate(tonight8.getDate() + 1);
+  const nextWeek = new Date();
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  nextWeek.setHours(9, 0, 0, 0);
+
+  return (
+    <StorySheetShell title="Send later" onClose={onClose}>
+      <div className="px-4 pb-6">
+        <p className="text-[12px] mb-2.5" style={{ color: "var(--text-muted)" }}>
+          Write it now and Loop sends it at the time you pick — handy for a birthday wish at midnight.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={3}
+          placeholder="Your message…"
+          className="w-full rounded-xl px-3 py-2.5 text-sm outline-none resize-none"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+        <div className="flex gap-2 overflow-x-auto py-2.5" style={{ scrollbarWidth: "none" }}>
+          {quick("Tonight 8pm", tonight8)}
+          {quick("Tomorrow 9am", tomorrow9)}
+          {quick("Next week", nextWeek)}
+        </div>
+        <input
+          type="datetime-local"
+          value={when}
+          min={toLocalInputValue(new Date(Date.now() + 60 * 1000))}
+          onChange={(e) => setWhen(e.target.value)}
+          className="w-full rounded-xl px-3 h-11 text-sm outline-none"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", colorScheme: "dark light" }}
+        />
+        {error && <p className="text-xs mt-2" style={{ color: "var(--heart)" }}>{error}</p>}
+        <button
+          onClick={save}
+          disabled={busy}
+          className="w-full rounded-xl h-11 text-sm mt-3"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? "Saving…" : "Schedule"}
+        </button>
+
+        {pending.length > 0 && (
+          <>
+            <p className="text-[13px] mt-5 mb-1.5" style={{ color: "var(--text)", fontWeight: 700 }}>Waiting to send</p>
+            {pending.map((x) => (
+              <div key={x.id} className="flex items-center gap-3 py-2" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                <Clock size={15} color="var(--text-muted)" className="shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] truncate" style={{ color: "var(--text)" }}>{x.content}</p>
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    {new Date(x.send_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                  </p>
+                </div>
+                <button onClick={() => cancel(x.id)} className="text-xs shrink-0" style={{ color: "var(--heart)", fontWeight: 700 }}>
+                  Cancel
+                </button>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
 function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14857,6 +15894,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const [title, setTitle] = useState(chatTitle);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [matchAt, setMatchAt] = useState(0); // which match is in view
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [chatToast, setChatToast] = useState("");
+  const msgRefs = React.useRef({});
   const [emojiSheetFor, setEmojiSheetFor] = useState(null);
   const [sheet, setSheet] = useState(null); // customise | invite | nicknames
   const [convoMeta, setConvoMeta] = useState({ theme: "default", chat_font: "default", invite_code: null, avatar_url: null });
@@ -15288,9 +16329,42 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const blockedHere =
     !isGroup && rel && otherUser?.id ? isBlockedEither(rel, otherUser.id) : false;
   const afterBlocks = rel ? messages.filter((m) => !isBlockedEither(rel, m.sender_id)) : messages;
-  const visibleMessages = q
-    ? afterBlocks.filter((m) => !m.deleted && (m.content || "").toLowerCase().includes(q))
-    : afterBlocks;
+  // Searching keeps every message on screen and moves you between the hits,
+  // so you can always read what came before and after.
+  const visibleMessages = afterBlocks;
+  const searchDate = searchOpen ? parseChatDate(searchQuery) : null;
+  const matches = !q
+    ? []
+    : searchDate
+    ? (() => {
+        const start = searchDate.getTime();
+        const end = start + 24 * 3600 * 1000;
+        const sameDay = afterBlocks.filter((m) => {
+          const t = new Date(m.created_at).getTime();
+          return t >= start && t < end;
+        });
+        if (sameDay.length) return [sameDay[0]];
+        // Nothing that day — go to the first message after it.
+        const after = afterBlocks.find((m) => new Date(m.created_at).getTime() >= start);
+        return after ? [after] : [];
+      })()
+    : afterBlocks.filter((m) => !m.deleted && (m.content || "").toLowerCase().includes(q));
+  const currentMatch = matches.length ? matches[Math.min(matchAt, matches.length - 1)] : null;
+
+  useEffect(() => {
+    setMatchAt(0);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!currentMatch) return;
+    const el = msgRefs.current[currentMatch.id];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [currentMatch?.id]);
+
+  const stepMatch = (dir) => {
+    if (matches.length === 0) return;
+    setMatchAt((i) => (i + dir + matches.length) % matches.length);
+  };
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)", fontFamily: chatFont.stack }}>
@@ -15320,6 +16394,13 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </span>
         </button>
         <button
+          onClick={() => setScheduleOpen(true)}
+          className="p-1 shrink-0 transition-transform active:scale-90"
+          aria-label="Send later"
+        >
+          <Clock size={19} color="var(--text)" />
+        </button>
+        <button
           onClick={() => {
             setSearchOpen((v) => !v);
             setSearchQuery("");
@@ -15346,11 +16427,34 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
               autoFocus
             />
             {searchQuery && (
-              <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
-                {visibleMessages.length}
+              <span className="text-[11px] shrink-0 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                {matches.length === 0 ? "0" : `${Math.min(matchAt, matches.length - 1) + 1}/${matches.length}`}
               </span>
             )}
+            <button
+              onClick={() => stepMatch(-1)}
+              disabled={matches.length === 0}
+              aria-label="Previous match"
+              className="shrink-0 p-0.5 transition-transform active:scale-90"
+              style={{ opacity: matches.length === 0 ? 0.35 : 1 }}
+            >
+              <ChevronLeft size={18} color="var(--text)" style={{ transform: "rotate(90deg)" }} />
+            </button>
+            <button
+              onClick={() => stepMatch(1)}
+              disabled={matches.length === 0}
+              aria-label="Next match"
+              className="shrink-0 p-0.5 transition-transform active:scale-90"
+              style={{ opacity: matches.length === 0 ? 0.35 : 1 }}
+            >
+              <ChevronLeft size={18} color="var(--text)" style={{ transform: "rotate(-90deg)" }} />
+            </button>
           </div>
+          <p className="text-[11px] mt-1.5 px-1" style={{ color: "var(--text-muted)" }}>
+            {searchDate
+              ? `Jumping to ${searchDate.toLocaleDateString(undefined, { dateStyle: "medium" })}`
+              : "Type a word, or a date like 3/11/2026 to jump to that day."}
+          </p>
         </div>
       )}
 
@@ -15367,9 +16471,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         {loading ? (
           <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>Loading...</p>
         ) : visibleMessages.length === 0 ? (
-          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>
-            {q ? "No messages match that" : "No messages yet — say hi 👋"}
-          </p>
+          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>No messages yet — say hi 👋</p>
         ) : (
           visibleMessages.map((m, idx) => {
             const mine = m.sender_id === currentUserId;
@@ -15401,8 +16503,24 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
               );
             }
 
+            const isCurrentMatch = currentMatch && currentMatch.id === m.id;
+            const isMatch = q && matches.some((x) => x.id === m.id);
             return (
-              <div key={m.id} className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}`}>
+              <div
+                key={m.id}
+                ref={(el) => {
+                  if (el) msgRefs.current[m.id] = el;
+                  else delete msgRefs.current[m.id];
+                }}
+                className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}`}
+                style={
+                  isCurrentMatch
+                    ? { background: "rgba(255, 213, 79, 0.22)", borderRadius: 14, padding: 4, margin: "-4px -4px 4px" }
+                    : isMatch
+                    ? { background: "rgba(255, 213, 79, 0.10)", borderRadius: 14, padding: 4, margin: "-4px -4px 4px" }
+                    : undefined
+                }
+              >
                 {isGroup && !mine && (
                   <span className="text-[10px] mb-0.5 ml-1" style={{ color: "var(--text-muted)" }}>
                     {nicknames[m.sender_id] || memberNames[m.sender_id] || "unknown"}
@@ -15734,6 +16852,28 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </button>
         )}
       </div>
+      )}
+
+      {scheduleOpen && (
+        <ScheduleMessageSheet
+          conversationId={conversationId}
+          currentUserId={currentUserId}
+          presetText={text}
+          onClose={() => setScheduleOpen(false)}
+          onScheduled={(at) => {
+            setText("");
+            setChatToast(`Will send ${at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`);
+            setTimeout(() => setChatToast(""), 2600);
+          }}
+        />
+      )}
+      {chatToast && (
+        <div
+          className="absolute left-1/2 bottom-24 -translate-x-1/2 z-[80] rounded-full px-4 py-2.5 text-xs"
+          style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", whiteSpace: "nowrap" }}
+        >
+          {chatToast}
+        </div>
       )}
 
       {emojiSheetFor && (
@@ -16904,8 +18044,10 @@ function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
             <button key={pp.id} onClick={() => setOpenAt(posts.indexOf(pp))} className="relative aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
               {isPhotoPost(pp) ? (
                 <img src={pp.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+              ) : pp.cover_url ? (
+                <img src={pp.cover_url} alt="" className="w-full h-full object-cover" loading="lazy" />
               ) : (
-                <video src={pp.media_url + "#t=0.5"} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                <video src={videoThumb(pp.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
               )}
               {!isPhotoPost(pp) && (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
@@ -17354,6 +18496,7 @@ export default function App() {
   const [moderationOpen, setModerationOpen] = useState(false);
   const [messageTarget, setMessageTarget] = useState(null); // profile to open a chat with
   const [timeNudge, setTimeNudge] = useState(null); // { kind, minutes }
+  const [locked, setLocked] = useState(() => !!readQuickUnlock());
   const [hashtag, setHashtag] = useState(null);
   const [uploadMode, setUploadMode] = useState("photo");
   const [uploadNonce, setUploadNonce] = useState(0);
@@ -17521,7 +18664,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null || locked;
 
   // ---- Back button ----
   // Every screen that opens on top (a profile, a post, Settings, Your
@@ -17552,7 +18695,7 @@ export default function App() {
     [viewProfileId !== null, () => setViewProfileId(null)],
     [active !== "feed", () => setActive("feed")],
   ];
-  const navDepth = authScreen || myBan || myDeletion ? 0 : overlayStack.filter((o) => o[0]).length;
+  const navDepth = authScreen || myBan || myDeletion || locked ? 0 : overlayStack.filter((o) => o[0]).length;
   const overlayStackRef = React.useRef(overlayStack);
   overlayStackRef.current = overlayStack;
   const prevDepthRef = React.useRef(0);
@@ -17619,7 +18762,7 @@ export default function App() {
 
   if (checkingSession) {
     return (
-      <div className="loop-page w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+      <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
         <div className="flex flex-col items-center gap-4">
           <LoopLogo size={96} />
@@ -17631,7 +18774,7 @@ export default function App() {
 
   if (authScreen) {
     return (
-      <div className="loop-page w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+      <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
         <div
           className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
@@ -17661,14 +18804,23 @@ export default function App() {
   }
 
   return (
-    <div className="loop-page w-full min-h-screen flex items-center justify-center" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+    <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
       <style>{THEME_CSS}</style>
       <div
         className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
         <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen) + String(hashtag)}>
-          {myDeletion ? (
+          {locked ? (
+            <LockScreen
+              onUnlock={() => setLocked(false)}
+              onForget={async () => {
+                writeQuickUnlock(null);
+                setLocked(false);
+                await supabase.auth.signOut();
+              }}
+            />
+          ) : myDeletion ? (
             <PendingDeletionScreen
               deleteAfter={myDeletion.delete_after}
               onKeep={async () => {
