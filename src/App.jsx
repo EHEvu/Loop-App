@@ -45,6 +45,7 @@ import {
   ImagePlus,
   ThumbsDown,
   Trash2,
+  TrendingUp,
   MapPin,
   Pin,
   RotateCcw,
@@ -370,13 +371,34 @@ function isPhotoPost(p) {
 // A video URL that makes the browser paint its first frame as a thumbnail.
 const videoThumb = (url) => (url ? `${url}${url.includes("#") ? "" : "#t=0.1"}` : url);
 
+// The quick replies under a story — one tap and it lands in their chat.
+const STORY_QUICK_REACTIONS = ["\u2764\ufe0f", "\ud83d\ude02", "\ud83d\ude2e", "\ud83d\ude22", "\ud83d\udc4f", "\ud83d\udd25", "\ud83c\udf89", "\ud83d\udc4d"];
+
+// Remember that someone watched this, for Your activity → Watch history.
+// Writing the same post again just moves it back to the top. It is
+// best-effort and private to that person.
+async function rememberWatched(userId, postId) {
+  if (!userId || !postId) return;
+  try {
+    await supabase
+      .from("watch_history")
+      .upsert({ user_id: userId, post_id: postId, watched_at: new Date().toISOString() }, { onConflict: "user_id,post_id" });
+  } catch {}
+}
+
+// 0:07, 1:24 — the way a player writes a time.
+const formatClock = (secs) => {
+  const t = Math.max(0, Math.floor(secs || 0));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+};
+
 // ---- Video covers ----
 // A grid that shows a black square for every video is useless, so Loop
 // takes a real picture out of the video and keeps it. grabVideoFrame
 // winds a hidden player to one moment and paints that frame onto a
 // canvas; the result is an ordinary JPEG we can store and show as an
 // <img>, which is far lighter for everyone than loading the video.
-function grabVideoFrame(src, atSeconds = 0.1) {
+function grabVideoFrame(src, atSeconds = 0.1, square = false) {
   return new Promise((resolve, reject) => {
     const v = document.createElement("video");
     let done = false;
@@ -411,10 +433,19 @@ function grabVideoFrame(src, atSeconds = 0.1) {
         const c = document.createElement("canvas");
         const w = v.videoWidth || 720;
         const h = v.videoHeight || 1280;
-        const scale = Math.min(1, 1080 / Math.max(w, h));
-        c.width = Math.round(w * scale);
-        c.height = Math.round(h * scale);
-        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        if (square) {
+          // A round profile picture needs the middle of the frame.
+          const side = Math.min(w, h);
+          const out = Math.min(side, 640);
+          c.width = out;
+          c.height = out;
+          c.getContext("2d").drawImage(v, (w - side) / 2, (h - side) / 2, side, side, 0, 0, out, out);
+        } else {
+          const scale = Math.min(1, 1080 / Math.max(w, h));
+          c.width = Math.round(w * scale);
+          c.height = Math.round(h * scale);
+          c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        }
         c.toBlob(
           (b) => (b ? finish(resolve, b) : finish(reject, new Error("Loop couldn't make a picture"))),
           "image/jpeg",
@@ -1941,8 +1972,8 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
     }
   };
 
-  const sendReply = async () => {
-    const body = replyText.trim();
+  const sendReply = async (override) => {
+    const body = (typeof override === "string" ? override : replyText).trim();
     if (!body || !story || !currentUserId || replySending) return;
     setReplySending(true);
     const { error } = await supabase
@@ -1974,10 +2005,10 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
     } catch {}
 
     setReplySending(false);
-    setReplyText("");
+    if (typeof override !== "string") setReplyText("");
     setReplyFocused(false);
     setMeta((m) => ({ ...m, replies: m.replies + 1 }));
-    showFlash("Reply sent")
+    showFlash(typeof override === "string" ? `Sent ${override}` : "Reply sent")
   };
 
   const patchStory = async (patch, successMsg) => {
@@ -2175,6 +2206,23 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
             </button>
           </div>
         ) : (
+          <>
+            {canReply && !replyFocused && !replyText && (
+              <div className="flex items-center justify-between px-1 pb-2.5">
+                {STORY_QUICK_REACTIONS.map((emo) => (
+                  <button
+                    key={emo}
+                    onClick={() => sendReply(emo)}
+                    disabled={replySending}
+                    aria-label={`Send ${emo}`}
+                    className="transition-transform active:scale-125"
+                    style={{ fontSize: 26, lineHeight: 1, opacity: replySending ? 0.5 : 1 }}
+                  >
+                    {emo}
+                  </button>
+                ))}
+              </div>
+            )}
           <div className="flex items-center gap-2.5">
             {canReply ? (
               <input
@@ -2221,8 +2269,22 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
               </>
             )}
           </div>
+          </>
         )}
       </div>
+
+      {story?.shared_post_id && (
+        <button
+          onClick={() => {
+            onOpenProfile?.(story.user_id);
+          }}
+          className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full z-20"
+          style={{ bottom: 92, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.22)" }}
+        >
+          <Layers size={13} color="#FFFFFF" />
+          <span className="text-[12px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>A post from Loop</span>
+        </button>
+      )}
 
       {held && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-none">
@@ -2449,7 +2511,7 @@ function StoriesBar({ onOpenProfile }) {
     // honest if one expires while the app is left open.
     const { data: rows, error } = await supabase
       .from("stories")
-      .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled")
+      .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled, shared_post_id")
       .eq("archived", false)
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: true });
@@ -2622,7 +2684,7 @@ function StandaloneStoryViewer({ profileId, highlight, currentUserId, onClose, o
         if (ids.length) {
           const { data } = await supabase
             .from("stories")
-            .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled")
+            .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled, shared_post_id")
             .in("id", ids)
             .order("created_at", { ascending: true });
           rows = data || [];
@@ -2630,7 +2692,7 @@ function StandaloneStoryViewer({ profileId, highlight, currentUserId, onClose, o
       } else {
         const { data } = await supabase
           .from("stories")
-          .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled")
+          .select("id, user_id, media_url, media_type, caption, created_at, archived, comments_disabled, shared_post_id")
           .eq("user_id", profileId)
           .eq("archived", false)
           .gt("expires_at", new Date().toISOString())
@@ -3290,9 +3352,14 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         if (error) throw error;
         const batch = rows || [];
         if (batch.length > 0) st.cursor = batch[batch.length - 1].created_at;
-        const visible = batch
+        let visible = batch
           .filter((p) => !isHiddenFromFeed(rel, p.user_id) && !(st.hiddenPosts && st.hiddenPosts.has(p.id)))
           .map((p) => ({ ...p, suggested: st.phase === "suggested" }));
+        if (st.phase === "suggested" && st.likedAuthors && st.likedAuthors.size > 0) {
+          visible = visible
+            .slice()
+            .sort((a, b) => (st.likedAuthors.has(b.user_id) ? 1 : 0) - (st.likedAuthors.has(a.user_id) ? 1 : 0));
+        }
         gathered = gathered.concat(visible);
         if (batch.length < FEED_PAGE) {
           if (st.phase === "following") {
@@ -3348,6 +3415,21 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       .eq("user_id", user?.id ?? "")
       .eq("kind", "not_interested");
     feedRef.current.hiddenPosts = new Set((notInterested || []).map((f) => f.post_id));
+
+    // "More like this" is only worth tapping if it changes something:
+    // the people behind those posts come first among the suggestions.
+    const { data: liked } = await supabase
+      .from("post_feedback")
+      .select("post_id")
+      .eq("user_id", user?.id ?? "")
+      .eq("kind", "interested");
+    let likedAuthors = new Set();
+    const likedIds = (liked || []).map((f) => f.post_id);
+    if (likedIds.length > 0) {
+      const { data: likedPosts } = await supabase.from("posts").select("user_id").in("id", likedIds);
+      likedAuthors = new Set((likedPosts || []).map((pp) => pp.user_id));
+    }
+    feedRef.current.likedAuthors = likedAuthors;
     const a = 1 + Math.floor(Math.random() * 4); // after post 2–5
     setSlots({ accounts: a, reels: a + 3 + Math.floor(Math.random() * 4) });
 
@@ -4053,6 +4135,16 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
   const touchStartY = React.useRef(0);
   const videoRef = React.useRef(null);
   const containerRef = React.useRef(null);
+  // The bar along the bottom: where the video is, and where a finger is
+  // dragging it to.
+  const [cur, setCur] = useState(0);
+  const [dur, setDur] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  // Press and hold anywhere to pause and get the picture to yourself.
+  const [holdPaused, setHoldPaused] = useState(false);
+  const holdTimer = React.useRef(null);
+  const heldRef = React.useRef(false);
+  const [skipHint, setSkipHint] = useState(null); // { dir: -1 | 1, key }
 
   useEffect(() => {
     loadReels();
@@ -4068,6 +4160,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
 
     const activeId = reels[index]?.id;
     if (activeId) {
+      rememberWatched(userId, activeId);
       setReels((prev) => prev.map((r) => (r.id === activeId ? { ...r, views_count: (r.views_count || 0) + 1 } : r)));
       try {
         supabase.rpc("increment_post_views", { p_post_id: activeId }).then(
@@ -4202,8 +4295,26 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
 
   const handleTouchStart = (e) => {
     touchStartY.current = e.touches[0].clientY;
+    heldRef.current = false;
+    clearTimeout(holdTimer.current);
+    holdTimer.current = setTimeout(() => {
+      heldRef.current = true;
+      setHoldPaused(true);
+      videoRef.current?.pause();
+    }, 320);
+  };
+  const handleTouchMove = (e) => {
+    // A swipe isn't a hold.
+    if (Math.abs(e.touches[0].clientY - touchStartY.current) > 12) clearTimeout(holdTimer.current);
   };
   const handleTouchEnd = (e) => {
+    clearTimeout(holdTimer.current);
+    if (heldRef.current) {
+      heldRef.current = false;
+      setHoldPaused(false);
+      if (playing) videoRef.current?.play().catch(() => {});
+      return;
+    }
     const deltaY = e.changedTouches[0].clientY - touchStartY.current;
     if (Math.abs(deltaY) > 50) {
       if (deltaY < 0 && index < reels.length - 1) {
@@ -4215,13 +4326,26 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
       setMenuOpen(false);
       setCommentSheetOpen(false);
     } else {
-      // A tap: one = play/pause, two = like.
-      onScreenTap();
+      // A tap: one = play/pause, two = like (or skip, near an edge).
+      onScreenTap(e);
     }
   };
 
-  // Double-tap only ever likes (never un-likes), like Instagram.
-  const likeFromDoubleTap = () => {
+  // Double-tap: near the left or right edge it skips ten seconds, the way
+  // Shorts does; anywhere in the middle it likes, and only ever likes.
+  const likeFromDoubleTap = (e) => {
+    const box = containerRef.current?.getBoundingClientRect();
+    const x = e?.changedTouches?.[0]?.clientX ?? e?.clientX;
+    if (box && typeof x === "number" && isFinite(videoRef.current?.duration || NaN)) {
+      const where = (x - box.left) / box.width;
+      if (where < 0.28 || where > 0.72) {
+        const dir = where < 0.28 ? -1 : 1;
+        seekBy(dir * 10);
+        setSkipHint({ dir, key: Date.now() });
+        setTimeout(() => setSkipHint(null), 600);
+        return;
+      }
+    }
     setHeartBurst(Date.now());
     if (reel && !reel.liked) toggleLike();
   };
@@ -4414,6 +4538,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
       className="flex-1 relative overflow-hidden"
       style={{ background: "var(--bg-sunken)" }}
       onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
       {/* Reel video */}
@@ -4428,6 +4553,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
           autoPlay
           muted={muted}
           onEnded={handleEnded}
+          onLoadedMetadata={(e) => {
+            setDur(isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0);
+            setCur(0);
+          }}
+          onTimeUpdate={(e) => {
+            if (!scrubbing) setCur(e.currentTarget.currentTime);
+          }}
         />
         <HeartBurst burstKey={heartBurst} />
         {/* readability scrims — keeps white text legible over any video */}
@@ -4441,8 +4573,83 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId }) {
         />
       </div>
 
+      {/* Ten seconds back or forward, after a double-tap near an edge */}
+      {skipHint && (
+        <div
+          key={skipHint.key}
+          className="absolute top-1/2 -translate-y-1/2 z-20 pointer-events-none flex items-center gap-1.5 px-3 py-2 rounded-full"
+          style={{
+            background: "rgba(0,0,0,0.55)",
+            backdropFilter: "blur(6px)",
+            [skipHint.dir < 0 ? "left" : "right"]: 28,
+          }}
+        >
+          {skipHint.dir < 0 ? <RotateCcw size={16} color="#fff" /> : <RotateCw size={16} color="#fff" />}
+          <span className="text-[12px]" style={{ color: "#fff", fontWeight: 700 }}>10s</span>
+        </div>
+      )}
+
+      {/* The bar along the bottom — drag it to move through the video */}
+      {dur > 0 && !holdPaused && (
+        <div
+          className="absolute left-0 right-0 z-20"
+          style={{ bottom: 0, height: 20, display: "flex", alignItems: "flex-end" }}
+          onTouchStart={(e) => {
+            e.stopPropagation();
+            setScrubbing(true);
+            const box = e.currentTarget.getBoundingClientRect();
+            const at = Math.max(0, Math.min(1, (e.touches[0].clientX - box.left) / box.width)) * dur;
+            setCur(at);
+          }}
+          onTouchMove={(e) => {
+            e.stopPropagation();
+            const box = e.currentTarget.getBoundingClientRect();
+            const at = Math.max(0, Math.min(1, (e.touches[0].clientX - box.left) / box.width)) * dur;
+            setCur(at);
+          }}
+          onTouchEnd={(e) => {
+            e.stopPropagation();
+            if (videoRef.current) videoRef.current.currentTime = Math.min(cur, Math.max(dur - 0.05, 0));
+            setScrubbing(false);
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="w-full relative" style={{ height: scrubbing ? 6 : 3, background: "rgba(255,255,255,0.28)", transition: "height 0.12s" }}>
+            <div
+              className="absolute left-0 top-0 bottom-0"
+              style={{ width: `${Math.min(100, (cur / dur) * 100)}%`, background: "#FFFFFF" }}
+            />
+            {scrubbing && (
+              <span
+                className="absolute rounded-full"
+                style={{
+                  width: 13,
+                  height: 13,
+                  background: "#FFFFFF",
+                  top: -3.5,
+                  left: `calc(${Math.min(100, (cur / dur) * 100)}% - 6.5px)`,
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.5)",
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* While scrubbing, say where you are */}
+      {scrubbing && dur > 0 && (
+        <div className="absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none" style={{ bottom: 42 }}>
+          <span
+            className="px-3 py-1.5 rounded-full text-[12px]"
+            style={{ background: "rgba(0,0,0,0.6)", color: "#fff", fontWeight: 700 }}
+          >
+            {formatClock(cur)} / {formatClock(dur)}
+          </span>
+        </div>
+      )}
+
       {/* Paused: seek back · play · seek forward, with mute underneath */}
-      {!playing && (
+      {!playing && !holdPaused && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 pointer-events-none z-10">
           <div className="flex items-center gap-7">
             <button
@@ -6196,7 +6403,7 @@ function CaptionBox({ value, onChange, placeholder, rows = 3 }) {
 
 // Pick the picture people see before a video plays: slide along the
 // video and take that moment, or use a picture from the gallery.
-function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover" }) {
+function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover", square = false, round = false }) {
   const [duration, setDuration] = useState(0);
   const [at, setAt] = useState(0.1);
   const [busy, setBusy] = useState(false);
@@ -6209,7 +6416,7 @@ function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover" }) {
     setBusy(true);
     setNote("");
     try {
-      const blob = await grabVideoFrame(videoUrl, at);
+      const blob = await grabVideoFrame(videoUrl, at, square);
       onPick(new File([blob], "cover.jpg", { type: "image/jpeg" }));
       setOpen(false);
     } catch (e) {
@@ -6235,7 +6442,10 @@ function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover" }) {
         }}
       />
       <div className="flex items-center gap-3 px-3 py-2.5">
-        <div className="rounded-lg overflow-hidden shrink-0" style={{ width: 44, height: 58, background: "var(--bg-sunken)" }}>
+        <div
+          className={round ? "rounded-full overflow-hidden shrink-0" : "rounded-lg overflow-hidden shrink-0"}
+          style={{ width: round ? 48 : 44, height: round ? 48 : 58, background: "var(--bg-sunken)" }}
+        >
           {coverUrl ? (
             <img src={coverUrl} alt="" className="w-full h-full object-cover" />
           ) : (
@@ -6264,7 +6474,10 @@ function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover" }) {
 
       {open && (
         <div className="px-3 pb-3" style={{ borderTop: "1px solid var(--border)" }}>
-          <div className="rounded-xl overflow-hidden mt-3 mx-auto" style={{ width: 150, aspectRatio: "9 / 16", background: "#000" }}>
+          <div
+            className={round ? "rounded-full overflow-hidden mt-3 mx-auto" : "rounded-xl overflow-hidden mt-3 mx-auto"}
+            style={{ width: round ? 140 : 150, aspectRatio: round ? "1 / 1" : "9 / 16", background: "#000" }}
+          >
             <video
               ref={previewRef}
               src={videoUrl}
@@ -8385,6 +8598,7 @@ function SettingsScreen({
         onChangePhone={() => setView("changePhone")}
       />
     );
+  if (view === "insights") return <InsightsScreen onBack={() => setView("menu")} />;
   if (view === "time") return <TimeManagementScreen onBack={() => setView("menu")} />;
   if (view === "status") return <AccountStatusScreen onBack={() => setView("menu")} />;
   if (view === "favourites") return <FavouritesScreen onBack={() => setView("menu")} />;
@@ -8516,6 +8730,7 @@ function SettingsScreen({
         { icon: Bookmark, label: "Saved", onClick: onOpenSaved },
         { icon: Archive, label: "Archive", onClick: onOpenArchive },
         { icon: Gauge, label: "Your activity", onClick: onOpenActivity },
+        { icon: TrendingUp, label: "Insights", onClick: () => setView("insights") },
         { icon: Bell, label: "Notifications", onClick: () => setView("notifications") },
         { icon: Clock, label: "Time management", onClick: () => setView("time") },
       ],
@@ -9591,7 +9806,7 @@ function invalidateFavorites() {
 }
 
 function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
-  const [view, setView] = useState("menu"); // menu | likes | comments | time
+  const [view, setView] = useState("menu"); // menu | likes | comments | time | watched | data
   const [counts, setCounts] = useState({ likes: 0, comments: 0, saves: 0 });
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -9653,6 +9868,48 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
     setLoading(false);
   };
 
+  const openWatched = async () => {
+    setView("watched");
+    setLoading(true);
+    setError("");
+    const { data, error: err } = await supabase
+      .from("watch_history")
+      .select("post_id, watched_at")
+      .eq("user_id", currentUserId)
+      .order("watched_at", { ascending: false })
+      .limit(200);
+    if (err) {
+      setError(err.message);
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+    const ids = (data || []).map((w) => w.post_id);
+    if (ids.length === 0) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+    const { data: posts } = await supabase
+      .from("posts")
+      .select("id, media_url, media_type, media_count, cover_url, user_id")
+      .in("id", ids);
+    const byId = {};
+    (posts || []).forEach((pp) => (byId[pp.id] = pp));
+    setItems((data || []).map((w) => byId[w.post_id]).filter(Boolean));
+    setLoading(false);
+  };
+
+  const clearWatched = async () => {
+    if (!window.confirm("Clear your watch history? This can't be undone.")) return;
+    const { error: err } = await supabase.from("watch_history").delete().eq("user_id", currentUserId);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setItems([]);
+  };
+
   const Header = ({ title, back }) => (
     <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
       <button onClick={back} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
@@ -9694,6 +9951,43 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
         )}
       </div>
     );
+  }
+
+  if (view === "watched") {
+    return (
+      <div className="flex-1 overflow-y-auto pb-6">
+        <Header title="Watch history" back={() => setView("menu")} />
+        <div className="flex items-center justify-between px-4 pt-3 pb-2">
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            Only you can see this.
+          </span>
+          {items.length > 0 && (
+            <button onClick={clearWatched} className="text-[12px]" style={{ color: "var(--heart)", fontWeight: 700 }}>
+              Clear
+            </button>
+          )}
+        </div>
+        {error ? (
+          <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
+        ) : loading ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        ) : items.length === 0 ? (
+          <p className="text-xs text-center py-10 px-8" style={{ color: "var(--text-muted)" }}>
+            Nothing yet. Reels you watch turn up here, newest first.
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-0.5 mt-0.5">
+            {items.map((pp) => (
+              <MediaTile key={pp.id} post={pp} onClick={() => onOpenPost?.(pp.id)} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "data") {
+    return <DownloadDataScreen currentUserId={currentUserId} onBack={() => setView("menu")} Header={Header} />;
   }
 
   if (view === "time") {
@@ -9755,7 +10049,258 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
       </div>
       <StoryMenuRow icon={<Heart size={17} color="var(--text)" />} label="Likes you've given" onClick={openLikes} />
       <StoryMenuRow icon={<MessageCircle size={17} color="var(--text)" style={{ transform: "scaleX(-1)" }} />} label="Comments you've made" onClick={openComments} />
+      <StoryMenuRow icon={<Clock size={17} color="var(--text)" />} label="Watch history" onClick={openWatched} />
       <StoryMenuRow icon={<Gauge size={17} color="var(--text)" />} label="Time spent" onClick={() => setView("time")} />
+      <StoryMenuRow icon={<Download size={17} color="var(--text)" />} label="Download your information" onClick={() => setView("data")} />
+    </div>
+  );
+}
+
+// Everything this account holds, in one file you can keep.
+// It is built here in the browser from what the account is allowed to
+// read, so nothing leaves Loop on the way.
+function DownloadDataScreen({ currentUserId, onBack, Header }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [done, setDone] = useState(false);
+
+  const build = async () => {
+    setBusy(true);
+    setNote("");
+    try {
+      const me = currentUserId;
+      const [profileRes, privRes, postsRes, commentsRes, likesRes, savesRes, followingRes, followersRes, storiesRes, repostsRes, authRes] =
+        await Promise.all([
+          supabase.from("profiles").select("*").eq("id", me).maybeSingle(),
+          supabase.from("profile_private").select("*").eq("user_id", me).maybeSingle(),
+          supabase.from("posts").select("*").eq("user_id", me).order("created_at", { ascending: false }),
+          supabase.from("comments").select("*").eq("user_id", me).order("created_at", { ascending: false }),
+          supabase.from("likes").select("post_id").eq("user_id", me),
+          supabase.from("saves").select("post_id").eq("user_id", me),
+          supabase.from("follows").select("following_id, created_at").eq("follower_id", me),
+          supabase.from("follows").select("follower_id, created_at").eq("following_id", me),
+          supabase.from("stories").select("id, media_url, media_type, created_at").eq("user_id", me),
+          supabase.from("reposts").select("post_id, created_at").eq("user_id", me),
+          supabase.auth.getUser(),
+        ]);
+
+      const bundle = {
+        exported_at: new Date().toISOString(),
+        app: "Loop",
+        account: {
+          id: me,
+          email: authRes?.data?.user?.email || null,
+          phone: authRes?.data?.user?.phone || null,
+          joined: authRes?.data?.user?.created_at || null,
+        },
+        profile: profileRes.data || null,
+        private: privRes.data || null,
+        posts: postsRes.data || [],
+        comments: commentsRes.data || [],
+        stories: storiesRes.data || [],
+        reposts: repostsRes.data || [],
+        likes_given: (likesRes.data || []).map((x) => x.post_id),
+        saved_posts: (savesRes.data || []).map((x) => x.post_id),
+        following: followingRes.data || [],
+        followers: followersRes.data || [],
+      };
+
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `loop-data-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setDone(true);
+      setNote("Saved to your downloads.");
+    } catch (e) {
+      setNote(e?.message || "Loop couldn't build the file");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-6">
+      <Header title="Download your information" back={onBack} />
+      <div className="px-4 pt-4">
+        <p className="text-[13px] mb-3" style={{ color: "var(--text)" }}>
+          A single file with your profile, posts, comments, stories, reposts, the posts you liked and saved, and who
+          you follow.
+        </p>
+        <p className="text-[11px] mb-5" style={{ color: "var(--text-muted)" }}>
+          Pictures and videos aren't inside the file — their web addresses are, so you can open any of them. Messages
+          are left out, because they belong to the other person as much as to you.
+        </p>
+        <button
+          onClick={build}
+          disabled={busy}
+          className="w-full rounded-xl h-12 text-sm"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? "Building your file…" : done ? "Download again" : "Download"}
+        </button>
+        {note && (
+          <p className="text-xs mt-3 text-center" style={{ color: done ? "var(--accent-solid)" : "var(--heart)" }}>{note}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// How your posts are doing — the numbers Loop already keeps, read back
+// in one place. Nothing new is collected for this.
+function InsightsScreen({ onBack }) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState("");
+  const [range, setRange] = useState(30); // days
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setState(null);
+      setError("");
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+        const since = new Date(Date.now() - range * 86400000).toISOString();
+
+        const { data: posts, error: postErr } = await supabase
+          .from("posts")
+          .select("id, media_url, media_type, media_count, cover_url, caption, created_at, views_count")
+          .eq("user_id", user.id)
+          .is("removed_at", null)
+          .order("created_at", { ascending: false });
+        if (postErr) throw postErr;
+
+        const ids = (posts || []).map((pp) => pp.id);
+        const [likesRes, commentsRes, newFollowersRes, totalFollowersRes] = await Promise.all([
+          ids.length ? supabase.from("likes").select("post_id").in("post_id", ids) : Promise.resolve({ data: [] }),
+          ids.length ? supabase.from("comments").select("post_id").in("post_id", ids) : Promise.resolve({ data: [] }),
+          supabase.from("follows").select("created_at").eq("following_id", user.id).gte("created_at", since),
+          supabase.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id),
+        ]);
+
+        const likeFor = {};
+        (likesRes.data || []).forEach((l) => (likeFor[l.post_id] = (likeFor[l.post_id] || 0) + 1));
+        const commentFor = {};
+        (commentsRes.data || []).forEach((c) => (commentFor[c.post_id] = (commentFor[c.post_id] || 0) + 1));
+
+        const inRange = (posts || []).filter((pp) => pp.created_at >= since);
+        const sum = (list, fn) => list.reduce((a, x) => a + fn(x), 0);
+
+        const withNumbers = (posts || []).map((pp) => ({
+          ...pp,
+          likes: likeFor[pp.id] || 0,
+          comments: commentFor[pp.id] || 0,
+          views: pp.views_count || 0,
+        }));
+
+        if (cancelled) return;
+        setState({
+          days: range,
+          posted: inRange.length,
+          views: sum(inRange, (pp) => pp.views_count || 0),
+          likes: sum(inRange, (pp) => likeFor[pp.id] || 0),
+          comments: sum(inRange, (pp) => commentFor[pp.id] || 0),
+          newFollowers: (newFollowersRes.data || []).length,
+          followers: totalFollowersRes.count || 0,
+          top: withNumbers
+            .slice()
+            .sort((a, b) => b.views + b.likes * 3 - (a.views + a.likes * 3))
+            .slice(0, 6),
+          totalPosts: withNumbers.length,
+        });
+      } catch (e) {
+        if (!cancelled) setError(e?.message || "Couldn't load your numbers");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  const Box = ({ label, value, hint }) => (
+    <div className="flex-1 rounded-2xl px-3 py-3" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+      <span className="text-xl block" style={{ color: "var(--text)", fontWeight: 700 }}>{value}</span>
+      <span className="text-[11px] block mt-0.5" style={{ color: "var(--text-muted)" }}>{label}</span>
+      {hint && <span className="text-[10px] block mt-0.5" style={{ color: "var(--text-muted)" }}>{hint}</span>}
+    </div>
+  );
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Insights" onBack={onBack} />
+
+      <div className="flex gap-2 px-4 pt-4 pb-3">
+        {[
+          [7, "7 days"],
+          [30, "30 days"],
+          [90, "90 days"],
+        ].map(([d, label]) => (
+          <button
+            key={d}
+            onClick={() => setRange(d)}
+            className="rounded-full px-3.5 h-8 text-[12px]"
+            style={{
+              fontWeight: 600,
+              background: range === d ? "var(--text)" : "var(--surface)",
+              color: range === d ? "var(--bg)" : "var(--text-muted)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {error ? (
+        <p className="text-xs text-center py-10 px-8" style={{ color: "var(--heart)" }}>{error}</p>
+      ) : !state ? (
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Counting...</p>
+      ) : (
+        <>
+          <div className="flex gap-2 px-4 pb-2">
+            <Box label="Views" value={formatCount(state.views)} />
+            <Box label="Likes" value={formatCount(state.likes)} />
+            <Box label="Comments" value={formatCount(state.comments)} />
+          </div>
+          <div className="flex gap-2 px-4 pb-3">
+            <Box label="New followers" value={formatCount(state.newFollowers)} hint={`${formatCount(state.followers)} in all`} />
+            <Box label="You posted" value={formatCount(state.posted)} hint={`${formatCount(state.totalPosts)} in all`} />
+          </div>
+          <p className="px-4 pb-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
+            Views, likes and comments count the posts you put up in the last {state.days} days.
+          </p>
+
+          <p className="px-4 pb-2 text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>Your best posts</p>
+          {state.top.length === 0 ? (
+            <p className="text-xs text-center py-8 px-8" style={{ color: "var(--text-muted)" }}>
+              Post something and its numbers will show up here.
+            </p>
+          ) : (
+            state.top.map((pp) => (
+              <div key={pp.id} className="flex items-center gap-3 px-4 py-2">
+                <div className="rounded-lg overflow-hidden shrink-0" style={{ width: 46, height: 46, background: "var(--surface)" }}>
+                  <MediaThumb src={pp.media_url} cover={pp.cover_url} isVideo={!isPhotoPost(pp)} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] truncate" style={{ color: "var(--text)" }}>
+                    {pp.caption || (isPhotoPost(pp) ? "Photo" : "Video")}
+                  </p>
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    {formatCount(pp.views)} views · {formatCount(pp.likes)} likes · {formatCount(pp.comments)} comments
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -10339,6 +10884,14 @@ function readVideoMeta(file) {
   });
 }
 
+// Replace just the still picture of a profile video.
+async function uploadAvatarStill(userId, file) {
+  const path = `${userId}/${Date.now()}-frame.jpg`;
+  const { error } = await supabase.storage.from("avatars").upload(path, file, { contentType: "image/jpeg" });
+  if (error) throw error;
+  return supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+}
+
 async function uploadAvatarMedia(userId, file) {
   const safe = (name) => name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const put = async (path, body, contentType) => {
@@ -10430,6 +10983,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
 
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [avatarVideoUrl, setAvatarVideoUrl] = useState(null);
+  const [avatarVideoPlays, setAvatarVideoPlays] = useState(true);
   const [birthday, setBirthday] = useState("");
   const [birthdayPublic, setBirthdayPublic] = useState(false);
   const [contactEmail, setContactEmail] = useState("");
@@ -10456,7 +11010,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
       setError("");
       const { data, error: err } = await supabase
         .from("profiles")
-        .select("username, full_name, bio, avatar_url, avatar_video_url, links, gender, contact_email, contact_phone, contact_email_public, contact_phone_public, category")
+        .select("username, full_name, bio, avatar_url, avatar_video_url, avatar_video_plays, links, gender, contact_email, contact_phone, contact_email_public, contact_phone_public, category")
         .eq("id", currentUserId)
         .maybeSingle();
       if (err) setError(err.message);
@@ -10467,6 +11021,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         setBio(data.bio || "");
         setAvatarUrl(data.avatar_url || null);
         setAvatarVideoUrl(data.avatar_video_url || null);
+        setAvatarVideoPlays(data.avatar_video_plays !== false);
         setContactEmail(data.contact_email || "");
         setEmailPublic(!!data.contact_email_public);
         setPhonePublic(!!data.contact_phone_public);
@@ -10602,6 +11157,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         bio: bio.trim() || null,
         avatar_url: avatarUrl,
         avatar_video_url: avatarVideoUrl,
+        avatar_video_plays: avatarVideoPlays,
         contact_email: contactEmail.trim() || null,
         category: category.trim().slice(0, 30) || null,
         contact_phone: contactPhone.trim() || null,
@@ -10719,6 +11275,57 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
           }}
         />
       </div>
+
+      {avatarVideoUrl && (
+        <div className="px-4 pt-4">
+          <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Your profile video</label>
+
+          <button
+            type="button"
+            onClick={() => setAvatarVideoPlays((v) => !v)}
+            className="w-full flex items-center justify-between rounded-2xl px-4 h-12 mb-2"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
+          >
+            <span className="text-left">
+              <span className="block text-sm" style={{ color: "var(--text)" }}>Let it play on my profile</span>
+              <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {avatarVideoPlays ? "The video plays by itself" : "Only the still picture shows"}
+              </span>
+            </span>
+            <span
+              className="rounded-full shrink-0"
+              style={{ width: 34, height: 19, background: avatarVideoPlays ? ACCENT : "var(--toggle-off)", position: "relative" }}
+            >
+              <span
+                className="rounded-full bg-white absolute"
+                style={{ width: 15, height: 15, top: 2, left: avatarVideoPlays ? 17 : 2, transition: "left 0.15s" }}
+              />
+            </span>
+          </button>
+
+          <CoverPicker
+            videoUrl={avatarVideoUrl}
+            coverUrl={avatarUrl}
+            label="Still picture"
+            square
+            round
+            onPick={async (f) => {
+              setAvatarBusy(true);
+              setError("");
+              try {
+                const url = await uploadAvatarStill(currentUserId, f);
+                setAvatarUrl(url);
+              } catch (e) {
+                setError(e?.message || "That picture didn't save");
+              }
+              setAvatarBusy(false);
+            }}
+          />
+          <p className="text-[11px] mb-4" style={{ color: "var(--text-muted)" }}>
+            This is the picture people see wherever the video can't play — small circles, other people's feeds, comments.
+          </p>
+        </div>
+      )}
 
       <div className="px-4">
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Name</label>
@@ -12507,7 +13114,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url, avatar_video_url, note, note_created_at, links, gender, is_private, contact_email, contact_phone, contact_email_public, contact_phone_public, is_verified, category")
+      .select("id, username, full_name, bio, avatar_url, avatar_video_url, avatar_video_plays, note, note_created_at, links, gender, is_private, contact_email, contact_phone, contact_email_public, contact_phone_public, is_verified, category")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -12980,7 +13587,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
               className="w-full h-full rounded-full overflow-hidden flex items-center justify-center"
               style={{ background: "var(--border)", border: hasStory ? "3px solid var(--bg)" : "none" }}
             >
-              {profile.avatar_video_url ? (
+              {profile.avatar_video_url && profile.avatar_video_plays !== false ? (
                 <video src={profile.avatar_video_url} poster={profile.avatar_url || undefined} className="w-full h-full object-cover" autoPlay muted loop playsInline />
               ) : profile.avatar_url ? (
                 <img src={profile.avatar_url} alt="" className="w-full h-full object-cover" />
@@ -13273,21 +13880,6 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
               style={{ background: "var(--surface)" }}
             >
               <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />
-              {isOwnProfile && !isPhotoPost(p) && !p.removed_at && (
-                <span
-                  role="button"
-                  aria-label="Change cover"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCoverNote("");
-                    setCoverFor(p);
-                  }}
-                  className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center"
-                  style={{ background: "rgba(0,0,0,0.55)" }}
-                >
-                  <ImageIcon size={12} color="#FFFFFF" />
-                </span>
-              )}
               {tab === "reposts" && (
                 <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
               )}
@@ -15475,6 +16067,7 @@ function ShareSheet({ item, currentUserId, onClose }) {
   const [sentTo, setSentTo] = useState([]);
   const [busyId, setBusyId] = useState(null);
   const [flash, setFlash] = useState("");
+  const [storyBusy, setStoryBusy] = useState(false);
 
   const link = `${window.location.origin}/p/${item.id}`;
   const label = isPhotoPost(item) ? "📷 Shared a post" : "🎬 Shared a reel";
@@ -15567,6 +16160,33 @@ function ShareSheet({ item, currentUserId, onClose }) {
     }
   };
 
+  // Put someone's post on your own story, the way Instagram does. The
+  // story keeps a pointer back, so people can see whose post it is.
+  const addToStory = async () => {
+    if (!currentUserId || storyBusy) return;
+    setStoryBusy(true);
+    // A photo post goes up as a photo. A video with a cover picture goes
+    // up as that picture; without one, the video itself goes up.
+    const usesCover = !isPhotoPost(item) && !!item.cover_url;
+    const { error } = await supabase.from("stories").insert({
+      user_id: currentUserId,
+      media_url: usesCover ? item.cover_url : item.media_url,
+      media_type: isPhotoPost(item) || usesCover ? "photo" : "video",
+      caption: item.caption ? item.caption.slice(0, 180) : null,
+      shared_post_id: item.id,
+    });
+    setStoryBusy(false);
+    if (error) {
+      say(
+        error.message.includes("shared_post_id")
+          ? "Sharing to a story needs the latest Loop SQL — run it in Supabase and try again."
+          : error.message
+      );
+      return;
+    }
+    say("Added to your story");
+  };
+
   const nativeShare = async () => {
     try {
       if (navigator.share) {
@@ -15607,6 +16227,17 @@ function ShareSheet({ item, currentUserId, onClose }) {
   return (
     <StorySheetShell title="Share" onClose={onClose}>
       {flash && <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
+
+      <div className="flex gap-2 px-4 pb-2">
+        <button
+          onClick={addToStory}
+          disabled={storyBusy}
+          className="flex-1 flex items-center justify-center gap-2 rounded-full h-11 text-xs transition-transform active:scale-95"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: storyBusy ? 0.6 : 1 }}
+        >
+          <Plus size={15} /> {storyBusy ? "Adding..." : "Add to story"}
+        </button>
+      </div>
 
       <div className="flex gap-2 px-4 pb-3">
         <button
