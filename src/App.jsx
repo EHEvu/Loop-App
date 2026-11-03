@@ -23,7 +23,7 @@ import {
   ExternalLink,
   QrCode,
   Phone,
-  History,
+  Cake,
   Lock,
   Ellipsis,
   Bell,
@@ -369,6 +369,110 @@ function isPhotoPost(p) {
 
 // A video URL that makes the browser paint its first frame as a thumbnail.
 const videoThumb = (url) => (url ? `${url}${url.includes("#") ? "" : "#t=0.1"}` : url);
+
+// ---- Video covers ----
+// A grid that shows a black square for every video is useless, so Loop
+// takes a real picture out of the video and keeps it. grabVideoFrame
+// winds a hidden player to one moment and paints that frame onto a
+// canvas; the result is an ordinary JPEG we can store and show as an
+// <img>, which is far lighter for everyone than loading the video.
+function grabVideoFrame(src, atSeconds = 0.1) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    let done = false;
+    const finish = (fn, arg) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      v.removeAttribute("src");
+      try {
+        v.load();
+      } catch {}
+      fn(arg);
+    };
+    const timer = setTimeout(() => finish(reject, new Error("That took too long")), 15000);
+    v.crossOrigin = "anonymous";
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "auto";
+    v.onerror = () => finish(reject, new Error("Loop couldn't read that video"));
+    v.onloadeddata = () => {
+      const want = Math.min(Math.max(atSeconds, 0), Math.max((v.duration || 1) - 0.05, 0));
+      if (Math.abs(v.currentTime - want) < 0.01) v.onseeked();
+      else
+        try {
+          v.currentTime = want;
+        } catch {
+          finish(reject, new Error("Loop couldn't read that video"));
+        }
+    };
+    v.onseeked = () => {
+      try {
+        const c = document.createElement("canvas");
+        const w = v.videoWidth || 720;
+        const h = v.videoHeight || 1280;
+        const scale = Math.min(1, 1080 / Math.max(w, h));
+        c.width = Math.round(w * scale);
+        c.height = Math.round(h * scale);
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        c.toBlob(
+          (b) => (b ? finish(resolve, b) : finish(reject, new Error("Loop couldn't make a picture"))),
+          "image/jpeg",
+          0.82
+        );
+      } catch {
+        // Some browsers refuse to read a frame from another site's video.
+        finish(reject, new Error("This browser won't let Loop read that frame"));
+      }
+    };
+    v.src = src;
+  });
+}
+
+// Put a cover picture in storage and hand back its address.
+async function uploadCoverBlob(blob, userId) {
+  const path = `${userId}/${Date.now()}-cover.jpg`;
+  const { error } = await supabase.storage.from("posts").upload(path, blob, { contentType: "image/jpeg" });
+  if (error) throw error;
+  return supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
+}
+
+// One square in any grid. A saved cover is just a picture, which always
+// shows; without one we fall back to the video wound to its first moment.
+function MediaThumb({ src, cover, isVideo, className = "w-full h-full object-cover", alt = "" }) {
+  if (!isVideo) return <img src={cover || src} alt={alt} loading="lazy" className={className} />;
+  if (cover) return <img src={cover} alt={alt} loading="lazy" className={className} />;
+  return <video src={videoThumb(src)} className={className} muted playsInline preload="metadata" />;
+}
+
+// Covers Loop has already made in this browser session, so a grid never
+// redoes the same work twice.
+const coverMemo = new Map();
+
+// Videos posted before Loop started saving covers show as black squares.
+// The first time their owner opens their own profile, Loop quietly makes
+// the missing pictures and stores them, so from then on everyone sees
+// them — on the profile, in Explore, under a hashtag, in Saved, anywhere.
+// Only the owner ever does this work, and only a few at a time.
+async function healMissingCovers(posts, userId, onFixed) {
+  const todo = (posts || [])
+    .filter((p) => p && p.user_id === userId && !p.cover_url && p.media_url && !isPhotoPost(p))
+    .filter((p) => !coverMemo.has(p.id))
+    .slice(0, 6);
+  for (const post of todo) {
+    coverMemo.set(post.id, "working");
+    try {
+      const blob = await grabVideoFrame(post.media_url, 0.1);
+      const url = await uploadCoverBlob(blob, userId);
+      const { error } = await supabase.from("posts").update({ cover_url: url }).eq("id", post.id).eq("user_id", userId);
+      if (error) continue;
+      coverMemo.set(post.id, url);
+      onFixed?.(post.id, url);
+    } catch {
+      // Leave it as it was; the video still plays, it just stays plain.
+    }
+  }
+}
 
 function LoopLogo({ size = 72 }) {
   const [failed, setFailed] = useState(false);
@@ -936,13 +1040,14 @@ function PollBlock({ postId, currentUserId }) {
 // Bottom sheet for the post owner to change per-post visibility settings
 // after publishing (opened from the Edit option in their own Profile grid)
 function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
-  const [view, setView] = useState("menu"); // "menu" | "edit"
+  const [view, setView] = useState("menu"); // "menu" | "edit" | "cover"
   const [busyField, setBusyField] = useState(null);
   const [menuError, setMenuError] = useState("");
   const [editCaption, setEditCaption] = useState(post.caption || "");
   const [editLocation, setEditLocation] = useState(post.location || "");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState("");
+  const [localCover, setLocalCover] = useState(post.cover_url || null);
 
   const patchPost = async (patch) => {
     const field = Object.keys(patch)[0];
@@ -1024,7 +1129,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
         </div>
         <div className="flex items-center justify-between px-4 pb-2">
           <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>
-            {view === "edit" ? "Edit" : "Post options"}
+            {view === "edit" ? "Edit" : view === "cover" ? "Cover" : "Post options"}
           </span>
           <button onClick={onClose}><X size={18} color="var(--text-muted)" /></button>
         </div>
@@ -1093,6 +1198,14 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
               onClick={() => toggleField("archived", !!post.archived)}
               busy={busyField === "archived"}
             />
+            {!isPhotoPost(post) && (
+              <MenuRow
+                icon={<ImageIcon size={16} color="var(--text)" />}
+                label={busyField === "cover_url" ? "Changing cover…" : "Change cover"}
+                onClick={() => setView("cover")}
+                busy={busyField === "cover_url"}
+              />
+            )}
             <MenuRow icon={<Pencil size={16} color="var(--text)" />} label="Edit" onClick={() => setView("edit")} />
             <MenuRow
               icon={<Crop size={16} color="var(--text)" />}
@@ -1102,6 +1215,44 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
 
             <div className="h-px my-1.5" style={{ background: "var(--border)" }} />
             <MenuRow icon={<Trash2 size={16} color="var(--accent-start)" />} label="Delete" onClick={handleDelete} danger />
+          </div>
+        ) : view === "cover" ? (
+          <div className="px-4 pb-6">
+            <p className="text-[12px] mb-3" style={{ color: "var(--text-muted)" }}>
+              This is the picture people see before the video plays — on your profile, in Explore and everywhere else.
+            </p>
+            <CoverPicker
+              videoUrl={post.media_url}
+              coverUrl={localCover}
+              label="Video cover"
+              onPick={async (f) => {
+                setBusyField("cover_url");
+                setMenuError("");
+                try {
+                  const {
+                    data: { user },
+                  } = await supabase.auth.getUser();
+                  const small = await compressImage(f, 1080);
+                  const url = await uploadCoverBlob(small, user.id);
+                  const { error } = await supabase.from("posts").update({ cover_url: url }).eq("id", post.id);
+                  if (error) throw error;
+                  setLocalCover(url);
+                  onSaved?.({ cover_url: url });
+                  setView("menu");
+                } catch (e) {
+                  setMenuError(e?.message || "That cover didn't save");
+                }
+                setBusyField(null);
+              }}
+            />
+            {menuError && <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>{menuError}</p>}
+            <button
+              onClick={() => setView("menu")}
+              className="w-full rounded-xl py-2.5 text-sm"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+            >
+              Back
+            </button>
           </div>
         ) : (
           <div className="px-4 pb-6">
@@ -4778,7 +4929,6 @@ function ReelCommentsSheet({
   const attachRef = React.useRef(null);
   const inputRef = React.useRef(null);
   const [expanded, setExpanded] = useState(new Set()); // threads with replies open
-  const [historyFor, setHistoryFor] = useState(null);
   const [showHidden, setShowHidden] = useState(false);
   const [followsOwner, setFollowsOwner] = useState(null); // null = unknown/self
   useEffect(() => {
@@ -5002,30 +5152,34 @@ function ReelCommentsSheet({
       setEditingId(null);
       return;
     }
+    const before = comment.content;
+    // Show the new words straight away, then put them back if the save fails.
     setEditingId(null);
-    // Keep the previous words first, so "View edit history" always has them.
-    const { error: histErr } = await supabase
-      .from("comment_edits")
-      .insert({ comment_id: comment.id, old_content: comment.content || "" });
+    setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: trimmed, edited_at: new Date().toISOString() } : c)));
+
     const { data: saved, error } = await supabase
       .from("comments")
       .update({ content: trimmed })
       .eq("id", comment.id)
+      .eq("user_id", currentUserId)
       .select("id, content, edited_at")
       .maybeSingle();
+
     if (error || !saved) {
+      setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: before, edited_at: comment.edited_at } : c)));
+      setEditText(trimmed);
+      setEditingId(comment.id);
       alert(
         error?.message?.includes("15 minutes")
           ? "Comments can only be edited within 15 minutes of posting."
-          : error?.message || "That edit didn't save."
+          : error?.message ||
+            "Loop couldn't save that edit. Your account doesn't have permission to change this comment yet — run the latest Loop SQL in Supabase and try again."
       );
       return;
     }
-    setComments((prev) => prev.map((c) => (c.id === comment.id ? { ...c, content: saved.content, edited_at: saved.edited_at || new Date().toISOString() } : c)));
-    if (histErr) {
-      // The edit itself went through; only the history entry didn't.
-      console.warn("Couldn't keep the edit history:", histErr.message);
-    }
+    setComments((prev) =>
+      prev.map((c) => (c.id === comment.id ? { ...c, content: saved.content, edited_at: saved.edited_at || new Date().toISOString() } : c))
+    );
   };
 
   const copyComment = (comment) => {
@@ -5165,7 +5319,6 @@ function ReelCommentsSheet({
                   onOpenProfile?.(x.user_id);
                 },
                 onMention: openProfileByName,
-                onShowHistory: () => setHistoryFor(x),
               });
               return (
                 <div key={c.id} className="mb-4">
@@ -5230,16 +5383,10 @@ function ReelCommentsSheet({
               onEdit={() => startEdit(mc)}
               onDelete={() => deleteComment(mc)}
               onReport={() => reportComment(mc)}
-              onShowHistory={() => {
-                setMenuFor(null);
-                setHistoryFor(mc);
-              }}
               onPin={postOwnerId === currentUserId && !mc.parent_id ? () => togglePin(mc) : null}
             />
           );
         })()}
-
-        {historyFor && <CommentHistorySheet comment={historyFor} onClose={() => setHistoryFor(null)} />}
 
         <div className="px-4 pt-2 pb-4" style={{ borderTop: "1px solid var(--border)" }}>
           {commentsDisabled ? (
@@ -5462,7 +5609,6 @@ function CommentRow({
   onOpenMenu,
   onOpenProfile,
   onMention,
-  onShowHistory,
 }) {
   const pressTimer = React.useRef(null);
   const startPress = () => {
@@ -5490,9 +5636,7 @@ function CommentRow({
           <button onClick={onOpenProfile} className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>{comment.username}</button>
           <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{timeAgo(comment.created_at)}</span>
           {comment.edited_at && (
-            <button onClick={onShowHistory} className="text-[11px] underline-offset-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
-              · Edited
-            </button>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>· Edited</span>
           )}
           {isPinned && (
             <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--border)", color: "var(--text-muted)", fontWeight: 600 }}>Author</span>
@@ -5507,7 +5651,18 @@ function CommentRow({
         {isEditing ? (
           <div className="mt-1">
             <textarea
-              autoFocus
+              ref={(el) => {
+                // Put the cursor after the last letter, the way a real
+                // message box does — not in front of the first one.
+                if (!el || el.dataset.caretSet === "1") return;
+                el.dataset.caretSet = "1";
+                const end = el.value.length;
+                el.focus();
+                try {
+                  el.setSelectionRange(end, end);
+                } catch {}
+                el.scrollTop = el.scrollHeight;
+              }}
               value={editText}
               onChange={(e) => onEditTextChange(e.target.value)}
               rows={2}
@@ -5578,77 +5733,7 @@ function CommentRow({
 }
 
 // Long-press sheet for a comment.
-// Every earlier version of an edited comment, oldest first, then the
-// current text.
-function CommentHistorySheet({ comment, onClose }) {
-  const [rows, setRows] = useState(null);
-  const [loadErr, setLoadErr] = useState("");
-  useEffect(() => {
-    supabase
-      .from("comment_edits")
-      .select("old_content, edited_at")
-      .eq("comment_id", comment.id)
-      .order("edited_at", { ascending: true })
-      .then(({ data, error }) => {
-        if (error) setLoadErr(error.message);
-        setRows(error ? [] : data || []);
-      });
-  }, [comment.id]);
-  const fmt = (d) => new Date(d).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  // Version n was written at: created_at for the first, then each edit time.
-  const versions =
-    rows === null
-      ? []
-      : [
-          ...rows.map((r, i) => ({ text: r.old_content, at: i === 0 ? comment.created_at : rows[i - 1].edited_at, label: i === 0 ? "Original" : `Edit ${i}` })),
-          { text: comment.content, at: rows.length ? rows[rows.length - 1].edited_at : comment.edited_at, label: "Current", current: true },
-        ];
-  return (
-    <StorySheetShell title="Edit history" onClose={onClose}>
-      <div className="px-4 pb-6">
-        {rows === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
-        ) : loadErr ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--heart)" }}>Couldn't load the history: {loadErr}</p>
-        ) : rows.length === 0 ? (
-          <>
-            <div className="rounded-2xl px-3 py-2.5 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px]" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>Current</span>
-                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmt(comment.edited_at || comment.created_at)}</span>
-              </div>
-              <p className="text-[13px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{comment.content || "—"}</p>
-            </div>
-            <div className="rounded-2xl px-3 py-2.5" style={{ border: "1px dashed var(--border)" }}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px]" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Original</span>
-                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmt(comment.created_at)}</span>
-              </div>
-              <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                The earlier words weren't kept for this one. Edits made from now on are.
-              </p>
-            </div>
-          </>
-        ) : (
-          versions
-            .slice()
-            .reverse()
-            .map((v, i) => (
-              <div key={i} className="rounded-2xl px-3 py-2.5 mb-2" style={{ background: v.current ? "var(--surface)" : "transparent", border: "1px solid var(--border)" }}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px]" style={{ color: v.current ? "var(--accent-solid)" : "var(--text-muted)", fontWeight: 700 }}>{v.label}</span>
-                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{fmt(v.at)}</span>
-                </div>
-                <p className="text-[13px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{v.text || "—"}</p>
-              </div>
-            ))
-        )}
-      </div>
-    </StorySheetShell>
-  );
-}
-
-function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport, onShowHistory, onPin }) {
+function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport, onPin }) {
   const editable = isOwn && canEditComment(comment);
   return (
     <StorySheetShell title="Comment" onClose={onClose}>
@@ -5664,7 +5749,6 @@ function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onC
         <StoryMenuRow icon={<MessageCircle size={17} color="var(--text)" />} label="Reply" onClick={onReply} />
         {onPin && <StoryMenuRow icon={<Pin size={17} color="var(--text)" />} label={comment.pinned_at ? "Unpin comment" : "Pin comment"} onClick={onPin} />}
         {comment.content && <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy text" onClick={onCopy} />}
-        {comment.edited_at && <StoryMenuRow icon={<History size={17} color="var(--text)" />} label="View edit history" onClick={onShowHistory} />}
         {isOwn && (
           <StoryMenuRow
             icon={<Pencil size={17} color={editable ? "var(--text)" : "var(--text-muted)"} />}
@@ -5730,7 +5814,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
     setExploreLoading(true);
     const { data } = await supabase
       .from("posts")
-      .select("id, user_id, media_url, media_type, media_count, caption, created_at")
+      .select("id, user_id, media_url, media_type, media_count, caption, created_at, cover_url")
       .eq("archived", false)
       .order("created_at", { ascending: false })
       .limit(48);
@@ -5907,11 +5991,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
               className="aspect-square relative overflow-hidden"
               style={{ background: "var(--bg-sunken)" }}
             >
-              {isPhotoPost(p) ? (
-                <img src={p.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
-              ) : (
-                <video src={videoThumb(p.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-              )}
+              <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />
               {p.media_count > 1 ? (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                   <Layers size={13} color="#FFFFFF" />
@@ -6114,6 +6194,137 @@ function CaptionBox({ value, onChange, placeholder, rows = 3 }) {
   );
 }
 
+// Pick the picture people see before a video plays: slide along the
+// video and take that moment, or use a picture from the gallery.
+function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover" }) {
+  const [duration, setDuration] = useState(0);
+  const [at, setAt] = useState(0.1);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [open, setOpen] = useState(false);
+  const fileRef = React.useRef(null);
+  const previewRef = React.useRef(null);
+
+  const takeFrame = async () => {
+    setBusy(true);
+    setNote("");
+    try {
+      const blob = await grabVideoFrame(videoUrl, at);
+      onPick(new File([blob], "cover.jpg", { type: "image/jpeg" }));
+      setOpen(false);
+    } catch (e) {
+      setNote(e?.message || "Loop couldn't take that frame — pick a picture instead");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="rounded-xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) {
+            onPick(f);
+            setOpen(false);
+          }
+        }}
+      />
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <div className="rounded-lg overflow-hidden shrink-0" style={{ width: 44, height: 58, background: "var(--bg-sunken)" }}>
+          {coverUrl ? (
+            <img src={coverUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <video src={videoThumb(videoUrl)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{label}</p>
+          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {coverUrl ? "Your own picture" : "The video's first moment"}
+          </p>
+        </div>
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="rounded-lg px-3 h-8 text-xs shrink-0"
+          style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
+        >
+          {open ? "Done" : "Change"}
+        </button>
+        {coverUrl && onClear && (
+          <button onClick={onClear} aria-label="Remove cover" className="shrink-0">
+            <X size={15} color="var(--text-muted)" />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="px-3 pb-3" style={{ borderTop: "1px solid var(--border)" }}>
+          <div className="rounded-xl overflow-hidden mt-3 mx-auto" style={{ width: 150, aspectRatio: "9 / 16", background: "#000" }}>
+            <video
+              ref={previewRef}
+              src={videoUrl}
+              muted
+              playsInline
+              preload="auto"
+              className="w-full h-full object-cover"
+              onLoadedMetadata={(e) => {
+                setDuration(e.currentTarget.duration || 0);
+                e.currentTarget.currentTime = 0.1;
+              }}
+            />
+          </div>
+
+          <input
+            type="range"
+            min={0}
+            max={Math.max(duration - 0.05, 0.1)}
+            step={0.05}
+            value={at}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setAt(v);
+              if (previewRef.current) {
+                try {
+                  previewRef.current.currentTime = v;
+                } catch {}
+              }
+            }}
+            className="w-full mt-3"
+            style={{ accentColor: "var(--accent-solid)" }}
+          />
+          <p className="text-[11px] text-center" style={{ color: "var(--text-muted)" }}>
+            Slide to the moment you want · {at.toFixed(1)}s
+          </p>
+
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={takeFrame}
+              disabled={busy}
+              className="flex-1 rounded-lg h-9 text-xs"
+              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+            >
+              {busy ? "Taking…" : "Use this moment"}
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="flex-1 rounded-lg h-9 text-xs"
+              style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
+            >
+              From gallery
+            </button>
+          </div>
+          {note && <p className="text-[11px] mt-2 text-center" style={{ color: "var(--heart)" }}>{note}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Tag people: search by username, pick from the list, shown as chips.
 function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint }) {
   const [q, setQ] = useState("");
@@ -6239,9 +6450,16 @@ function UploadScreen({ initialMode = "photo" }) {
   const [collabPeople, setCollabPeople] = useState([]); // invited collaborators (max 3)
   const [aspect, setAspect] = useState("4:5");
   const [linkUrl, setLinkUrl] = useState("");
-  const [coverFile, setCoverFile] = useState(null); // custom reel cover
+  const [coverFile, setCoverFile] = useState(null); // the picture shown before the video plays
   const [coverUrl, setCoverUrl] = useState(null); // its preview
-  const coverInputRef = React.useRef(null);
+  // A single video — in Reel mode or as a one-video post — gets a cover
+  // picture. A carousel or a photo doesn't need one.
+  const videoForCover =
+    mode === "reel"
+      ? previewUrl
+      : items.length === 1 && items[0]?.type === "video"
+      ? items[0].url
+      : null;
   const [pollEnabled, setPollEnabled] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
   const [pollOptions, setPollOptions] = useState(["", ""]);
@@ -6507,13 +6725,22 @@ function UploadScreen({ initialMode = "photo" }) {
     let customCover = null;
     let carouselUploads = null; // set only when items.length > 1
 
-    if (mode === "reel") {
-      if (coverFile) {
-        const small = await compressImage(coverFile, 1080);
-        const coverPath = `${user.id}/${Date.now()}-cover-${small.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-        const { error: coverErr } = await supabase.storage.from("posts").upload(coverPath, small);
-        if (!coverErr) customCover = supabase.storage.from("posts").getPublicUrl(coverPath).data.publicUrl;
+    // Every video gets a cover picture. If you picked one, that's used;
+    // if not, Loop quietly takes the video's own first moment, so the
+    // grid never shows a black square.
+    if (videoForCover) {
+      try {
+        let coverBlob = coverFile;
+        if (!coverBlob) coverBlob = await grabVideoFrame(videoForCover, 0.1);
+        const small = coverBlob instanceof File ? await compressImage(coverBlob, 1080) : coverBlob;
+        customCover = await uploadCoverBlob(small, user.id);
+      } catch (e) {
+        // A missing cover is never a reason to lose the post.
+        customCover = null;
       }
+    }
+
+    if (mode === "reel") {
       const filePath = `${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const { error: uploadError } = await supabase.storage.from("posts").upload(filePath, file);
       if (uploadError) {
@@ -6898,58 +7125,21 @@ function UploadScreen({ initialMode = "photo" }) {
           </div>
         )}
 
-        {mode === "reel" && file && (
-          <div className="rounded-xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <input
-              ref={coverInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = "";
-                if (!f) return;
-                if (coverUrl) URL.revokeObjectURL(coverUrl);
-                setCoverFile(f);
-                setCoverUrl(URL.createObjectURL(f));
-              }}
-            />
-            <div className="flex items-center gap-3 px-3 py-2.5">
-              <div className="rounded-lg overflow-hidden shrink-0" style={{ width: 44, height: 58, background: "var(--bg-sunken)" }}>
-                {coverUrl ? (
-                  <img src={coverUrl} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <video src={videoThumb(previewUrl)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Cover</p>
-                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  {coverUrl ? "Your own picture" : "The video's first moment"}
-                </p>
-              </div>
-              <button
-                onClick={() => coverInputRef.current?.click()}
-                className="rounded-lg px-3 h-8 text-xs shrink-0"
-                style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
-              >
-                {coverUrl ? "Change" : "Choose"}
-              </button>
-              {coverUrl && (
-                <button
-                  onClick={() => {
-                    URL.revokeObjectURL(coverUrl);
-                    setCoverFile(null);
-                    setCoverUrl(null);
-                  }}
-                  aria-label="Remove cover"
-                  className="shrink-0"
-                >
-                  <X size={15} color="var(--text-muted)" />
-                </button>
-              )}
-            </div>
-          </div>
+        {videoForCover && (
+          <CoverPicker
+            videoUrl={videoForCover}
+            coverUrl={coverUrl}
+            onPick={(f) => {
+              if (coverUrl) URL.revokeObjectURL(coverUrl);
+              setCoverFile(f);
+              setCoverUrl(URL.createObjectURL(f));
+            }}
+            onClear={() => {
+              URL.revokeObjectURL(coverUrl);
+              setCoverFile(null);
+              setCoverUrl(null);
+            }}
+          />
         )}
 
         <CaptionBox value={caption} onChange={setCaption} placeholder="Write a caption..." />
@@ -7538,6 +7728,14 @@ function SettingsScreen({
   const [newEmail, setNewEmail] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
+  // The email and phone this account logs in with.
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPhone, setLoginPhone] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [phoneCode, setPhoneCode] = useState("");
+  const [phoneStep, setPhoneStep] = useState("number"); // "number" | "code"
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const [phoneMsg, setPhoneMsg] = useState("");
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -7626,6 +7824,56 @@ function SettingsScreen({
     setAvatarFile(null);
     setAvatarPreview(null);
     setView("menu");
+  };
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setLoginEmail(data?.user?.email || "");
+      setLoginPhone(data?.user?.phone || "");
+    });
+  }, []);
+
+  // Sending the code is step one; typing it back is what actually
+  // changes the number, so a wrong number can never take over an account.
+  const startPhoneChange = async () => {
+    const value = newPhone.trim();
+    setPhoneMsg("");
+    if (!/^\+[0-9]{8,15}$/.test(value)) {
+      setPhoneMsg("Write the number with its country code, like +8801712345678");
+      return;
+    }
+    setPhoneBusy(true);
+    const { error } = await supabase.auth.updateUser({ phone: value });
+    setPhoneBusy(false);
+    if (error) {
+      setPhoneMsg(
+        /sms|provider|not enabled|unsupported|disabled/i.test(error.message)
+          ? "Loop can't send SMS yet — text messages need an SMS service connected to the project. Your email still works for logging in and for resets."
+          : error.message
+      );
+      return;
+    }
+    setPhoneStep("code");
+    setPhoneMsg("");
+  };
+
+  const confirmPhone = async () => {
+    setPhoneBusy(true);
+    setPhoneMsg("");
+    const { error } = await supabase.auth.verifyOtp({
+      phone: newPhone.trim(),
+      token: phoneCode.trim(),
+      type: "phone_change",
+    });
+    setPhoneBusy(false);
+    if (error) {
+      setPhoneMsg(error.message);
+      return;
+    }
+    setLoginPhone(newPhone.trim());
+    setPhoneCode("");
+    setPhoneStep("number");
+    setPhoneMsg("That's your number now.");
   };
 
   const changeEmail = async () => {
@@ -7755,8 +8003,15 @@ function SettingsScreen({
   if (view === "changeEmail") {
     return (
       <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
-        <Header title="Change Email" back={() => setView("menu")} />
+        <Header title="Email address" back={() => setView("security")} />
         <div className="px-4 pt-5">
+          <div className="rounded-xl px-3 py-2.5 mb-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>You log in with</p>
+            <p className="text-sm mt-0.5 break-all" style={{ color: "var(--text)", fontWeight: 600 }}>
+              {loginEmail || "No email on this account"}
+            </p>
+          </div>
+
           <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>New email address</label>
           <input
             type="email"
@@ -7775,8 +8030,91 @@ function SettingsScreen({
             className="w-full rounded-xl py-3 text-sm"
             style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: emailBusy ? 0.6 : 1 }}
           >
-            {emailBusy ? "Sending..." : "Update Email"}
+            {emailBusy ? "Sending..." : "Send confirmation link"}
           </button>
+          <p className="text-[11px] mt-3" style={{ color: "var(--text-muted)" }}>
+            Loop sends a link to the new address. The change only happens once you open that link, so a typo can't lock you out.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "changePhone") {
+    return (
+      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+        <Header title="Phone number" back={() => setView("security")} />
+        <div className="px-4 pt-5">
+          <div className="rounded-xl px-3 py-2.5 mb-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>On this account</p>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text)", fontWeight: 600 }}>
+              {loginPhone || "No phone number yet"}
+            </p>
+          </div>
+
+          {phoneStep === "code" ? (
+            <>
+              <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>The 6-digit code sent to {newPhone}</label>
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={phoneCode}
+                onChange={(e) => setPhoneCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+                placeholder="123456"
+                className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none tracking-[0.3em]"
+                style={inputStyle}
+              />
+              {phoneMsg && (
+                <p className="text-xs mb-3" style={{ color: phoneMsg.includes("now") ? "var(--text-muted)" : "var(--accent-start)" }}>{phoneMsg}</p>
+              )}
+              <button
+                onClick={confirmPhone}
+                disabled={phoneBusy || phoneCode.length < 4}
+                className="w-full rounded-xl py-3 text-sm"
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: phoneBusy || phoneCode.length < 4 ? 0.6 : 1 }}
+              >
+                {phoneBusy ? "Checking..." : "Confirm"}
+              </button>
+              <button
+                onClick={() => {
+                  setPhoneStep("number");
+                  setPhoneCode("");
+                  setPhoneMsg("");
+                }}
+                className="w-full py-3 text-xs"
+                style={{ color: "var(--text-muted)", fontWeight: 600 }}
+              >
+                Use a different number
+              </button>
+            </>
+          ) : (
+            <>
+              <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>New phone number</label>
+              <input
+                type="tel"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                placeholder="+8801XXXXXXXXX"
+                className="w-full rounded-xl px-3 py-2.5 text-sm mt-1 mb-3 outline-none"
+                style={inputStyle}
+              />
+              {phoneMsg && (
+                <p className="text-xs mb-3" style={{ color: "var(--accent-start)" }}>{phoneMsg}</p>
+              )}
+              <button
+                onClick={startPhoneChange}
+                disabled={phoneBusy}
+                className="w-full rounded-xl py-3 text-sm"
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: phoneBusy ? 0.6 : 1 }}
+              >
+                {phoneBusy ? "Sending..." : "Send code by SMS"}
+              </button>
+              <p className="text-[11px] mt-3" style={{ color: "var(--text-muted)" }}>
+                Start with the country code, like +880 for Bangladesh. Loop texts a 6-digit code to that number and the change
+                only happens once you type it in.
+              </p>
+            </>
+          )}
         </div>
       </div>
     );
@@ -8038,7 +8376,15 @@ function SettingsScreen({
     await supabase.auth.signOut();
   };
 
-  if (view === "security") return <SecurityScreen onBack={() => setView("menu")} onChangePassword={() => setView("changePassword")} />;
+  if (view === "security")
+    return (
+      <SecurityScreen
+        onBack={() => setView("menu")}
+        onChangePassword={() => setView("changePassword")}
+        onChangeEmail={() => setView("changeEmail")}
+        onChangePhone={() => setView("changePhone")}
+      />
+    );
   if (view === "time") return <TimeManagementScreen onBack={() => setView("menu")} />;
   if (view === "status") return <AccountStatusScreen onBack={() => setView("menu")} />;
   if (view === "favourites") return <FavouritesScreen onBack={() => setView("menu")} />;
@@ -8161,7 +8507,6 @@ function SettingsScreen({
       rows: [
         { icon: CircleUserRound, label: "Edit profile", onClick: () => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile")) },
         { icon: KeyRound, label: "Password and security", onClick: () => setView("security") },
-        { icon: Mail, label: "Email address", onClick: () => setView("changeEmail") },
         { icon: Shield, label: "Account status", onClick: () => setView("status") },
       ],
     },
@@ -8314,7 +8659,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
     const { data: p, error } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count, aspect_ratio, link_url")
+      .select("id, media_url, media_type, media_count, caption, location, user_id, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, views_count, aspect_ratio, link_url, cover_url")
       .eq("id", postId)
       .single();
 
@@ -8741,7 +9086,7 @@ function LockScreen({ onUnlock, onForget }) {
 }
 
 // Settings → Password and security.
-function SecurityScreen({ onBack, onChangePassword }) {
+function SecurityScreen({ onBack, onChangePassword, onChangeEmail, onChangePhone }) {
   const [account, setAccount] = useState(null);
   const [unlock, setUnlock] = useState(readQuickUnlock);
   const [busy, setBusy] = useState(false);
@@ -8813,17 +9158,20 @@ function SecurityScreen({ onBack, onChangePassword }) {
         <Row
           icon={Mail}
           label="Email address"
-          value={account ? account.email || "No email on this account" : "…"}
+          value={account ? account.email || "No email on this account — tap to add one" : "…"}
+          onClick={onChangeEmail}
         />
         <Row
           icon={Phone}
           label="Phone number"
-          value={account ? account.phone || "No phone on this account" : "…"}
+          value={account ? account.phone || "No phone on this account — tap to add one" : "…"}
+          onClick={onChangePhone}
         />
       </div>
       <p className="px-4 pt-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
-        This is what you type to log in, and where a reset link is sent. It isn't shown on your profile — the contact details
-        people can see live in Edit profile.
+        This is what you type to log in, and where a reset link or code is sent. Tap either one to change it: the email gets a
+        confirmation link, the phone gets a code by SMS. Neither is shown on your profile — the contact details people can see
+        live in Edit profile.
       </p>
 
       <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Security</p>
@@ -9024,7 +9372,7 @@ function AccountStatusScreen({ onBack }) {
       } = await supabase.auth.getUser();
       if (!user) return;
       const [{ data: removed }, { data: ban }] = await Promise.all([
-        supabase.from("posts").select("id, media_url, media_type, removed_at, removed_reason").eq("user_id", user.id).not("removed_at", "is", null).order("removed_at", { ascending: false }),
+        supabase.from("posts").select("id, media_url, media_type, removed_at, removed_reason, cover_url").eq("user_id", user.id).not("removed_at", "is", null).order("removed_at", { ascending: false }),
         supabase.from("user_bans").select("until, reason").eq("user_id", user.id).maybeSingle(),
       ]);
       const activeBan = ban && (!ban.until || new Date(ban.until).getTime() > Date.now()) ? ban : null;
@@ -9085,11 +9433,7 @@ function AccountStatusScreen({ onBack }) {
               {state.removed.map((rp) => (
                 <div key={rp.id} className="flex items-center gap-3 py-2">
                   <div className="w-14 h-14 rounded-lg overflow-hidden shrink-0" style={{ background: "var(--surface)" }}>
-                    {isPhotoPost(rp) ? (
-                      <img src={rp.media_url} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <video src={videoThumb(rp.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-                    )}
+                    <MediaThumb src={rp.media_url} cover={rp.cover_url} isVideo={!isPhotoPost(rp)} />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{rp.removed_reason || "Community Guidelines"}</p>
@@ -9287,7 +9631,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
     }
     const { data: rows } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, created_at")
+      .select("id, media_url, media_type, media_count, created_at, cover_url")
       .in("id", ids)
       .order("created_at", { ascending: false });
     setItems(rows || []);
@@ -9428,7 +9772,7 @@ function ArchiveScreen({ currentUserId, onBack, onOpenPost }) {
     (async () => {
       const { data: p, error: pe } = await supabase
         .from("posts")
-      .select("id, media_url, media_type, media_count, created_at")
+      .select("id, media_url, media_type, media_count, created_at, cover_url")
         .eq("user_id", currentUserId)
         .eq("archived", true)
         .order("created_at", { ascending: false });
@@ -9628,11 +9972,10 @@ const QR_CARD_COLOURS = [
   ["#8E2DE2", "#4A00E0"],
   ["#006A4E", "#F42A41"],
 ];
-function ProfileQRScreen({ profile, onBack }) {
+function QRCardScreen({ title, caption, link, fileName, onBack }) {
   const [qr, setQr] = useState("");
   const [colour, setColour] = useState(0);
   const [note, setNote] = useState("");
-  const link = `${window.location.origin}/u/${profile.username}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -9653,7 +9996,7 @@ function ProfileQRScreen({ profile, onBack }) {
     if (!qr) return;
     const a = document.createElement("a");
     a.href = qr;
-    a.download = `loop-${profile.username}-qr.png`;
+    a.download = `${fileName || "loop"}-qr.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -9667,7 +10010,7 @@ function ProfileQRScreen({ profile, onBack }) {
         <button onClick={onBack} aria-label="Back">
           <ChevronLeft size={24} color="#FFFFFF" />
         </button>
-        <span className="text-[16px] flex-1" style={{ color: "#FFFFFF", fontWeight: 700 }}>QR code</span>
+        <span className="text-[16px] flex-1 truncate" style={{ color: "#FFFFFF", fontWeight: 700 }}>{title || "QR code"}</span>
         <button onClick={download} aria-label="Save">
           <Download size={21} color="#FFFFFF" />
         </button>
@@ -9685,16 +10028,28 @@ function ProfileQRScreen({ profile, onBack }) {
               <span className="text-xs" style={{ color: "#666" }}>Generating…</span>
             </div>
           )}
-          <span className="text-[15px] mt-3" style={{ color: "#111", fontWeight: 800 }}>@{profile.username}</span>
+          <span className="text-[15px] mt-3 text-center" style={{ color: "#111", fontWeight: 800 }}>{caption}</span>
         </div>
         <span className="text-[12px] mt-5" style={{ color: "rgba(255,255,255,0.85)" }}>Tap to change the colour</span>
-        <span className="text-[12px] mt-1" style={{ color: "rgba(255,255,255,0.7)" }}>Scan this to open the profile</span>
+        <span className="text-[12px] mt-1" style={{ color: "rgba(255,255,255,0.7)" }}>Scan this to open it in Loop</span>
       </button>
 
       {note && (
         <p className="text-center text-xs pb-3" style={{ color: "#FFFFFF", fontWeight: 600 }}>{note}</p>
       )}
     </div>
+  );
+}
+
+function ProfileQRScreen({ profile, onBack }) {
+  return (
+    <QRCardScreen
+      title="QR code"
+      caption={`@${profile.username}`}
+      link={`${window.location.origin}/u/${profile.username}`}
+      fileName={`loop-${profile.username}`}
+      onBack={onBack}
+    />
   );
 }
 
@@ -10076,6 +10431,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [avatarVideoUrl, setAvatarVideoUrl] = useState(null);
   const [birthday, setBirthday] = useState("");
+  const [birthdayPublic, setBirthdayPublic] = useState(false);
   const [contactEmail, setContactEmail] = useState("");
   const [emailPublic, setEmailPublic] = useState(false);
   const [phonePublic, setPhonePublic] = useState(false);
@@ -10119,10 +10475,13 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         // Birthday lives in its own owner-only table so nobody else can read it.
         supabase
           .from("profile_private")
-          .select("birthday")
+          .select("birthday, birthday_public")
           .eq("user_id", currentUserId)
           .maybeSingle()
-          .then(({ data: priv }) => setBirthday(priv?.birthday || ""));
+          .then(({ data: priv }) => {
+            setBirthday(priv?.birthday || "");
+            setBirthdayPublic(!!priv?.birthday_public);
+          });
         setGender(data.gender || null);
         setLinks(Array.isArray(data.links) ? data.links : []);
       }
@@ -10268,7 +10627,10 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
 
     const { error: privErr } = await supabase
       .from("profile_private")
-      .upsert({ user_id: currentUserId, birthday: birthday || null }, { onConflict: "user_id" });
+      .upsert(
+        { user_id: currentUserId, birthday: birthday || null, birthday_public: birthday ? birthdayPublic : false },
+        { onConflict: "user_id" }
+      );
     setSaving(false);
     if (privErr) {
       setError(`Saved, but the birthday didn't: ${privErr.message}`);
@@ -10509,8 +10871,17 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
           className="w-full rounded-2xl px-4 h-12 text-sm outline-none"
           style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", colorScheme: "dark light" }}
         />
+        {birthday !== "" && (
+          <div className="rounded-2xl mt-1.5 py-2" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <VisibilityPicker value={birthdayPublic} onChange={setBirthdayPublic} />
+          </div>
+        )}
         <p className="text-[11px] mt-1 mb-4" style={{ color: "var(--text-muted)" }}>
-          Private — it won't appear on your profile.
+          {birthday === ""
+            ? "Loop uses this to check your age. It never appears on your profile unless you turn it on."
+            : birthdayPublic
+            ? "Shown on your profile as a day and month — the year stays private."
+            : "Only you can see this."}
         </p>
 
         <div className="flex items-center justify-between mb-1.5">
@@ -10564,7 +10935,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
       }
       const { data: rows, error: err } = await supabase
         .from("posts")
-        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, aspect_ratio, removed_at, removed_reason, link_url")
+        .select("id, user_id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, aspect_ratio, removed_at, removed_reason, link_url, cover_url")
         .in("id", postIds);
 
       if (err) {
@@ -10941,23 +11312,313 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
   );
 }
 
+// ---- Edit a highlight ----
+// Instagram's "Edit" screen: change the cover, rename it, and tick
+// stories in or out — Selected shows what's in it now, Stories shows
+// everything you've ever posted.
+function EditHighlightScreen({ highlight, currentUserId, onClose, onSaved }) {
+  const [title, setTitle] = useState(highlight.title || "");
+  const [stories, setStories] = useState([]);
+  const [picked, setPicked] = useState([]);
+  const [tab, setTab] = useState("selected");
+  const [cover, setCover] = useState(highlight.cover_url || null);
+  const [coverSheet, setCoverSheet] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const coverInput = React.useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      const [{ data: mine }, { data: links }] = await Promise.all([
+        supabase
+          .from("stories")
+          .select("id, media_url, media_type, created_at")
+          .eq("user_id", currentUserId || "")
+          .order("created_at", { ascending: false })
+          .limit(200),
+        supabase.from("story_highlight_items").select("story_id").eq("highlight_id", highlight.id),
+      ]);
+      setStories(mine || []);
+      setPicked((links || []).map((l) => l.story_id));
+      setLoading(false);
+    })();
+  }, [highlight.id, currentUserId]);
+
+  const toggle = (id) => setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const useStoryAsCover = async (st) => {
+    setCoverSheet(false);
+    if (st.media_type === "photo") {
+      setCover(st.media_url);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const blob = await grabVideoFrame(st.media_url, 0.1);
+      setCover(await uploadCoverBlob(blob, currentUserId));
+    } catch (e) {
+      setError(e?.message || "Loop couldn't take a picture from that story");
+    }
+    setBusy(false);
+  };
+
+  const useFileAsCover = async (f) => {
+    setCoverSheet(false);
+    setBusy(true);
+    setError("");
+    try {
+      const small = await compressImage(f, 1080);
+      setCover(await uploadCoverBlob(small, currentUserId));
+    } catch (e) {
+      setError(e?.message || "That picture didn't upload");
+    }
+    setBusy(false);
+  };
+
+  const save = async () => {
+    const name = title.trim().slice(0, 30);
+    if (!name) {
+      setError("Give the highlight a name");
+      return;
+    }
+    if (picked.length === 0) {
+      setError("Keep at least one story, or delete the highlight instead");
+      return;
+    }
+    setBusy(true);
+    setError("");
+
+    const { error: upErr } = await supabase
+      .from("story_highlights")
+      .update({ title: name, cover_url: cover })
+      .eq("id", highlight.id);
+    if (upErr) {
+      setBusy(false);
+      setError(upErr.message);
+      return;
+    }
+
+    const { data: links } = await supabase.from("story_highlight_items").select("story_id").eq("highlight_id", highlight.id);
+    const before = (links || []).map((l) => l.story_id);
+    const added = picked.filter((id) => !before.includes(id));
+    const removed = before.filter((id) => !picked.includes(id));
+
+    if (added.length) {
+      const { error: addErr } = await supabase
+        .from("story_highlight_items")
+        .insert(added.map((sid) => ({ highlight_id: highlight.id, story_id: sid })));
+      if (addErr) {
+        setBusy(false);
+        setError(addErr.message);
+        return;
+      }
+    }
+    if (removed.length) {
+      const { error: delErr } = await supabase
+        .from("story_highlight_items")
+        .delete()
+        .eq("highlight_id", highlight.id)
+        .in("story_id", removed);
+      if (delErr) {
+        setBusy(false);
+        setError(delErr.message);
+        return;
+      }
+    }
+    setBusy(false);
+    onSaved({ ...highlight, title: name, cover_url: cover });
+  };
+
+  const list = tab === "selected" ? stories.filter((st) => picked.includes(st.id)) : stories;
+
+  return (
+    <div className="absolute inset-0 z-[79] flex flex-col" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center gap-3 px-4 h-14 shrink-0" style={{ borderBottom: "1px solid var(--border)" }}>
+        <button onClick={onClose} aria-label="Back">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <span className="text-[16px] flex-1" style={{ color: "var(--text)", fontWeight: 700 }}>Edit</span>
+        <button onClick={save} disabled={busy} className="text-[15px]" style={{ color: "var(--accent-solid)", fontWeight: 700, opacity: busy ? 0.5 : 1 }}>
+          {busy ? "Saving…" : "Finished"}
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto pb-8">
+        <input
+          ref={coverInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) useFileAsCover(f);
+          }}
+        />
+
+        <div className="flex flex-col items-center pt-5 pb-4">
+          <div className="rounded-full overflow-hidden flex items-center justify-center" style={{ width: 86, height: 86, background: "var(--surface)", border: "1px solid var(--border)" }}>
+            {cover ? (
+              <img src={cover} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <Star size={26} color="var(--text-muted)" />
+            )}
+          </div>
+          <button onClick={() => setCoverSheet(true)} className="text-[14px] mt-2.5" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
+            Edit cover
+          </button>
+        </div>
+
+        <div className="px-4 pb-4">
+          <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Highlight name</label>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={30}
+            placeholder="Travel, Food, Work…"
+            className="w-full rounded-2xl px-4 h-12 text-sm outline-none"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+          />
+        </div>
+
+        {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
+
+        <div className="flex px-4" style={{ borderBottom: "1px solid var(--border)" }}>
+          {[
+            ["selected", `Selected${picked.length ? ` · ${picked.length}` : ""}`],
+            ["all", "Stories"],
+          ].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className="flex-1 pb-2.5 text-[14px]"
+              style={{
+                color: tab === k ? "var(--text)" : "var(--text-muted)",
+                fontWeight: tab === k ? 700 : 500,
+                borderBottom: tab === k ? "2px solid var(--text)" : "2px solid transparent",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {loading ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : list.length === 0 ? (
+          <p className="text-xs text-center py-10 px-8" style={{ color: "var(--text-muted)" }}>
+            {tab === "selected"
+              ? "Nothing is in this highlight. Open Stories and tap the ones to keep."
+              : "You haven't posted any stories yet."}
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-1.5 px-4 pt-3">
+            {list.map((st) => {
+              const on = picked.includes(st.id);
+              return (
+                <button
+                  key={st.id}
+                  onClick={() => toggle(st.id)}
+                  className="relative overflow-hidden rounded-xl"
+                  style={{ aspectRatio: "9 / 16", background: "var(--bg-sunken)", border: on ? "2px solid var(--accent-solid)" : "1px solid var(--border)" }}
+                >
+                  {st.media_type === "photo" ? (
+                    <img src={st.media_url} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <video src={videoThumb(st.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                  )}
+                  <span
+                    className="absolute bottom-1.5 right-1.5 rounded-full flex items-center justify-center"
+                    style={{ width: 20, height: 20, background: on ? ACCENT : "rgba(0,0,0,0.45)", border: on ? "none" : "1.5px solid rgba(255,255,255,0.85)" }}
+                  >
+                    {on && <Check size={12} color="var(--on-accent)" strokeWidth={3} />}
+                  </span>
+                  <span className="absolute bottom-1.5 left-1.5 text-[9px] px-1 rounded" style={{ background: "rgba(0,0,0,0.5)", color: "#fff" }}>
+                    {new Date(st.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {coverSheet && (
+        <StorySheetShell title="Cover" onClose={() => setCoverSheet(false)}>
+          <div className="pb-6">
+            <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>Pick one of these stories, or use a picture of your own.</p>
+            {picked.length > 0 && (
+              <div className="flex gap-2 px-4 pb-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+                {stories
+                  .filter((st) => picked.includes(st.id))
+                  .map((st) => (
+                    <button
+                      key={st.id}
+                      onClick={() => useStoryAsCover(st)}
+                      className="rounded-xl overflow-hidden shrink-0"
+                      style={{ width: 56, height: 74, border: "1px solid var(--border)" }}
+                    >
+                      {st.media_type === "photo" ? (
+                        <img src={st.media_url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <video src={videoThumb(st.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                      )}
+                    </button>
+                  ))}
+              </div>
+            )}
+            <StoryMenuRow icon={<ImageIcon size={17} color="var(--text)" />} label="Choose from gallery" onClick={() => coverInput.current?.click()} />
+          </div>
+        </StorySheetShell>
+      )}
+    </div>
+  );
+}
+
 // ---- Story highlights on the profile ----
 // The rows come from story_highlights / story_highlight_items, which the
 // story viewer has been writing into all along — this is the shelf that
 // was missing.
-function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
+function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
   const [items, setItems] = useState([]);
+  const [archivedItems, setArchivedItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [manage, setManage] = useState(null); // highlight being held
+  const [editing, setEditing] = useState(null);
+  const [qrFor, setQrFor] = useState(null);
+  const [sendFor, setSendFor] = useState(null);
+  const [archiveList, setArchiveList] = useState(false);
+  const [flash, setFlash] = useState("");
   const pressRef = React.useRef(null);
   const heldRef = React.useRef(false);
 
+  const linkTo = (h) => `${window.location.origin}/u/${username || ""}?h=${h.id}`;
+  const say = (m) => {
+    setFlash(m);
+    setTimeout(() => setFlash(""), 1800);
+  };
+
   const load = async () => {
-    const { data: hs } = await supabase
+    // "archived" may not exist on older projects, so ask for it and fall
+    // back to the plain columns rather than breaking the whole shelf.
+    let hs = null;
+    const withArchived = await supabase
       .from("story_highlights")
-      .select("id, title, cover_url")
+      .select("id, title, cover_url, archived")
       .eq("user_id", profileId)
       .order("created_at", { ascending: false });
+    if (withArchived.error) {
+      const plain = await supabase
+        .from("story_highlights")
+        .select("id, title, cover_url")
+        .eq("user_id", profileId)
+        .order("created_at", { ascending: false });
+      hs = plain.data;
+    } else {
+      hs = withArchived.data;
+    }
 
     const ids = (hs || []).map((h) => h.id);
     let firstStory = {};
@@ -10983,14 +11644,14 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
       }
     }
 
-    setItems(
-      (hs || []).map((h) => ({
-        ...h,
-        preview: h.cover_url || firstStory[h.id]?.media_url || null,
-        previewIsVideo: !h.cover_url && firstStory[h.id] && firstStory[h.id].media_type !== "photo",
-        count: (countFor[h.id] || 0),
-      }))
-    );
+    const shaped = (hs || []).map((h) => ({
+      ...h,
+      preview: h.cover_url || firstStory[h.id]?.media_url || null,
+      previewIsVideo: !h.cover_url && firstStory[h.id] && firstStory[h.id].media_type !== "photo",
+      count: countFor[h.id] || 0,
+    }));
+    setItems(shaped.filter((h) => !h.archived));
+    setArchivedItems(shaped.filter((h) => h.archived));
     setLoading(false);
   };
 
@@ -11005,16 +11666,50 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
     setItems((prev) => prev.filter((x) => x.id !== h.id));
   };
 
-  const rename = async (h) => {
-    const name = window.prompt("Highlight name", h.title);
+  const setArchived = async (h, value) => {
     setManage(null);
-    if (!name || !name.trim() || name.trim() === h.title) return;
-    const { error } = await supabase.from("story_highlights").update({ title: name.trim().slice(0, 30) }).eq("id", h.id);
+    const { error } = await supabase.from("story_highlights").update({ archived: value }).eq("id", h.id);
     if (error) {
-      alert(error.message);
+      alert(
+        error.message.includes("archived")
+          ? "Archiving needs the latest Loop SQL — run it in Supabase and try again."
+          : error.message
+      );
       return;
     }
-    setItems((prev) => prev.map((x) => (x.id === h.id ? { ...x, title: name.trim().slice(0, 30) } : x)));
+    if (value) {
+      setItems((prev) => prev.filter((x) => x.id !== h.id));
+      setArchivedItems((prev) => [{ ...h, archived: true }, ...prev]);
+      say(`"${h.title}" is archived`);
+    } else {
+      setArchivedItems((prev) => prev.filter((x) => x.id !== h.id));
+      setItems((prev) => [{ ...h, archived: false }, ...prev]);
+      say(`"${h.title}" is back on your profile`);
+    }
+  };
+
+  const copyLink = async (h) => {
+    setManage(null);
+    try {
+      await navigator.clipboard.writeText(linkTo(h));
+      say("Link copied");
+    } catch {
+      say("Couldn't copy on this device");
+    }
+  };
+
+  const shareTo = async (h) => {
+    setManage(null);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `${h.title} · @${username}`, url: linkTo(h) });
+        return;
+      }
+      await navigator.clipboard.writeText(linkTo(h));
+      say("Link copied");
+    } catch {
+      say("Sharing isn't available here");
+    }
   };
 
   useEffect(() => {
@@ -11025,7 +11720,7 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
   if (items.length === 0 && !isOwn) return null;
 
   return (
-    <div className="flex gap-4 px-4 pb-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+    <div className="relative flex gap-4 px-4 pb-4 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
       {isOwn && (
         <button onClick={onNew} className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95" style={{ width: 64 }}>
           <div
@@ -11086,6 +11781,18 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
           <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>{h.title}</span>
         </button>
       ))}
+      {isOwn && archivedItems.length > 0 && (
+        <button onClick={() => setArchiveList(true)} className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95" style={{ width: 64 }}>
+          <div className="rounded-full flex items-center justify-center" style={{ width: 64, height: 64, background: "var(--surface)", border: "1.5px solid var(--border)" }}>
+            <Archive size={20} color="var(--text-muted)" />
+          </div>
+          <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text-muted)" }}>Archived</span>
+        </button>
+      )}
+
+      {flash && (
+        <p className="absolute left-0 right-0 text-center text-[11px]" style={{ color: "var(--accent-solid)", marginTop: 72 }}>{flash}</p>
+      )}
 
       {manage && (
         <StorySheetShell title={manage.title} onClose={() => setManage(null)}>
@@ -11093,10 +11800,103 @@ function HighlightsRow({ profileId, isOwn, onOpen, onNew }) {
             <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
               {manage.count === 0 ? "This highlight has no stories left." : `${manage.count} ${manage.count === 1 ? "story" : "stories"}`}
             </p>
-            <StoryMenuRow icon={<Pencil size={17} color="var(--text)" />} label="Rename" onClick={() => rename(manage)} />
+            <StoryMenuRow
+              icon={<Pencil size={17} color="var(--text)" />}
+              label="Edit highlight"
+              onClick={() => {
+                setEditing(manage);
+                setManage(null);
+              }}
+            />
+            <StoryMenuRow
+              icon={<Archive size={17} color="var(--text)" />}
+              label={manage.archived ? "Put back on profile" : "Archive highlight"}
+              onClick={() => setArchived(manage, !manage.archived)}
+            />
             <StoryMenuRow icon={<Trash2 size={17} color="var(--heart)" />} label="Delete highlight" danger onClick={() => remove(manage)} />
+            <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+            <StoryMenuRow
+              icon={<ShareIcon size={17} color="var(--text)" />}
+              label="Send to…"
+              onClick={() => {
+                setSendFor(manage);
+                setManage(null);
+              }}
+            />
+            <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={() => copyLink(manage)} />
+            <StoryMenuRow
+              icon={<QrCode size={17} color="var(--text)" />}
+              label="Show QR code"
+              onClick={() => {
+                setQrFor(manage);
+                setManage(null);
+              }}
+            />
+            <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Share to" onClick={() => shareTo(manage)} />
           </div>
         </StorySheetShell>
+      )}
+
+      {archiveList && (
+        <StorySheetShell title="Archived highlights" onClose={() => setArchiveList(false)}>
+          <div className="pb-6">
+            <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+              These are hidden from your profile. Only you can see them here.
+            </p>
+            {archivedItems.map((h) => (
+              <div key={h.id} className="flex items-center gap-3 px-4 py-2">
+                <div className="rounded-full overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 44, height: 44, background: "var(--surface)", border: "1px solid var(--border)" }}>
+                  {h.preview && !h.previewIsVideo ? (
+                    <img src={h.preview} alt="" className="w-full h-full object-cover" />
+                  ) : h.preview ? (
+                    <video src={videoThumb(h.preview)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                  ) : (
+                    <Star size={16} color="var(--text-muted)" />
+                  )}
+                </div>
+                <span className="flex-1 min-w-0 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{h.title}</span>
+                <button
+                  onClick={() => setArchived(h, false)}
+                  className="rounded-lg px-3 h-8 text-xs shrink-0"
+                  style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+                >
+                  Put back
+                </button>
+              </div>
+            ))}
+          </div>
+        </StorySheetShell>
+      )}
+
+      {sendFor && (
+        <ForwardSheet
+          message={{ content: `${sendFor.title} · @${username} on Loop: ${linkTo(sendFor)}` }}
+          currentUserId={profileId}
+          onClose={() => setSendFor(null)}
+        />
+      )}
+
+      {qrFor && (
+        <QRCardScreen
+          title={qrFor.title}
+          caption={`${qrFor.title} · @${username}`}
+          link={linkTo(qrFor)}
+          fileName={`loop-${qrFor.title}`}
+          onBack={() => setQrFor(null)}
+        />
+      )}
+
+      {editing && (
+        <EditHighlightScreen
+          highlight={editing}
+          currentUserId={profileId}
+          onClose={() => setEditing(null)}
+          onSaved={(h) => {
+            setEditing(null);
+            setItems((prev) => prev.map((x) => (x.id === h.id ? { ...x, ...h } : x)));
+            load();
+          }}
+        />
       )}
     </div>
   );
@@ -11620,7 +12420,7 @@ function useStaffRole() {
   return role;
 }
 
-function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
+function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessage, onOpenModeration, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -11643,6 +12443,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
   const staffRole = useStaffRole();
   const [reportNote, setReportNote] = useState("");
   const [avatarViewer, setAvatarViewer] = useState(false);
+  const [birthdayInfo, setBirthdayInfo] = useState(null); // { date, shared }
   const [qrOpen, setQrOpen] = useState(false);
   const [storyFile, setStoryFile] = useState(null);
   const [viewStoryFor, setViewStoryFor] = useState(null); // profile id
@@ -11699,6 +12500,16 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
       .single();
     setProfile(profileData);
 
+    // The birthday lives in its own owner-only table. This function hands
+    // it back only when its owner chose Public (or when it's yours).
+    try {
+      const { data: bd } = await supabase.rpc("public_birthday", { p_user: targetId });
+      const row = Array.isArray(bd) ? bd[0] : bd;
+      setBirthdayInfo(row?.birthday ? { date: row.birthday, shared: !!row.is_public } : null);
+    } catch {
+      setBirthdayInfo(null);
+    }
+
     const isViewingOwnPosts = user && user.id === targetId;
 
     let postsQuery = supabase
@@ -11716,7 +12527,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
     if (collabIds.length) {
       const { data } = await supabase
         .from("posts")
-        .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason, views_count, user_id")
+        .select("id, media_url, media_type, media_count, caption, location, created_at, hide_likes, hide_comments, hide_reposts, hide_saves, comments_disabled, pinned, archived, removed_at, removed_reason, views_count, user_id, cover_url")
         .in("id", collabIds)
         .eq("archived", false);
       collabPosts = (data || []).map((pp) => ({ ...pp, pinned: false, isCollab: true }));
@@ -11728,6 +12539,15 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
     });
     setPosts(sortedPosts);
 
+    // Give older videos the picture they never had.
+    if (isViewingOwnPosts && user?.id) {
+      healMissingCovers(
+        sortedPosts.map((pp) => ({ ...pp, user_id: pp.user_id || targetId })),
+        user.id,
+        (id, url) => setPosts((prev) => prev.map((pp) => (pp.id === id ? { ...pp, cover_url: url } : pp)))
+      );
+    }
+
     const { data: repostsData } = await supabase
       .from("reposts")
       .select("post_id")
@@ -11737,7 +12557,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
       const postIds = repostsData.map((r) => r.post_id);
       const { data: repostedPosts } = await supabase
         .from("posts")
-        .select("id, media_url, media_type")
+        .select("id, media_url, media_type, cover_url")
         .in("id", postIds);
       setReposts(repostedPosts || []);
     } else {
@@ -11753,7 +12573,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
     if (tagIds.length > 0) {
       const { data: taggedPosts } = await supabase
         .from("posts")
-        .select("id, media_url, media_type")
+        .select("id, media_url, media_type, cover_url")
         .in("id", tagIds)
         .eq("archived", false)
         .order("created_at", { ascending: false });
@@ -11979,6 +12799,30 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
     setFollowBusy(false);
   };
 
+  // A shared highlight link lands here: open it once, then forget it.
+  useEffect(() => {
+    if (!initialHighlightId || !profile) return;
+    let cancelled = false;
+    supabase
+      .from("story_highlights")
+      .select("id, title, cover_url, user_id")
+      .eq("id", initialHighlightId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        if (data) setViewHighlight(data);
+        onHighlightOpened?.();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialHighlightId, profile]);
+
+  const birthdayShared = !!birthdayInfo?.shared;
+  const birthdayLine = birthdayInfo?.date
+    ? new Date(birthdayInfo.date + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "long" })
+    : null;
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
@@ -12163,6 +13007,12 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
         {profile.bio && (
           <p className="text-[13px] mt-0.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{profile.bio}</p>
         )}
+        {birthdayLine && (
+          <p className="flex items-center gap-1.5 text-[12px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+            <Cake size={12} /> {birthdayLine}
+            {isOwnProfile && !birthdayShared && <span style={{ opacity: 0.7 }}>· only you</span>}
+          </p>
+        )}
         {Array.isArray(profile.links) && profile.links.length > 0 && (
           <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
             {profile.links.map((l, i) => (
@@ -12293,6 +13143,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
       <HighlightsRow
         key={`${profile.id}-${highlightsKey}`}
         profileId={profile.id}
+        username={profile.username}
         isOwn={isOwnProfile}
         onNew={() => setSheet("newHighlight")}
         onOpen={(h) => setViewHighlight({ ...h, user_id: profile.id })}
@@ -12384,11 +13235,7 @@ function ProfileScreen({ userId, onMessage, onOpenModeration, onOpenSettings, on
               className="aspect-square flex items-center justify-center relative overflow-hidden"
               style={{ background: "var(--surface)" }}
             >
-              {isPhotoPost(p) ? (
-                <img src={p.media_url} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <video src={videoThumb(p.cover_url || p.media_url)} poster={p.cover_url || undefined} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-              )}
+              <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />
               {tab === "reposts" && (
                 <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
               )}
@@ -14758,11 +15605,7 @@ function MediaTile({ post, onClick, selected, selectable, badge }) {
       className="aspect-square relative overflow-hidden"
       style={{ background: "var(--bg-sunken)" }}
     >
-      {isPhotoPost(post) ? (
-        <img src={post.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
-      ) : (
-        <video src={videoThumb(post.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-      )}
+      <MediaThumb src={post.media_url} cover={post.cover_url} isVideo={!isPhotoPost(post)} />
       {post.media_count > 1 ? (
         <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
           <Layers size={13} color="#FFFFFF" />
@@ -15254,7 +16097,7 @@ function SavedScreen({ onBack, onOpenPost }) {
     }
     const { data: rows, error: postsErr } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, caption, created_at")
+      .select("id, media_url, media_type, media_count, caption, created_at, cover_url")
       .in("id", ids)
       .order("created_at", { ascending: false });
 
@@ -15310,14 +16153,20 @@ function SavedScreen({ onBack, onOpenPost }) {
     const postIds = [...new Set(items.map((i) => i.post_id))];
     let media = {};
     if (postIds.length > 0) {
-      const { data } = await supabase.from("posts").select("id, media_url, media_type").in("id", postIds);
+      const { data } = await supabase.from("posts").select("id, media_url, media_type, cover_url").in("id", postIds);
       (data || []).forEach((m) => (media[m.id] = m));
     }
     setCollections(
       merged.map((c) => {
         const mine = items.filter((i) => i.collection_id === c.id);
         const first = mine.map((i) => media[i.post_id]).find(Boolean);
-        return { ...c, count: mine.length, previewUrl: c.cover_url || first?.media_url || null, previewType: first?.media_type };
+        return {
+          ...c,
+          count: mine.length,
+          previewUrl: c.cover_url || first?.media_url || null,
+          previewType: first?.media_type,
+          previewCover: first?.cover_url || null,
+        };
       })
     );
   };
@@ -15334,7 +16183,7 @@ function SavedScreen({ onBack, onOpenPost }) {
     }
     const { data: rows } = await supabase
       .from("posts")
-      .select("id, media_url, media_type, media_count, created_at")
+      .select("id, media_url, media_type, media_count, created_at, cover_url")
       .in("id", ids)
       .order("created_at", { ascending: false });
     setCollectionPosts(rows || []);
@@ -15640,11 +16489,11 @@ function SavedScreen({ onBack, onOpenPost }) {
                   style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
                 >
                   {c.previewUrl ? (
-                    c.previewType === "photo" || c.cover_url ? (
-                      <img src={c.previewUrl} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <video src={videoThumb(c.previewUrl)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-                    )
+                    <MediaThumb
+                      src={c.previewUrl}
+                      cover={c.cover_url || c.previewCover}
+                      isVideo={c.previewType !== "photo" && !c.cover_url}
+                    />
                   ) : (
                     <Bookmark size={24} color="var(--toggle-off)" />
                   )}
@@ -17992,7 +18841,7 @@ function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
       const safe = tag.replace(/[%_]/g, "");
       const { data } = await supabase
         .from("posts")
-        .select("id, user_id, media_url, media_type, media_count, created_at, views_count")
+        .select("id, user_id, media_url, media_type, media_count, created_at, views_count, cover_url")
         .ilike("caption", `%#${safe}%`)
         .eq("archived", false)
         .is("removed_at", null)
@@ -18042,13 +18891,7 @@ function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
         <div className="grid grid-cols-3 gap-0.5">
           {posts.map((pp) => (
             <button key={pp.id} onClick={() => setOpenAt(posts.indexOf(pp))} className="relative aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
-              {isPhotoPost(pp) ? (
-                <img src={pp.media_url} alt="" className="w-full h-full object-cover" loading="lazy" />
-              ) : pp.cover_url ? (
-                <img src={pp.cover_url} alt="" className="w-full h-full object-cover" loading="lazy" />
-              ) : (
-                <video src={videoThumb(pp.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
-              )}
+              <MediaThumb src={pp.media_url} cover={pp.cover_url} isVideo={!isPhotoPost(pp)} />
               {!isPhotoPost(pp) && (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
                   <Play size={13} color="#fff" fill="#fff" />
@@ -18483,6 +19326,7 @@ export default function App() {
   const [commentsPostOwnerId, setCommentsPostOwnerId] = useState(null);
   const [reportPostId, setReportPostId] = useState(null);
   const [viewProfileId, setViewProfileId] = useState(null);
+  const [deepHighlight, setDeepHighlight] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewPostId, setViewPostId] = useState(null);
   const [savedOpen, setSavedOpen] = useState(false);
@@ -18738,6 +19582,22 @@ export default function App() {
     // A reset link lands here with "type=recovery" in the URL. Check it up
     // front too — the PASSWORD_RECOVERY event and getSession() can resolve in
     // either order, and getSession alone would just log the person straight in.
+    // A link someone shared: loop.app/u/name, and ?h=... for a highlight.
+    (async () => {
+      try {
+        const match = window.location.pathname.match(/^\/u\/([a-zA-Z0-9_.]{1,30})\/?$/);
+        if (!match) return;
+        const wanted = new URLSearchParams(window.location.search).get("h");
+        const { data: found } = await supabase.from("profiles").select("id").eq("username", match[1]).maybeSingle();
+        window.history.replaceState(null, "", "/");
+        if (!found) return;
+        setViewProfileId(found.id);
+        if (wanted) setDeepHighlight(wanted);
+      } catch {
+        // A bad link should never stop the app from opening.
+      }
+    })();
+
     const isRecoveryLink = /type=recovery/.test(window.location.hash + window.location.search);
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -18964,6 +19824,8 @@ export default function App() {
           ) : viewProfileId !== null ? (
             <ProfileScreen
               userId={viewProfileId}
+              initialHighlightId={deepHighlight}
+              onHighlightOpened={() => setDeepHighlight(null)}
               onMessage={(prof) => {
                 setMessageTarget({ id: prof.id, username: prof.username, avatar_url: prof.avatar_url });
                 setInboxOpen(true);
