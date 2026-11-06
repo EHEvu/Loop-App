@@ -9176,6 +9176,8 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
   const [draftId, setDraftId] = useState(null); // set when editing a saved draft
   const [draftNote, setDraftNote] = useState("");
   const [postedScheduled, setPostedScheduled] = useState(null); // Date when last share was scheduled
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedCount = [hideLikes || hideComments || hideRepostsSaves, turnOffComments, matureContent, scheduleOn].filter(Boolean).length;
 
   const refreshDrafts = () =>
     listDrafts()
@@ -9887,35 +9889,30 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
 
         <CaptionBox value={caption} onChange={setCaption} placeholder="Write a caption..." />
 
-        <div
-          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-3"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-        >
-          <MapPin size={15} color="var(--text-muted)" />
-          <input
-            type="text"
-            placeholder="Add location"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            className="flex-1 bg-transparent text-sm outline-none"
-            style={{ color: "var(--text)" }}
-          />
-        </div>
-
-        <div
-          className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm mb-3"
-          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-        >
-          <Link2 size={15} color="var(--text-muted)" />
-          <input
-            type="url"
-            inputMode="url"
-            placeholder="Add a link (optional)"
-            value={linkUrl}
-            onChange={(e) => setLinkUrl(e.target.value)}
-            className="flex-1 bg-transparent text-sm outline-none"
-            style={{ color: "var(--text)" }}
-          />
+        <div className="rounded-xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <div className="w-full flex items-center gap-2 px-3 py-2.5 text-sm">
+            <MapPin size={15} color="var(--text-muted)" />
+            <input
+              type="text"
+              placeholder="Add location"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              className="flex-1 bg-transparent text-sm outline-none"
+              style={{ color: "var(--text)" }}
+            />
+          </div>
+          <div className="w-full flex items-center gap-2 px-3 py-2.5 text-sm" style={{ borderTop: "1px solid var(--border)" }}>
+            <Link2 size={15} color="var(--text-muted)" />
+            <input
+              type="url"
+              inputMode="url"
+              placeholder="Add a link (optional)"
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              className="flex-1 bg-transparent text-sm outline-none"
+              style={{ color: "var(--text)" }}
+            />
+          </div>
         </div>
 
         <TagPeoplePicker value={taggedPeople} onChange={setTaggedPeople} />
@@ -9976,6 +9973,28 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
           )}
         </div>
 
+        {/* Advanced settings — collapsed by default so the page stays short */}
+        <button
+          onClick={() => setAdvancedOpen((o) => !o)}
+          className="w-full flex items-center justify-between rounded-xl px-3.5 py-3 mb-3 text-sm transition-transform active:scale-[0.99]"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+        >
+          <span className="flex items-center gap-2" style={{ fontWeight: 600 }}>
+            <Settings size={15} color="var(--text-muted)" /> Advanced settings
+          </span>
+          <span className="flex items-center gap-2">
+            {advancedCount > 0 && (
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{advancedCount} on</span>
+            )}
+            <ChevronRight
+              size={16}
+              color="var(--text-muted)"
+              style={{ transform: advancedOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}
+            />
+          </span>
+        </button>
+        {advancedOpen && (
+          <>
         {/* Per-post privacy settings */}
         <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           {[
@@ -10053,6 +10072,8 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
             </div>
           )}
         </div>
+          </>
+        )}
 
         {error && (
           <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>
