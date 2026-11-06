@@ -105,6 +105,11 @@ import {
   Lightbulb,
   Plane,
   Dumbbell,
+  Camera,
+  Contact,
+  HeartOff,
+  MonitorSmartphone,
+  ArrowUpRight,
 } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -212,6 +217,9 @@ const THEME_CSS = `
   /* On a phone the app fills the screen — no rounded frame or border
      around it. On a computer it stays phone-sized in the middle. */
   .loop-frame { max-height: 100dvh; }
+  /* No scrollbars — you swipe to scroll, like a phone app. */
+  .loop-page *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  .loop-page * { scrollbar-width: none; }
   @media (max-width: 520px) {
     .loop-page {
       min-height: 100dvh !important;
@@ -1128,6 +1136,372 @@ function RailCount({ show, n }) {
   return (
     <span className="text-[12px] leading-none mt-1 tabular-nums" style={{ color: "#FFFFFF", fontWeight: 700, height: 12 }}>
       {show && n > 0 ? formatCount(n) : ""}
+    </span>
+  );
+}
+
+// ============================================================
+// Step 13 — shared helpers
+// ============================================================
+
+const openSoundGlobal = (id) => {
+  if (id && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("loop:open-sound", { detail: id }));
+};
+
+// ---- Your own stories you've already watched ----
+// Your views of your own story aren't counted as views, so this phone keeps
+// the list, and your ring turns grey once you've watched them — like Instagram.
+const OWN_SEEN_KEY = "loop_own_seen_stories";
+function getOwnSeenStories() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(OWN_SEEN_KEY) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+function markOwnStorySeen(id) {
+  if (!id) return;
+  try {
+    const s = getOwnSeenStories();
+    if (s.has(id)) return;
+    s.add(id);
+    localStorage.setItem(OWN_SEEN_KEY, JSON.stringify([...s].slice(-200)));
+  } catch {}
+}
+
+// ---- The quick emoji row under someone's story ----
+const STORY_EMOJI_CHOICES = [
+  "❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F44F}", "\u{1F525}", "\u{1F389}", "\u{1F44D}",
+  "\u{1F60D}", "\u{1F970}", "\u{1F618}", "\u{1F60A}", "\u{1F923}", "\u{1F62D}", "\u{1F97A}", "\u{1F631}",
+  "\u{1F914}", "\u{1F60E}", "\u{1F92F}", "\u{1F973}", "\u{1F64F}", "\u{1F4AF}", "✨", "\u{1F496}",
+  "\u{1F494}", "\u{1F440}", "\u{1F64C}", "\u{1F4AA}", "\u{1F91D}", "\u{1F30D}", "\u{1F31F}", "\u{1F338}",
+  "\u{1F60C}", "\u{1F605}", "\u{1F609}", "\u{1F92D}", "\u{1F621}", "\u{1F634}", "\u{1F917}", "\u{1F44C}",
+];
+const STORY_QUICK_KEY = "loop_story_quick";
+function getStoryQuick() {
+  try {
+    const list = JSON.parse(localStorage.getItem(STORY_QUICK_KEY) || "null");
+    if (Array.isArray(list) && list.length) return list.slice(0, 8);
+  } catch {}
+  return STORY_QUICK_REACTIONS;
+}
+function saveStoryQuick(list) {
+  try {
+    localStorage.setItem(STORY_QUICK_KEY, JSON.stringify(list.slice(0, 8)));
+  } catch {}
+}
+
+// Pick which 8 emoji sit in your quick row.
+function QuickEmojiSheet({ current, onSave, onClose }) {
+  const [picked, setPicked] = useState(current.slice(0, 8));
+  const toggle = (e) =>
+    setPicked((prev) => (prev.includes(e) ? prev.filter((x) => x !== e) : prev.length >= 8 ? prev : [...prev, e]));
+  return (
+    <StorySheetShell title="Your quick reactions" onClose={onClose}>
+      <div className="px-4 pb-6">
+        <p className="text-[12px] mb-2" style={{ color: "var(--text-muted)" }}>
+          Pick up to 8. They show in this order under every story. {picked.length}/8
+        </p>
+        <div className="flex gap-1.5 mb-3 min-h-[44px] rounded-2xl px-2 items-center" style={{ background: "var(--bg-sunken)" }}>
+          {picked.map((e) => (
+            <button key={e} onClick={() => toggle(e)} className="transition-transform active:scale-90" aria-label={`Remove ${e}`}>
+              <AnimatedEmoji emoji={e} size={34} />
+            </button>
+          ))}
+          {picked.length === 0 && <span className="text-xs px-2" style={{ color: "var(--text-muted)" }}>Tap emoji below</span>}
+        </div>
+        <div className="grid grid-cols-8 gap-1">
+          {STORY_EMOJI_CHOICES.map((e) => {
+            const on = picked.includes(e);
+            return (
+              <button
+                key={e}
+                onClick={() => toggle(e)}
+                className="aspect-square rounded-xl flex items-center justify-center transition-transform active:scale-90"
+                style={{ background: on ? "var(--active-highlight)" : "transparent", border: on ? "1.5px solid var(--accent-solid)" : "1.5px solid transparent", fontSize: 24 }}
+              >
+                {e}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={() => setPicked(STORY_QUICK_REACTIONS)}
+            className="flex-1 rounded-xl h-11 text-sm"
+            style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 600 }}
+          >
+            Reset
+          </button>
+          <button
+            onClick={() => picked.length && onSave(picked)}
+            disabled={!picked.length}
+            className="flex-1 rounded-xl h-11 text-sm"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: picked.length ? 1 : 0.5 }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Settings → Device permissions ----
+// A website can't switch permissions itself; it can only ask, or show where
+// to change them. That's what this page does.
+const DEVICE_PERMS = [
+  { key: "camera", label: "Camera", icon: Camera, query: "camera", why: "To take photos and videos for stories and reels." },
+  { key: "contacts", label: "Contacts", icon: Contact, why: "Loop doesn't read your contacts.", unused: true },
+  { key: "geolocation", label: "Location Services", icon: MapPin, query: "geolocation", why: "Only if you want to add where you are." },
+  { key: "microphone", label: "Microphone", icon: Mic, query: "microphone", why: "For voice messages and video sound." },
+  { key: "notifications", label: "Notifications", icon: Bell, query: "notifications", why: "For likes, comments, messages and more." },
+  { key: "photos", label: "Photos and videos", icon: ImageIcon, why: "Your phone asks each time you pick something — Loop only sees what you choose.", always: true },
+];
+
+async function readPermission(p) {
+  if (p.unused) return "unused";
+  if (p.always) return "each";
+  if (p.key === "notifications" && typeof Notification !== "undefined") {
+    return Notification.permission === "granted" ? "granted" : Notification.permission === "denied" ? "denied" : "prompt";
+  }
+  try {
+    const r = await navigator.permissions.query({ name: p.query });
+    return r.state;
+  } catch {
+    return "prompt";
+  }
+}
+async function askPermission(p) {
+  try {
+    if (p.key === "camera" || p.key === "microphone") {
+      const s = await navigator.mediaDevices.getUserMedia(p.key === "camera" ? { video: true } : { audio: true });
+      s.getTracks().forEach((t) => t.stop());
+    } else if (p.key === "geolocation") {
+      await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 15000 }));
+    } else if (p.key === "notifications" && typeof Notification !== "undefined") {
+      await Notification.requestPermission();
+    }
+  } catch {}
+}
+const permLabel = (st) =>
+  st === "granted" ? "Allowed" : st === "denied" ? "Not allowed" : st === "unused" ? "Not used" : st === "each" ? "Ask every time" : "Ask first";
+
+function DevicePermissionsScreen({ onBack }) {
+  const [states, setStates] = useState({});
+  const [open, setOpen] = useState(null);
+  const refresh = async () => {
+    const next = {};
+    for (const p of DEVICE_PERMS) next[p.key] = await readPermission(p);
+    setStates(next);
+  };
+  useEffect(() => {
+    refresh();
+    const onVis = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+  const p = open ? DEVICE_PERMS.find((x) => x.key === open) : null;
+  const st = p ? states[p.key] : null;
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Device permissions" onBack={onBack} />
+      <p className="px-4 pt-4 pb-1.5 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Your preferences</p>
+      {DEVICE_PERMS.map((x) => {
+        const Icon = x.icon;
+        return (
+          <button key={x.key} onClick={() => setOpen(x.key)} className="w-full flex items-center gap-3.5 px-4 py-3.5 text-left active:opacity-70">
+            <Icon size={20} color="var(--text)" strokeWidth={1.8} />
+            <span className="flex-1 text-[15px]" style={{ color: "var(--text)" }}>{x.label}</span>
+            <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{states[x.key] ? permLabel(states[x.key]) : "…"}</span>
+            <ChevronRight size={18} color="var(--text-muted)" />
+          </button>
+        );
+      })}
+      <p className="px-4 pt-3 text-[11px]" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+        These belong to your browser or phone, not to Loop. Loop can ask for them, but to turn one off you change it in your browser's site settings.
+      </p>
+      {p && (
+        <StorySheetShell title={p.label} onClose={() => setOpen(null)}>
+          <div className="px-4 pb-6">
+            <p className="text-sm mb-1" style={{ color: "var(--text)", fontWeight: 700 }}>{permLabel(st)}</p>
+            <p className="text-[13px] mb-4" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>{p.why}</p>
+            {st === "prompt" && (
+              <button
+                onClick={async () => {
+                  await askPermission(p);
+                  await refresh();
+                }}
+                className="w-full rounded-xl h-11 text-sm mb-3"
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+              >
+                Allow
+              </button>
+            )}
+            {(st === "granted" || st === "denied") && (
+              <div className="rounded-2xl px-3.5 py-3 text-[12.5px]" style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)", lineHeight: 1.55 }}>
+                To change this:
+                <br />• In the browser: tap the icon next to the web address → <b>Permissions</b> → {p.label}.
+                <br />• In the installed Loop app: hold the Loop icon → <b>App info</b> → <b>Permissions</b>.
+              </div>
+            )}
+          </div>
+        </StorySheetShell>
+      )}
+    </div>
+  );
+}
+
+// ---- Settings → App website permissions ----
+function AppsWebsitesScreen({ onBack }) {
+  const [tab, setTab] = useState("active");
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Apps and websites" onBack={onBack} />
+      <div className="flex" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        {[
+          ["active", "Active"],
+          ["expired", "Expired"],
+          ["removed", "Removed"],
+        ].map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className="flex-1 py-3 text-[13px]"
+            style={{ color: tab === k ? "var(--text)" : "var(--text-muted)", fontWeight: tab === k ? 700 : 500, borderBottom: tab === k ? "2px solid var(--text)" : "2px solid transparent" }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-col items-center text-center px-8 pt-16 gap-2">
+        <MonitorSmartphone size={36} color="var(--toggle-off)" />
+        <p className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>
+          {tab === "active" ? "No active apps or websites" : tab === "expired" ? "Nothing expired" : "Nothing removed"}
+        </p>
+        <p className="text-xs" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+          When you log in to another app or website with your Loop account, it shows here and you can remove its access.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---- Settings → Like and share counts ----
+function CountsSettingsScreen({ onBack }) {
+  const [prefs, toggle] = useCountPrefs();
+  const rows = [
+    ["likes", "Likes"],
+    ["comments", "Comments"],
+    ["reposts", "Reposts"],
+    ["shares", "Shares"],
+    ["saves", "Saves"],
+  ];
+  return (
+    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Like and share counts" onBack={onBack} />
+      <p className="px-4 pt-4 pb-2 text-[13px]" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+        Choose which numbers you see on posts and reels from other accounts. This is just for you, on this phone.
+      </p>
+      {rows.map(([k, label]) => {
+        const on = prefs[k] !== false;
+        return (
+          <button key={k} onClick={() => toggle(k)} className="w-full flex items-center justify-between px-4 py-3.5 text-left">
+            <span className="text-[15px]" style={{ color: "var(--text)" }}>Show {label.toLowerCase()} counts</span>
+            <span className="rounded-full shrink-0" style={{ width: 40, height: 23, background: on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+              <span className="rounded-full bg-white absolute" style={{ width: 19, height: 19, top: 2, left: on ? 19 : 2, transition: "left 0.15s" }} />
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---- Saved → Audio ----
+function SavedAudioList() {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data, error } = await supabase
+        .from("saved_sounds")
+        .select("sound_id, created_at")
+        .eq("user_id", user?.id || "")
+        .order("created_at", { ascending: false });
+      if (error) {
+        setErr(/saved_sounds/.test(error.message) ? "Saved audio needs loop-step-13.sql — run it in Supabase first." : error.message);
+        setRows([]);
+        return;
+      }
+      const ids = (data || []).map((r) => r.sound_id);
+      if (!ids.length) return setRows([]);
+      const { data: snds } = await supabase.from("sounds").select("id, title, owner_id, source_post_id").in("id", ids);
+      const ownerIds = [...new Set((snds || []).map((x) => x.owner_id))];
+      const srcIds = [...new Set((snds || []).map((x) => x.source_post_id).filter(Boolean))];
+      const [{ data: owners }, { data: srcs }] = await Promise.all([
+        ownerIds.length ? supabase.from("profiles").select("id, username, avatar_url").in("id", ownerIds) : Promise.resolve({ data: [] }),
+        srcIds.length ? supabase.from("posts").select("id, media_url, cover_url").in("id", srcIds) : Promise.resolve({ data: [] }),
+      ]);
+      setRows(
+        ids
+          .map((id) => (snds || []).find((x) => x.id === id))
+          .filter(Boolean)
+          .map((x) => {
+            const o = (owners || []).find((u) => u.id === x.owner_id);
+            const s = (srcs || []).find((pp) => pp.id === x.source_post_id);
+            return { ...x, ownerName: o?.username || "", pic: s?.cover_url || o?.avatar_url || null, src: s?.media_url || null };
+          })
+      );
+    })();
+  }, []);
+  if (rows === null) return <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading…</p>;
+  if (err) return <p className="text-xs text-center py-10 px-8" style={{ color: "var(--heart)" }}>{err}</p>;
+  if (!rows.length)
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-20 px-8 text-center">
+        <Music2 size={30} color="var(--toggle-off)" />
+        <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>No saved audio yet</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Tap the bookmark on a sound's page and it shows up here.</p>
+      </div>
+    );
+  return (
+    <div className="pt-2">
+      {rows.map((x) => (
+        <button key={x.id} onClick={() => openSoundGlobal(x.id)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left active:opacity-70">
+          <span className="relative rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 52, height: 52, background: "var(--surface)" }}>
+            {x.pic ? (
+              <img src={x.pic} alt="" className="absolute inset-0 w-full h-full object-cover" />
+            ) : x.src ? (
+              <video src={videoThumb(x.src)} className="absolute inset-0 w-full h-full object-cover" muted playsInline preload="metadata" />
+            ) : null}
+            <Music2 size={16} color="#FFFFFF" className="relative" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{x.title || "Original sound"}</span>
+            <span className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{x.ownerName}</span>
+          </span>
+          <ChevronRight size={17} color="var(--text-muted)" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// A repost note on a profile grid tile, like Instagram's Reposts tab.
+function RepostNoteTile({ note }) {
+  if (!note) return null;
+  const bg = "rgba(22,22,26,0.86)";
+  return (
+    <span className="absolute left-1.5 bottom-2 flex flex-col items-start pointer-events-none" style={{ maxWidth: "90%" }}>
+      <span className="rounded-2xl px-2.5 py-1 text-[11.5px] truncate" style={{ background: bg, color: "#FFFFFF", fontWeight: 600, maxWidth: "100%" }}>
+        {note}
+      </span>
+      <span className="rounded-full" style={{ width: 6, height: 6, background: bg, marginLeft: 10, marginTop: 2 }} />
+      <span className="rounded-full" style={{ width: 3.5, height: 3.5, background: bg, marginLeft: 7, marginTop: 1 }} />
     </span>
   );
 }
@@ -2877,16 +3251,28 @@ function SoundLine({ sound, onOpen, light = true }) {
   );
 }
 
-// A sound's own page: who made it, a preview, every reel that uses it,
-// and the button that starts a new reel with it.
+// A sound's own page, like Instagram's: who made it, a preview, save and
+// share, every reel that uses it, and the button that starts a new reel.
 function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
   const [snd, setSnd] = useState(null);
   const [posts, setPosts] = useState([]);
   const [count, setCount] = useState(0);
   const [me, setMe] = useState(null);
   const [playing, setPlaying] = useState(false);
+  const [dur, setDur] = useState(0);
+  const [prog, setProg] = useState(0);
+  const [saved, setSaved] = useState(null); // null = unknown
+  const [trending, setTrending] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [qr, setQr] = useState(null);
+  const [flash, setFlash] = useState("");
   const [error, setError] = useState("");
   const audioRef = React.useRef(null);
+  const link = `${window.location.origin}/audio/${soundId}`;
+  const say = (m) => {
+    setFlash(m);
+    setTimeout(() => setFlash(""), 2000);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -2904,33 +3290,42 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
         setError(err?.message || "This sound isn't available any more.");
         return;
       }
-      const [srcRes, ownerRes, listRes, countRes] = await Promise.all([
+      const [srcRes, ownerRes, listRes, countRes, savedRes] = await Promise.all([
         row.source_post_id
           ? supabase.from("posts").select("id, media_url, cover_url").eq("id", row.source_post_id).maybeSingle()
           : Promise.resolve({ data: null }),
-        supabase.from("profiles").select("id, username, avatar_url").eq("id", row.owner_id).maybeSingle(),
+        supabase.from("profiles").select("id, username, avatar_url, is_verified").eq("id", row.owner_id).maybeSingle(),
         supabase
           .from("posts")
-          .select("id, media_url, media_type, media_count, cover_url, user_id, views_count")
+          .select("id, media_url, media_type, media_count, cover_url, user_id, views_count, created_at")
           .eq("sound_id", soundId)
           .eq("archived", false)
           .order("created_at", { ascending: false })
           .limit(60),
         supabase.from("posts").select("id", { count: "exact", head: true }).eq("sound_id", soundId).eq("archived", false),
+        supabase.from("saved_sounds").select("sound_id").eq("user_id", user?.id || "").eq("sound_id", soundId).maybeSingle(),
       ]);
       if (cancelled) return;
       setMe(user?.id || null);
       setSnd({
         id: row.id,
-        title: row.title || "Original sound",
+        title: row.title || "Original audio",
         ownerId: row.owner_id,
         ownerName: ownerRes.data?.username || "",
+        ownerVerified: !!ownerRes.data?.is_verified,
         ownerAvatar: ownerRes.data?.avatar_url || null,
         sourceUrl: srcRes.data?.media_url || null,
+        sourcePostId: row.source_post_id || null,
         cover: srcRes.data?.cover_url || null,
       });
-      setPosts(listRes.data || []);
-      setCount(countRes.count || (listRes.data || []).length);
+      const list = listRes.data || [];
+      // The original reel goes first, the way Instagram marks it.
+      list.sort((a, b) => (a.id === row.source_post_id ? -1 : b.id === row.source_post_id ? 1 : 0));
+      setPosts(list);
+      setCount(countRes.count || list.length);
+      const weekAgo = Date.now() - 7 * 86400000;
+      setTrending(list.filter((x) => new Date(x.created_at).getTime() > weekAgo).length >= 3);
+      setSaved(savedRes.error ? false : !!savedRes.data);
     })();
     return () => {
       cancelled = true;
@@ -2941,57 +3336,132 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
   const togglePreview = () => {
     const a = audioRef.current;
     if (!a) return;
-    if (a.paused) {
-      a.play().then(() => setPlaying(true), () => setPlaying(false));
-    } else {
+    if (a.paused) a.play().then(() => setPlaying(true), () => setPlaying(false));
+    else {
       a.pause();
       setPlaying(false);
     }
   };
 
+  const toggleSave = async () => {
+    if (!me || saved === null) return;
+    const next = !saved;
+    setSaved(next);
+    const { error: err } = next
+      ? await supabase.from("saved_sounds").insert({ user_id: me, sound_id: soundId })
+      : await supabase.from("saved_sounds").delete().eq("user_id", me).eq("sound_id", soundId);
+    if (err && !/duplicate/i.test(err.message)) {
+      setSaved(!next);
+      say(/saved_sounds/.test(err.message) ? "Saving audio needs loop-step-13.sql" : err.message);
+      return;
+    }
+    say(next ? "Saved — find it in Saved → Audio" : "Removed from saved");
+  };
+
+  const share = async () => {
+    try {
+      if (navigator.share) await navigator.share({ title: snd?.title || "Audio on Loop", url: link });
+      else {
+        await navigator.clipboard.writeText(link);
+        say("Link copied");
+      }
+    } catch {}
+  };
+
+  const copyLink = async () => {
+    setMenuOpen(false);
+    try {
+      await navigator.clipboard.writeText(link);
+      say("Link copied");
+    } catch {
+      say("Couldn't copy on this device");
+    }
+  };
+
+  const showQr = async () => {
+    setMenuOpen(false);
+    try {
+      setQr(await QRCode.toDataURL(link, { width: 480, margin: 1, errorCorrectionLevel: "M" }));
+    } catch {
+      say("Couldn't make the QR code");
+    }
+  };
+
   const rename = async () => {
-    const name = window.prompt("Name this sound", snd.title === "Original sound" ? "" : snd.title);
+    const name = window.prompt("Name this sound", snd.title === "Original audio" ? "" : snd.title);
     if (name === null) return;
     const title = name.trim().slice(0, 60) || null;
     const { error: err } = await supabase.from("sounds").update({ title }).eq("id", snd.id);
-    if (err) {
-      alert(err.message);
-      return;
-    }
-    setSnd((prev) => ({ ...prev, title: title || "Original sound" }));
+    if (err) return say(err.message);
+    setSnd((prev) => ({ ...prev, title: title || "Original audio" }));
   };
+
+  const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  const R = 22;
+  const C = 2 * Math.PI * R;
 
   return (
     <div className="absolute inset-0 z-[78] flex flex-col" style={{ background: "var(--bg)" }}>
-      <ScreenHeader title="Audio" onBack={onClose} />
+      <div className="flex items-center gap-2 px-3 h-14 shrink-0">
+        <button onClick={onClose} aria-label="Back" className="p-1">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+        <div className="flex-1" />
+        {trending && (
+          <span className="flex items-center gap-1 rounded-full px-3 h-8 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700 }}>
+            <ArrowUpRight size={15} /> Trending
+          </span>
+        )}
+        {snd && (
+          <button onClick={() => setMenuOpen(true)} aria-label="More" className="p-1.5">
+            <Ellipsis size={20} color="var(--text)" />
+          </button>
+        )}
+      </div>
       {error ? (
         <p className="text-xs text-center py-12 px-8" style={{ color: "var(--text-muted)" }}>{error}</p>
       ) : !snd ? (
         <p className="text-xs text-center py-12" style={{ color: "var(--text-muted)" }}>Loading…</p>
       ) : (
-        <div className="flex-1 overflow-y-auto pb-24">
+        <div className="flex-1 overflow-y-auto pb-8">
           {snd.sourceUrl && (
-            <audio ref={audioRef} src={snd.sourceUrl} loop preload="none" onEnded={() => setPlaying(false)} />
+            <audio
+              ref={audioRef}
+              src={snd.sourceUrl}
+              loop
+              preload="metadata"
+              onLoadedMetadata={(e) => setDur(isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
+              onTimeUpdate={(e) => setProg(e.currentTarget.duration ? e.currentTarget.currentTime / e.currentTarget.duration : 0)}
+              onEnded={() => setPlaying(false)}
+            />
           )}
-          <div className="flex items-center gap-4 px-4 pt-4 pb-4">
+          <div className="flex items-center gap-4 px-4 pt-1">
             <button
               onClick={togglePreview}
               disabled={!snd.sourceUrl}
-              className="relative rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
-              style={{ width: 96, height: 96, background: "var(--surface)", border: "1px solid var(--border)" }}
+              className="relative rounded-2xl overflow-hidden shrink-0 flex items-center justify-center transition-transform active:scale-95"
+              style={{ width: 104, height: 104, background: "var(--surface)" }}
               aria-label={playing ? "Pause" : "Play"}
             >
               {snd.cover ? (
                 <img src={snd.cover} alt="" className="absolute inset-0 w-full h-full object-cover" />
+              ) : snd.ownerAvatar ? (
+                <img src={snd.ownerAvatar} alt="" className="absolute inset-0 w-full h-full object-cover" />
               ) : snd.sourceUrl ? (
                 <video src={videoThumb(snd.sourceUrl)} className="absolute inset-0 w-full h-full object-cover" muted playsInline preload="metadata" />
               ) : null}
-              <span className="relative w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
-                {playing ? <Pause size={18} color="#fff" fill="#fff" /> : <Play size={18} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />}
+              <span className="relative flex items-center justify-center" style={{ width: 54, height: 54 }}>
+                <svg width="54" height="54" className="absolute inset-0" style={{ transform: "rotate(-90deg)" }}>
+                  <circle cx="27" cy="27" r={R} fill="rgba(0,0,0,0.45)" stroke="rgba(255,255,255,0.35)" strokeWidth="3" />
+                  {playing && (
+                    <circle cx="27" cy="27" r={R} fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C * (1 - prog)} />
+                  )}
+                </svg>
+                {playing ? <Pause size={20} color="#fff" fill="#fff" className="relative" /> : <Play size={20} color="#fff" fill="#fff" className="relative" style={{ marginLeft: 3 }} />}
               </span>
             </button>
             <div className="flex-1 min-w-0">
-              <p className="text-[17px] flex items-center gap-2" style={{ color: "var(--text)", fontWeight: 800 }}>
+              <p className="text-[19px] flex items-center gap-2" style={{ color: "var(--text)", fontWeight: 800 }}>
                 <span className="truncate">{snd.title}</span>
                 {me === snd.ownerId && (
                   <button onClick={rename} aria-label="Rename" className="shrink-0">
@@ -3000,15 +3470,49 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
                 )}
               </p>
               {snd.ownerName && (
-                <p className="text-[13px] truncate mt-0.5" style={{ color: "var(--text-muted)" }}>@{snd.ownerName}</p>
+                <button onClick={() => openProfileGlobal(snd.ownerId)} className="flex items-center gap-1 text-[15px] mt-0.5 max-w-full" style={{ color: "var(--text)", fontWeight: 600 }}>
+                  <span className="truncate">{snd.ownerName}</span> {snd.ownerVerified && <VerifiedBadge size={13} />}
+                </button>
               )}
-              <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>
-                {formatCount(count)} {count === 1 ? "reel" : "reels"}
-              </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-0.5">
+          <div className="flex items-center gap-2 px-4 mt-3">
+            <p className="flex-1 text-[14px]" style={{ color: "var(--text-secondary)" }}>
+              {dur > 0 ? `${mmss(dur)} · ` : ""}
+              {formatCount(count)} {count === 1 ? "reel" : "reels"}
+            </p>
+            <button
+              onClick={toggleSave}
+              aria-label={saved ? "Unsave audio" : "Save audio"}
+              className="w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90"
+              style={{ background: "var(--surface)" }}
+            >
+              <Bookmark size={19} color="var(--text)" fill={saved ? "var(--text)" : "none"} />
+            </button>
+            <button onClick={share} aria-label="Share audio" className="w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90" style={{ background: "var(--surface)" }}>
+              <ShareIcon size={18} color="var(--text)" style={{ marginLeft: 1 }} />
+            </button>
+          </div>
+
+          {snd.sourceUrl && onUseSound && (
+            <div className="px-4 mt-3">
+              <button
+                onClick={() => {
+                  audioRef.current?.pause();
+                  onUseSound(snd);
+                }}
+                className="w-full rounded-xl h-11 text-[15px] flex items-center justify-center gap-2 transition-transform active:scale-[0.99]"
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+              >
+                <Clapperboard size={17} /> Use audio
+              </button>
+            </div>
+          )}
+
+          {flash && <p className="text-xs text-center pt-3" style={{ color: "var(--accent-solid)" }}>{flash}</p>}
+
+          <div className="grid grid-cols-3 gap-0.5 mt-4">
             {posts.map((pp) => (
               <button
                 key={pp.id}
@@ -3017,25 +3521,51 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
                 style={{ aspectRatio: "9 / 16", background: "var(--surface)" }}
               >
                 <MediaThumb src={pp.media_url} cover={pp.cover_url} isVideo={!isPhotoPost(pp)} />
+                {pp.id === snd.sourcePostId && (
+                  <span className="absolute top-1.5 left-1.5 rounded-full px-2 py-0.5 text-[11px]" style={{ background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontWeight: 700 }}>
+                    Original
+                  </span>
+                )}
+                <span className="absolute left-1.5 bottom-1.5 flex items-center gap-1 text-[12px]" style={{ color: "#FFFFFF", fontWeight: 700, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
+                  <Play size={11} color="#FFFFFF" fill="#FFFFFF" /> {formatCount(pp.views_count || 0)}
+                </span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {snd && snd.sourceUrl && onUseSound && (
-        <div className="absolute left-0 right-0 bottom-0 px-4 pb-5 pt-3" style={{ background: "linear-gradient(to top, var(--bg) 70%, transparent)" }}>
-          <button
-            onClick={() => {
-              audioRef.current?.pause();
-              onUseSound(snd);
-            }}
-            className="w-full rounded-xl h-12 text-sm flex items-center justify-center gap-2"
-            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
-          >
-            <Clapperboard size={17} /> Use this sound
-          </button>
-        </div>
+      {menuOpen && (
+        <StorySheetShell title="Audio" onClose={() => setMenuOpen(false)}>
+          <div className="pb-6">
+            {snd?.sourcePostId && me !== snd.ownerId && (
+              <StoryMenuRow
+                icon={<Flag size={17} color="var(--heart)" />}
+                label="Report"
+                danger
+                onClick={() => {
+                  setMenuOpen(false);
+                  onClose();
+                  reportPostGlobal(snd.sourcePostId);
+                }}
+              />
+            )}
+            <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy link" onClick={copyLink} />
+            <StoryMenuRow icon={<QrCode size={17} color="var(--text)" />} label="Show QR code" onClick={showQr} />
+          </div>
+        </StorySheetShell>
+      )}
+
+      {qr && (
+        <StorySheetShell title="QR code" onClose={() => setQr(null)}>
+          <div className="flex flex-col items-center px-6 pb-7">
+            <div className="rounded-3xl p-4" style={{ background: "#FFFFFF" }}>
+              <img src={qr} alt="QR code for this audio" style={{ width: 220, height: 220 }} />
+            </div>
+            <p className="text-[15px] mt-3" style={{ color: "var(--text)", fontWeight: 700 }}>{snd?.title}</p>
+            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Scan with a phone camera to open this audio on Loop</p>
+          </div>
+        </StorySheetShell>
       )}
     </div>
   );
@@ -4585,6 +5115,13 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
 const STORY_PHOTO_MS = 5000;   // how long a photo is shown
 const STORY_VIDEO_CAP_MS = 30000; // longest a video story can run
 
+// Stickers stay inside this box, so they never hide under the name at the
+// top or the reply bar at the bottom.
+const STICKER_X_MIN = 14;
+const STICKER_X_MAX = 86;
+const STICKER_Y_MIN = 14;
+const STICKER_Y_MAX = 72;
+
 // Composer: preview the picked file, optionally add a caption, publish.
 function StoryComposer({ file, onCancel, onPublished }) {
   const [caption, setCaption] = useState("");
@@ -4606,8 +5143,8 @@ function StoryComposer({ file, onCancel, onPublished }) {
     const d = dragRef.current;
     const box = stageRef.current?.getBoundingClientRect();
     if (!d || !box) return;
-    const x = Math.max(8, Math.min(92, ((e.clientX - box.left) / box.width) * 100));
-    const y = Math.max(6, Math.min(94, ((e.clientY - box.top) / box.height) * 100));
+    const x = Math.max(STICKER_X_MIN, Math.min(STICKER_X_MAX, ((e.clientX - box.left) / box.width) * 100));
+    const y = Math.max(STICKER_Y_MIN, Math.min(STICKER_Y_MAX, ((e.clientY - box.top) / box.height) * 100));
     setStickers((prev) => prev.map((st) => (st.id === d.id ? { ...st, x, y } : st)));
   };
   const isVideo = file.type.startsWith("video");
@@ -4729,12 +5266,18 @@ function StoryComposer({ file, onCancel, onPublished }) {
             </div>
           ))}
           {stickers.length > 0 && (
-            <span
-              className="absolute left-1/2 -translate-x-1/2 bottom-2 text-[11px] px-2.5 py-1 rounded-full pointer-events-none"
-              style={{ background: "rgba(0,0,0,0.5)", color: "#fff" }}
-            >
-              Drag stickers to move them
-            </span>
+            <>
+              <div
+                className="absolute pointer-events-none rounded-2xl"
+                style={{ left: "4%", right: "4%", top: "5%", bottom: "19%", border: "1.5px dashed rgba(255,255,255,0.55)" }}
+              />
+              <span
+                className="absolute left-1/2 -translate-x-1/2 text-[11px] px-2.5 py-1 rounded-full pointer-events-none whitespace-nowrap"
+                style={{ bottom: "12%", background: "rgba(0,0,0,0.55)", color: "#fff" }}
+              >
+                Drag stickers — they stay inside the dotted box
+              </span>
+            </>
           )}
         </div>
       </div>
@@ -5254,7 +5797,13 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
           <div
             key={st.id}
             className="absolute"
-            style={{ left: `${st.x}%`, top: `${st.y}%`, transform: "translate(-50%, -50%)", pointerEvents: "auto", zIndex: 15 }}
+            style={{
+              left: `${Math.min(STICKER_X_MAX, Math.max(STICKER_X_MIN, st.x))}%`,
+              top: `${Math.min(STICKER_Y_MAX, Math.max(STICKER_Y_MIN, st.y))}%`,
+              transform: "translate(-50%, -50%)",
+              pointerEvents: "auto",
+              zIndex: 15,
+            }}
             onPointerDown={(e) => e.stopPropagation()}
             onPointerUp={(e) => e.stopPropagation()}
           >
@@ -5766,7 +6315,11 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
   // while the reply box has focus — otherwise the story would slide
   // out from under whatever you are doing.
   const [stickerSheet, setStickerSheet] = useState(false);
-  const frozen = held || sheet !== null || replyFocused || stickerSheet;
+  const [adding, setAdding] = useState(false); // the + button's photo picker is open
+  const [addFile, setAddFile] = useState(null); // picked from +, being edited
+  const addRef = React.useRef(null);
+  const [quick, setQuick] = useState(getStoryQuick);
+  const frozen = held || sheet !== null || replyFocused || stickerSheet || adding || !!addFile;
 
   const showFlash = (msg) => {
     setFlash(msg);
@@ -5806,6 +6359,9 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         await supabase
           .from("story_views")
           .upsert({ story_id: rawStory.id, viewer_id: currentUserId }, { onConflict: "story_id,viewer_id" });
+      } else {
+        // Your own views aren't counted, but your ring still turns grey.
+        markOwnStorySeen(rawStory.id);
       }
 
       // RLS narrows these automatically: the owner sees every row,
@@ -6021,6 +6577,41 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         flash={showFlash}
       />
 
+      <input
+        ref={addRef}
+        type="file"
+        accept="image/*,video/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) setAddFile(f);
+          setAdding(false);
+        }}
+      />
+      {addFile && (
+        <StoryComposer
+          file={addFile}
+          onCancel={() => setAddFile(null)}
+          onPublished={() => {
+            setAddFile(null);
+            onChanged?.();
+            onClose();
+          }}
+        />
+      )}
+      {sheet === "quick" && (
+        <QuickEmojiSheet
+          current={quick}
+          onClose={() => setSheet(null)}
+          onSave={(list) => {
+            saveStoryQuick(list);
+            setQuick(list);
+            setSheet(null);
+          }}
+        />
+      )}
+
       {/* segmented progress */}
       <div className="relative flex gap-1 px-2.5 pt-3">
         {group.items.map((_, i) => (
@@ -6065,17 +6656,28 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         </button>
       </div>
 
-      {/* caption */}
-      {story.caption && (
-        <div className="absolute left-0 right-0 px-5 pointer-events-none" style={{ bottom: 92 }}>
-          <p className="text-sm" style={{ color: "#FFFFFF", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+      {/* ---- bottom bar: caption, quick reactions, reply ---- */}
+      <div className="absolute left-0 right-0 bottom-0 px-3.5 pb-5 pt-3">
+        {story?.shared_post_id && (
+          <div className="flex justify-center pb-2.5">
+            <button
+              onClick={() => onOpenProfile?.(story.user_id)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+              style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.22)" }}
+            >
+              <Layers size={13} color="#FFFFFF" />
+              <span className="text-[12px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>A post from Loop</span>
+            </button>
+          </div>
+        )}
+        {story.caption && (
+          <p
+            className="text-[15px] text-center px-3 pb-3"
+            style={{ color: "#FFFFFF", whiteSpace: "pre-wrap", lineHeight: 1.45, textShadow: "0 1px 4px rgba(0,0,0,0.75)", wordBreak: "break-word" }}
+          >
             {story.caption}
           </p>
-        </div>
-      )}
-
-      {/* ---- bottom bar ---- */}
-      <div className="absolute left-0 right-0 bottom-0 px-3.5 pb-5 pt-3">
+        )}
         {isOwner ? (
           <div className="flex items-center gap-2">
             <button
@@ -6099,9 +6701,12 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
             {/* add another story */}
             <button
               onClick={() => {
-                onClose();
-                onAddStory?.();
+                // Pick a photo or video right here; the story editor opens on top.
+                setAdding(true);
+                addRef.current?.click();
+                window.addEventListener("focus", () => setTimeout(() => setAdding(false), 1500), { once: true });
               }}
+              aria-label="Add to your story"
               className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
               style={{ background: ACCENT }}
             >
@@ -6120,19 +6725,27 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         ) : (
           <>
             {canReply && !replyFocused && !replyText && (
-              <div className="flex items-center justify-between px-1 pb-2.5">
-                {STORY_QUICK_REACTIONS.map((emo) => (
+              <div className="flex items-center justify-between gap-0.5 px-0.5 pb-3">
+                {quick.map((emo) => (
                   <button
                     key={emo}
                     onClick={() => sendReply(emo)}
                     disabled={replySending}
                     aria-label={`Send ${emo}`}
                     className="transition-transform active:scale-125"
-                    style={{ fontSize: 26, lineHeight: 1, opacity: replySending ? 0.5 : 1 }}
+                    style={{ opacity: replySending ? 0.5 : 1, lineHeight: 0 }}
                   >
-                    {emo}
+                    <AnimatedEmoji emoji={emo} size={32} />
                   </button>
                 ))}
+                <button
+                  onClick={() => setSheet("quick")}
+                  aria-label="Choose your quick reactions"
+                  className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+                  style={{ background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.25)" }}
+                >
+                  <Plus size={16} color="#FFFFFF" />
+                </button>
               </div>
             )}
           <div className="flex items-center gap-2.5">
@@ -6185,18 +6798,6 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         )}
       </div>
 
-      {story?.shared_post_id && (
-        <button
-          onClick={() => {
-            onOpenProfile?.(story.user_id);
-          }}
-          className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full z-20"
-          style={{ bottom: 92, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.22)" }}
-        >
-          <Layers size={13} color="#FFFFFF" />
-          <span className="text-[12px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>A post from Loop</span>
-        </button>
-      )}
 
       {held && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-none">
@@ -6443,6 +7044,7 @@ function StoriesBar({ onOpenProfile }) {
 
     const { data: views } = await supabase.from("story_views").select("story_id").eq("viewer_id", user.id);
     const seen = new Set((views || []).map((v) => v.story_id));
+    getOwnSeenStories().forEach((id) => seen.add(id));
 
     const byUser = new Map();
     for (const r of rows) {
@@ -8087,6 +8689,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   const [likesPopupOpen, setLikesPopupOpen] = useState(false);
   const [shareReel, setShareReel] = useState(null);
   const [noteFor, setNoteFor] = useState(null); // reel whose repost note is being written
+  const [wideReels, setWideReels] = useState({}); // reelId -> true when the video is wider than a phone screen
   const [repostNotes, setRepostNotes] = useRepostNotes(reels.map((r) => r.id), userId);
   const [collectionReel, setCollectionReel] = useState(null);
   const savePressRef = React.useRef(null);
@@ -8501,14 +9104,15 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Reel video */}
-      <div className="absolute inset-0">
+      {/* Reel video — a tall video fills the screen; a wide or square one is
+          shown whole in the middle, the way Instagram does it. */}
+      <div className="absolute inset-0" style={{ background: "#000000" }}>
         <video
           key={reel.id}
           ref={videoRef}
           src={reel.media_url}
           poster={reel.cover_url || undefined}
-          className="w-full h-full object-cover"
+          className={`w-full h-full ${wideReels[reel.id] ? "object-contain" : "object-cover"}`}
           playsInline
           autoPlay
           muted={muted || !!reel.sound?.borrowed}
@@ -8516,6 +9120,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
           onLoadedMetadata={(e) => {
             setDur(isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0);
             setCur(0);
+            const vw = e.currentTarget.videoWidth;
+            const vh = e.currentTarget.videoHeight;
+            if (vw && vh) {
+              const wide = vw / vh > 0.66;
+              const id = reel.id;
+              setWideReels((m) => (m[id] === wide ? m : { ...m, [id]: wide }));
+            }
           }}
           onTimeUpdate={(e) => {
             if (!scrubbing) setCur(e.currentTarget.currentTime);
@@ -12037,6 +12648,17 @@ function SettingsScreen({
   const [view, setView] = useState("menu"); // menu | editProfile | changeEmail | changePassword | appearance | notifications | about | support | deleteAccount
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState(null);
+  const [favCount, setFavCount] = useState(null);
+  const [mutedCount, setMutedCount] = useState(null);
+  useEffect(() => {
+    if (!userId || view !== "menu") return;
+    supabase
+      .from("favorites")
+      .select("target_id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .then(({ count, error }) => !error && setFavCount(count || 0));
+    getRelations().then((r) => setMutedCount(r.muted.size));
+  }, [userId, view]);
   const [profile, setProfile] = useState(null);
 
   const [fullName, setFullName] = useState("");
@@ -12716,6 +13338,9 @@ function SettingsScreen({
   if (view === "status") return <AccountStatusScreen onBack={() => setView("menu")} />;
   if (view === "favourites") return <FavouritesScreen onBack={() => setView("menu")} />;
   if (view === "hiddenWords") return <HiddenWordsScreen onBack={() => setView("menu")} />;
+  if (view === "permissions") return <DevicePermissionsScreen onBack={() => setView("menu")} />;
+  if (view === "apps") return <AppsWebsitesScreen onBack={() => setView("menu")} />;
+  if (view === "counts") return <CountsSettingsScreen onBack={() => setView("menu")} />;
 
   if (view === "about") {
     return (
@@ -12866,8 +13491,10 @@ function SettingsScreen({
     {
       title: "What you see",
       rows: [
-        { icon: Star, label: "Favourites", onClick: () => setView("favourites") },
+        { icon: Star, label: "Favourites", value: favCount === null ? undefined : String(favCount), onClick: () => setView("favourites") },
+        { icon: VolumeX, label: "Muted accounts", value: mutedCount === null ? undefined : String(mutedCount), onClick: () => onOpenPeopleList?.("muted") },
         { icon: MessageCircle, label: "Hidden words", onClick: () => setView("hiddenWords") },
+        { icon: HeartOff, label: "Like and share counts", onClick: () => setView("counts") },
       ],
     },
     {
@@ -12882,14 +13509,15 @@ function SettingsScreen({
       title: "How others can interact with you",
       rows: [
         { icon: Shield, label: "Restricted", onClick: () => onOpenPeopleList?.("restricted") },
-        { icon: VolumeX, label: "Muted accounts", onClick: () => onOpenPeopleList?.("muted") },
       ],
     },
     {
       title: "Your app and media",
       rows: [
+        { icon: Smartphone, label: "Device permissions", onClick: () => setView("permissions") },
         { icon: Palette, label: "Theme & colour", value: themeLabel, onClick: () => setView("appearance") },
         { icon: Globe, label: "Language", value: "English · বাংলা soon" },
+        { icon: MonitorSmartphone, label: "App website permissions", onClick: () => setView("apps") },
       ],
     },
     ...(staffRole
@@ -17282,6 +17910,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   const [reelSort, setReelSort] = useState("latest"); // latest | views
   const [reelSortMenu, setReelSortMenu] = useState(false);
   const [hasStory, setHasStory] = useState(false);
+  const [storySeen, setStorySeen] = useState(false); // watched them all → grey ring
   const avatarInputRef = React.useRef(null);
   const avatarPressRef = React.useRef(null);
   const avatarLongRef = React.useRef(false);
@@ -17393,10 +18022,9 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       );
     }
 
-    const { data: repostsData } = await supabase
-      .from("reposts")
-      .select("post_id")
-      .eq("user_id", targetId);
+    let { data: repostsData, error: repostsErr } = await supabase.from("reposts").select("post_id, note").eq("user_id", targetId);
+    // Without loop-step-12.sql there's no note column yet.
+    if (repostsErr) ({ data: repostsData } = await supabase.from("reposts").select("post_id").eq("user_id", targetId));
 
     if (repostsData && repostsData.length > 0) {
       const postIds = repostsData.map((r) => r.post_id);
@@ -17404,7 +18032,8 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         .from("posts")
         .select("id, media_url, media_type, cover_url")
         .in("id", postIds);
-      setReposts(repostedPosts || []);
+      const noteOf = Object.fromEntries(repostsData.map((r) => [r.post_id, r.note || null]));
+      setReposts((repostedPosts || []).map((pp) => ({ ...pp, repostNote: noteOf[pp.id] || null })));
     } else {
       setReposts([]);
     }
@@ -17527,14 +18156,30 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   // A coloured ring only when they have a story from the last 24 hours.
   useEffect(() => {
     if (!profile?.id) return;
-    supabase
-      .from("stories")
-      .select("id")
-      .eq("user_id", profile.id)
-      .gt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
-      .limit(1)
-      .then(({ data, error }) => setHasStory(!error && (data || []).length > 0));
-  }, [profile?.id]);
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("stories")
+        .select("id")
+        .eq("user_id", profile.id)
+        .gt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+        .limit(30);
+      if (cancelled) return;
+      const ids = !error ? (data || []).map((x) => x.id) : [];
+      setHasStory(ids.length > 0);
+      if (!ids.length) return setStorySeen(false);
+      if (profile.id === myId) {
+        const own = getOwnSeenStories();
+        setStorySeen(ids.every((id) => own.has(id)));
+        return;
+      }
+      const { data: v } = await supabase.from("story_views").select("story_id").eq("viewer_id", myId || "").in("story_id", ids);
+      if (!cancelled) setStorySeen(ids.every((id) => (v || []).some((x) => x.story_id === id)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id, myId, viewStoryFor]);
 
   const flashNote = (msg) => {
     setReportNote(msg);
@@ -17837,8 +18482,8 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
             style={{
               width: 88,
               height: 88,
-              background: hasStory ? "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)" : "transparent",
-              padding: hasStory ? 3 : 0,
+              background: hasStory ? (storySeen ? "var(--toggle-off)" : "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)") : "transparent",
+              padding: hasStory ? (storySeen ? 2 : 3) : 0,
             }}
           >
             <div
@@ -17917,15 +18562,13 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         {ownChannel && (
           <button
             onClick={() => openChannelGlobal(ownChannel.id)}
-            className="flex items-center gap-1.5 mt-2 max-w-full rounded-full pl-1 pr-2 h-7 transition-transform active:scale-[0.98]"
-            style={{ background: "var(--surface)" }}
+            className="flex items-center gap-1.5 mt-1 max-w-full text-left active:opacity-60"
           >
-            <ChannelAvatar channel={ownChannel} size={21} />
-            <span className="text-[12.5px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{ownChannel.name}</span>
-            <span className="text-[11.5px] shrink-0" style={{ color: "var(--text-muted)" }}>
+            <Radio size={14} color="var(--accent-solid)" className="shrink-0" />
+            <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{ownChannel.name}</span>
+            <span className="text-[12px] shrink-0" style={{ color: "var(--text-muted)" }}>
               · {formatCount(ownChannel.members)} {ownChannel.members === 1 ? "member" : "members"}
             </span>
-            <ChevronRight size={14} color="var(--text-muted)" className="shrink-0" />
           </button>
         )}
         {Array.isArray(profile.links) && profile.links.length > 0 && (
@@ -18181,6 +18824,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
               {tab === "reposts" && (
                 <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
               )}
+              {tab === "reposts" && <RepostNoteTile note={p.repostNote} />}
               {tab === "tagged" && (
                 <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                   <UserSquare2 size={12} color="#FFFFFF" />
@@ -21564,6 +22208,7 @@ function SavedScreen({ onBack, onOpenPost }) {
         {[
           { k: "all", label: "All posts" },
           { k: "collections", label: "Collections" },
+          { k: "audio", label: "Audio" },
         ].map((t) => (
           <button
             key={t.k}
@@ -21592,6 +22237,8 @@ function SavedScreen({ onBack, onOpenPost }) {
             <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
           ))}
         </div>
+      ) : tab === "audio" ? (
+        <SavedAudioList />
       ) : tab === "all" ? (
         loadError ? (
           <div className="px-6 py-12 text-center">
@@ -23693,7 +24340,7 @@ function SetNewPasswordScreen({ onDone }) {
 }
 
 function LoginScreen({ onLogin, onGoSignup, onForgot }) {
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(""); // username, email or phone
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -23701,15 +24348,39 @@ function LoginScreen({ onLogin, onGoSignup, onForgot }) {
 
   const handleLogin = async () => {
     setError("");
-    if (!email || !password) {
-      setError("Enter email and password");
+    const id = email.trim();
+    if (!id || !password) {
+      setError("Enter your username, email or phone number, and your password");
       return;
     }
     setLoading(true);
-    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+    let loginEmail = id;
+    if (!id.includes("@")) {
+      // A username or phone number: the database checks the password first and
+      // only then says which email belongs to it, so nobody can look emails up.
+      const { data, error: lookErr } = await supabase.rpc("login_email_for", { p_identifier: id, p_password: password });
+      if (lookErr) {
+        setLoading(false);
+        setError(
+          /too_many/.test(lookErr.message)
+            ? "Too many tries. Wait 15 minutes and try again."
+            : /login_email_for|function/.test(lookErr.message)
+            ? "Username and phone login need loop-step-13.sql — log in with your email for now."
+            : lookErr.message
+        );
+        return;
+      }
+      if (!data) {
+        setLoading(false);
+        setError("Incorrect username or password");
+        return;
+      }
+      loginEmail = data;
+    }
+    const { error: authError } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
     setLoading(false);
     if (authError) {
-      setError(authError.message);
+      setError(/invalid login/i.test(authError.message) ? "Incorrect username or password" : authError.message);
       return;
     }
     onLogin();
@@ -23724,7 +24395,13 @@ function LoginScreen({ onLogin, onGoSignup, onForgot }) {
         </p>
       </div>
 
-      <AuthInput icon={Mail} type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <AuthInput
+        icon={CircleUserRound}
+        type="text"
+        placeholder="Username, email or phone number"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+      />
       <AuthInput
         icon={Lock}
         type={showPass ? "text" : "password"}
@@ -24627,6 +25304,7 @@ export default function App() {
   const [locked, setLocked] = useState(() => !!readQuickUnlock());
   const [hashtag, setHashtag] = useState(null);
   const [locationPage, setLocationPage] = useState(null); // a place name
+  const [soundPage, setSoundPage] = useState(null); // a sound id
   const [uploadMode, setUploadMode] = useState("photo");
   const [presetSound, setPresetSound] = useState(null); // from "Use this sound"
   const [uploadNonce, setUploadNonce] = useState(0);
@@ -24638,6 +25316,8 @@ export default function App() {
   // Places, profiles, posts and chats opened from deep inside other screens.
   useEffect(() => {
     const onLocation = (e) => setLocationPage(e.detail);
+    const onSound = (e) => setSoundPage(e.detail);
+    window.addEventListener("loop:open-sound", onSound);
     const onProfile = (e) => {
       setChannelOpen(null);
       setInboxOpen(false);
@@ -24666,6 +25346,7 @@ export default function App() {
     window.addEventListener("loop:message-user", onMessageUser);
     return () => {
       window.removeEventListener("loop:location", onLocation);
+      window.removeEventListener("loop:open-sound", onSound);
       window.removeEventListener("loop:open-profile", onProfile);
       window.removeEventListener("loop:report-post", onReport);
       window.removeEventListener("loop:view-post", onViewPost);
@@ -24859,7 +25540,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null || locationPage !== null || locked || channelOpen !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null || locationPage !== null || locked || channelOpen !== null || soundPage !== null;
 
   // ---- Back button ----
   // Every screen that opens on top (a profile, a post, Settings, Your
@@ -24870,6 +25551,7 @@ export default function App() {
   // the screen picker below).
   const overlayStack = [
     [channelOpen !== null, () => setChannelOpen(null)],
+    [soundPage !== null, () => setSoundPage(null)],
     [moderationOpen, () => setModerationOpen(false)],
     [reportPostId !== null, () => setReportPostId(null)],
     [hashtag !== null, () => setHashtag(null)],
@@ -24944,6 +25626,12 @@ export default function App() {
           setChannelOpen(ch[1]);
           return;
         }
+        const sharedSound = window.location.pathname.match(/^\/audio\/([0-9a-zA-Z-]+)\/?$/);
+        if (sharedSound) {
+          window.history.replaceState(null, "", "/");
+          setSoundPage(sharedSound[1]);
+          return;
+        }
         const sharedPost = window.location.pathname.match(/^\/p\/([0-9a-fA-F-]{36})\/?$/);
         if (sharedPost) {
           window.history.replaceState(null, "", "/");
@@ -24989,7 +25677,7 @@ export default function App() {
     return (
       <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
-        <div className="flex flex-col items-center gap-4">
+        <div className="flex-1 w-full flex flex-col items-center justify-center gap-4" style={{ minHeight: "100dvh" }}>
           <LoopLogo size={96} />
           <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
         </div>
@@ -25287,6 +25975,25 @@ export default function App() {
           )}
         </ErrorBoundary>
 
+        {soundPage && meId && !locked && (
+          <ErrorBoundary key={`sound-${soundPage}`}>
+            <SoundScreen
+              soundId={soundPage}
+              onClose={() => setSoundPage(null)}
+              onOpenPost={(id) => {
+                setSoundPage(null);
+                setViewPostId(id);
+              }}
+              onUseSound={(snd) => {
+                setSoundPage(null);
+                setPresetSound(snd);
+                setUploadMode("reel");
+                setUploadNonce((n) => n + 1);
+                setActive("upload");
+              }}
+            />
+          </ErrorBoundary>
+        )}
         {channelOpen && meId && !locked && (
           <ErrorBoundary key={`channel-${channelOpen}`}>
             <ChannelScreen
