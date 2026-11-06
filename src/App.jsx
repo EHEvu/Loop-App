@@ -89,6 +89,22 @@ import {
   Shield,
   Layers,
   Clock,
+  ChevronDown,
+  BellRing,
+  BellOff,
+  Radio,
+  Reply,
+  CirclePlus,
+  BookOpen,
+  Headphones,
+  Tv,
+  Gamepad2,
+  GraduationCap,
+  Hammer,
+  UtensilsCrossed,
+  Lightbulb,
+  Plane,
+  Dumbbell,
 } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -222,6 +238,15 @@ const THEME_CSS = `
     80% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
     100% { transform: translate(-50%, -60%) scale(0.9); opacity: 0; }
   }
+  @keyframes loopPop {
+    0% { transform: scale(0.6); opacity: 0; }
+    70% { transform: scale(1.08); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes loopSheetUp {
+    0% { transform: translateY(24px); opacity: 0; }
+    100% { transform: translateY(0); opacity: 1; }
+  }
   .loop-heart-burst {
     position: absolute; left: 50%; top: 50%;
     pointer-events: none;
@@ -283,9 +308,9 @@ class ErrorBoundary extends React.Component {
 function getCountPrefs() {
   try {
     const raw = localStorage.getItem("loop_count_prefs");
-    return raw ? JSON.parse(raw) : { likes: true, comments: true, reposts: true, saves: true };
+    return raw ? { shares: true, ...JSON.parse(raw) } : { likes: true, comments: true, reposts: true, saves: true, shares: true };
   } catch {
-    return { likes: true, comments: true, reposts: true, saves: true };
+    return { likes: true, comments: true, reposts: true, saves: true, shares: true };
   }
 }
 function saveCountPrefs(prefs) {
@@ -397,6 +422,716 @@ async function rememberWatched(userId, postId) {
   } catch {}
 }
 
+// ============================================================
+// Step 12 — shared helpers
+// ============================================================
+
+// ---- Open things from anywhere (the App listens for these) ----
+const openLocationGlobal = (loc) => {
+  if (loc && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("loop:location", { detail: loc }));
+};
+const openProfileGlobal = (id) => {
+  if (id && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("loop:open-profile", { detail: id }));
+};
+const reportPostGlobal = (id) => {
+  if (id && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("loop:report-post", { detail: id }));
+};
+const viewPostGlobal = (id) => {
+  if (id && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("loop:view-post", { detail: id }));
+};
+const messageUserGlobal = (person) => {
+  if (person?.id && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("loop:message-user", { detail: person }));
+};
+
+// ---- Sound on/off, shared by every video ----
+// Turn the sound on for one video and the next one plays with sound too —
+// on Home, in Reels and on a post — the way Instagram does it.
+let globalMuted = true;
+const mutedListeners = new Set();
+function setGlobalMuted(next) {
+  globalMuted = !!next;
+  mutedListeners.forEach((fn) => fn(globalMuted));
+}
+function useGlobalMuted() {
+  const [m, setM] = useState(globalMuted);
+  useEffect(() => {
+    mutedListeners.add(setM);
+    setM(globalMuted);
+    return () => {
+      mutedListeners.delete(setM);
+    };
+  }, []);
+  const set = (v) => setGlobalMuted(typeof v === "function" ? v(globalMuted) : v);
+  return [m, set];
+}
+
+// ---- A place name you can tap ----
+function LocationLink({ location, light = false, size = 11 }) {
+  if (!location) return null;
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        openLocationGlobal(location);
+      }}
+      className="flex items-center gap-0.5 min-w-0 cursor-pointer"
+      style={{ color: light ? "rgba(255,255,255,0.88)" : "var(--text-secondary)", fontSize: size }}
+    >
+      <MapPin size={size - 2} className="shrink-0" />
+      <span className="truncate">{location}</span>
+    </span>
+  );
+}
+
+// ---- Shares ----
+// Sending the same post to the same chat twice counts once, so the number
+// can't be pushed up by tapping Send over and over.
+async function recordShare(postId, kind, target = "") {
+  if (!postId) return;
+  try {
+    await supabase
+      .from("post_shares")
+      .upsert({ post_id: postId, kind, target: String(target || "") }, { onConflict: "post_id,user_id,kind,target", ignoreDuplicates: true });
+  } catch {}
+}
+
+// ---- Animated emoji (like Telegram) ----
+// Google's Noto animated emoji (free to use, CC BY 4.0). A message that is
+// only 1–3 emoji shows them big and moving. If an emoji has no animation,
+// the normal one shows instead.
+const EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+function splitGraphemes(text) {
+  try {
+    if (typeof Intl !== "undefined" && Intl.Segmenter) {
+      return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)].map((s) => s.segment);
+    }
+  } catch {}
+  return Array.from(text);
+}
+function emojiOnly(text) {
+  const t = String(text || "").trim();
+  if (!t || t.length > 40) return null;
+  const parts = splitGraphemes(t).filter((g) => g.trim() !== "");
+  if (parts.length === 0 || parts.length > 3) return null;
+  return parts.every((g) => EMOJI_RE.test(g)) ? parts : null;
+}
+function emojiCodes(emoji) {
+  const cps = Array.from(emoji).map((ch) => ch.codePointAt(0).toString(16));
+  const full = cps.join("_");
+  const bare = cps.filter((c) => c !== "fe0f").join("_");
+  return full === bare ? [full] : [full, bare];
+}
+function AnimatedEmoji({ emoji, size = 64 }) {
+  const codes = React.useMemo(() => emojiCodes(emoji), [emoji]);
+  const [at, setAt] = useState(0);
+  useEffect(() => setAt(0), [emoji]);
+  if (at >= codes.length) {
+    return (
+      <span style={{ fontSize: Math.round(size * 0.8), lineHeight: `${size}px`, width: size, height: size, display: "inline-block", textAlign: "center" }}>
+        {emoji}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`https://fonts.gstatic.com/s/e/notoemoji/latest/${codes[at]}/512.webp`}
+      alt={emoji}
+      width={size}
+      height={size}
+      loading="lazy"
+      draggable={false}
+      onError={() => setAt((i) => i + 1)}
+      style={{ width: size, height: size, display: "inline-block" }}
+    />
+  );
+}
+function BigEmojiMessage({ parts }) {
+  const size = parts.length === 1 ? 96 : parts.length === 2 ? 72 : 58;
+  return (
+    <div className="flex items-center gap-1 py-0.5">
+      {parts.map((e, i) => (
+        <AnimatedEmoji key={i} emoji={e} size={size} />
+      ))}
+    </div>
+  );
+}
+
+// ---- Repost with a note ----
+// After you repost, a small thought bubble can sit on the post or reel —
+// "Hello ❤️" — above your picture, the way Instagram shows it. You see your
+// own; you also see notes from people you follow.
+const REPOST_NOTE_EMOJI = ["\u{1F60D}", "\u{1F62D}", "\u{1F602}", "❤️", "\u{1F614}", "\u{1F97A}", "\u{1F494}", "\u{1F64F}"];
+
+async function fetchRepostNotes(postIds, meId) {
+  if (!postIds.length || !meId) return {};
+  try {
+    const [{ data: rows, error }, { data: fol }] = await Promise.all([
+      supabase.from("reposts").select("post_id, user_id, note, note_at").in("post_id", postIds),
+      supabase.from("follows").select("following_id").eq("follower_id", meId),
+    ]);
+    if (error) return {};
+    const following = new Set((fol || []).map((f) => f.following_id));
+    const pick = {};
+    (rows || []).forEach((r) => {
+      const mine = r.user_id === meId;
+      if (!mine && !(following.has(r.user_id) && r.note)) return;
+      const cur = pick[r.post_id];
+      if (cur && cur.mine) return;
+      if (mine || !cur || new Date(r.note_at || 0) > new Date(cur.noteAt || 0)) {
+        pick[r.post_id] = { userId: r.user_id, note: r.note || "", noteAt: r.note_at, mine };
+      }
+    });
+    const ids = [...new Set(Object.values(pick).map((x) => x.userId))];
+    if (ids.length) {
+      const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
+      const by = Object.fromEntries((profs || []).map((pp) => [pp.id, pp]));
+      Object.values(pick).forEach((x) => {
+        x.username = by[x.userId]?.username || "";
+        x.avatarUrl = by[x.userId]?.avatar_url || null;
+      });
+    }
+    return pick;
+  } catch {
+    return {};
+  }
+}
+
+function useRepostNotes(postIds, meId) {
+  const [notes, setNotes] = useState({});
+  const key = postIds.join(",");
+  useEffect(() => {
+    if (!meId || !key) return;
+    let cancelled = false;
+    fetchRepostNotes(postIds, meId).then((m) => {
+      if (!cancelled) setNotes((prev) => ({ ...m, ...Object.fromEntries(Object.entries(prev).filter(([, v]) => v === null || v?.mine)) }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, meId]);
+  return [notes, setNotes];
+}
+
+function RepostBadge({ size = 17 }) {
+  return (
+    <span
+      className="absolute rounded-full flex items-center justify-center"
+      style={{ width: size, height: size, right: -3, bottom: -2, background: "linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)", border: "1.5px solid #FFFFFF" }}
+    >
+      <RepostIcon size={Math.round(size * 0.6)} color="#FFFFFF" strokeWidth={2.6} />
+    </span>
+  );
+}
+
+function RepostNoteBubble({ entry, onTap, avatarSize = 34 }) {
+  if (!entry) return null;
+  const empty = !entry.note;
+  if (empty && !entry.mine) return null;
+  const bg = "rgba(22,22,26,0.84)";
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onTap?.(entry);
+      }}
+      onTouchStart={(e) => e.stopPropagation()}
+      onTouchEnd={(e) => e.stopPropagation()}
+      className="flex flex-col items-start text-left"
+      style={{ maxWidth: 210 }}
+    >
+      <span
+        className="rounded-2xl px-3 py-1.5 text-[13px]"
+        style={{
+          background: bg,
+          color: "#FFFFFF",
+          backdropFilter: "blur(8px)",
+          fontWeight: 500,
+          wordBreak: "break-word",
+          fontStyle: empty ? "italic" : "normal",
+          opacity: empty ? 0.85 : 1,
+          boxShadow: "0 2px 10px rgba(0,0,0,0.25)",
+        }}
+      >
+        {empty ? "Add a note…" : entry.note}
+      </span>
+      <span className="rounded-full" style={{ width: 8, height: 8, background: bg, marginLeft: 16, marginTop: 2 }} />
+      <span className="rounded-full" style={{ width: 4, height: 4, background: bg, marginLeft: 12, marginTop: 1 }} />
+      <span className="relative" style={{ marginTop: 2 }}>
+        <Avatar username={entry.username || "?"} avatarUrl={entry.avatarUrl} size={avatarSize} />
+        <RepostBadge size={Math.max(14, Math.round(avatarSize * 0.48))} />
+      </span>
+    </button>
+  );
+}
+
+function RepostNoteSheet({ post, meId, initialNote = "", onClose, onSaved, onUndo }) {
+  const [text, setText] = useState(initialNote || "");
+  const [me, setMe] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const kind = isPhotoPost(post) || (post.media_count || 1) > 1 ? "post" : "reel";
+  useEffect(() => {
+    if (!meId) return;
+    supabase
+      .from("profiles")
+      .select("username, avatar_url")
+      .eq("id", meId)
+      .maybeSingle()
+      .then(({ data }) => setMe(data || null));
+  }, [meId]);
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setErr("");
+    const note = text.trim().slice(0, 60) || null;
+    const { error } = await supabase
+      .from("reposts")
+      .update({ note, note_at: note ? new Date().toISOString() : null })
+      .eq("post_id", post.id)
+      .eq("user_id", meId);
+    setBusy(false);
+    if (error) {
+      setErr(/note/.test(error.message) ? "Notes need loop-step-12.sql — run it in Supabase first." : error.message);
+      return;
+    }
+    onSaved(note || "", me);
+  };
+  return (
+    <div
+      className="fixed inset-0 z-[95] flex flex-col justify-end"
+      style={{ background: "rgba(0,0,0,0.74)", backdropFilter: "blur(6px)" }}
+      onClick={() => onClose(me)}
+    >
+      <div className="flex flex-col items-center px-5 pb-8" onClick={(e) => e.stopPropagation()} style={{ animation: "loopSheetUp 0.22s ease-out" }}>
+        <input
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value.slice(0, 60))}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          placeholder="Add a note…"
+          className="rounded-full px-5 h-12 text-[16px] text-center outline-none"
+          style={{ background: "#202024", color: "#FFFFFF", width: Math.max(190, Math.min(330, 60 + text.length * 9)), maxWidth: "92%" }}
+        />
+        <span className="rounded-full" style={{ width: 9, height: 9, background: "#202024", marginTop: 4, marginRight: 40 }} />
+        <span className="rounded-full" style={{ width: 5, height: 5, background: "#202024", marginTop: 2, marginRight: 52 }} />
+        <span className="relative mt-1">
+          <Avatar username={me?.username || "?"} avatarUrl={me?.avatar_url} size={86} />
+          <RepostBadge size={30} />
+        </span>
+        <p className="text-[14px] mt-4 text-center" style={{ color: "rgba(255,255,255,0.72)" }}>
+          You reposted this {kind}.{" "}
+          <button onClick={onUndo} style={{ color: "#FFFFFF", fontWeight: 700 }}>
+            Undo
+          </button>
+        </p>
+        <div className="flex justify-between w-full mt-5" style={{ maxWidth: 380 }}>
+          {REPOST_NOTE_EMOJI.map((emo) => (
+            <button
+              key={emo}
+              onClick={() => setText((t) => (t + emo).slice(0, 60))}
+              className="transition-transform active:scale-125"
+              aria-label={`Add ${emo}`}
+            >
+              <AnimatedEmoji emoji={emo} size={36} />
+            </button>
+          ))}
+        </div>
+        {err && <p className="text-xs mt-3" style={{ color: "#FF8A8A" }}>{err}</p>}
+        <button
+          onClick={save}
+          disabled={busy}
+          className="w-full rounded-2xl h-12 mt-5 text-[15px] transition-transform active:scale-[0.98]"
+          style={{ background: "#FFFFFF", color: "#000000", fontWeight: 700, maxWidth: 420, opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---- Profile banner: "Fill in the blank" ----
+const BANNER_KINDS = [
+  { key: "reading", label: "Reading", icon: BookOpen },
+  { key: "listening", label: "Listening to", icon: Headphones },
+  { key: "watching", label: "Watching", icon: Tv },
+  { key: "playing", label: "Playing", icon: Gamepad2 },
+  { key: "learning", label: "Learning", icon: GraduationCap },
+  { key: "working", label: "Working on", icon: Hammer },
+  { key: "craving", label: "Craving", icon: UtensilsCrossed },
+  { key: "thinking", label: "Thinking about", icon: Lightbulb },
+  { key: "going", label: "Going to", icon: Plane },
+  { key: "training", label: "Training for", icon: Dumbbell },
+];
+const bannerKindOf = (key) => BANNER_KINDS.find((b) => b.key === key) || BANNER_KINDS[0];
+
+async function fetchBanner(userId) {
+  if (!userId) return null;
+  try {
+    const { data, error } = await supabase.from("profiles").select("banner_kind, banner_text").eq("id", userId).maybeSingle();
+    if (error || !data?.banner_text) return null;
+    return { kind: data.banner_kind || "reading", text: data.banner_text };
+  } catch {
+    return null;
+  }
+}
+
+function BannerSheet({ userId, initial, onClose, onSaved }) {
+  const [kind, setKind] = useState(initial?.kind || "reading");
+  const [text, setText] = useState(initial?.text || "");
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const k = bannerKindOf(kind);
+  const KIcon = k.icon;
+  const write = async (patch, after) => {
+    setBusy(true);
+    setErr("");
+    const { error } = await supabase.from("profiles").update(patch).eq("id", userId);
+    setBusy(false);
+    if (error) {
+      setErr(/banner/.test(error.message) ? "Banners need loop-step-12.sql — run it in Supabase first." : error.message);
+      return;
+    }
+    after();
+  };
+  const save = () => {
+    const t = text.trim().slice(0, 20);
+    if (!t) return setErr("Finish the prompt first");
+    write({ banner_kind: kind, banner_text: t }, () => onSaved({ kind, text: t }));
+  };
+  const remove = () => write({ banner_kind: null, banner_text: null }, () => onSaved(null));
+  return (
+    <StorySheetShell title="Fill in the blank" onClose={onClose}>
+      <div className="px-4 pb-6">
+        <p className="text-[12px] text-center" style={{ color: "var(--text-muted)" }}>Tap to change</p>
+        <div className="flex justify-center mt-1.5">
+          <button
+            onClick={() => setPicking((v) => !v)}
+            className="flex items-center gap-1.5 rounded-full px-3.5 h-9 text-[14px] transition-transform active:scale-95"
+            style={{ border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700, background: "var(--surface)" }}
+          >
+            <KIcon size={15} /> {k.label}
+            <ChevronDown size={14} color="var(--text-muted)" style={{ transform: picking ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+          </button>
+        </div>
+        {picking && (
+          <div className="grid grid-cols-2 gap-1.5 mt-3">
+            {BANNER_KINDS.map((b) => {
+              const BI = b.icon;
+              const on = b.key === kind;
+              return (
+                <button
+                  key={b.key}
+                  onClick={() => {
+                    setKind(b.key);
+                    setPicking(false);
+                  }}
+                  className="flex items-center gap-2 rounded-xl px-3 h-10 text-[13px] text-left"
+                  style={{
+                    background: on ? "var(--text)" : "var(--bg-sunken)",
+                    color: on ? "var(--bg)" : "var(--text)",
+                    border: "1px solid var(--border)",
+                    fontWeight: 600,
+                  }}
+                >
+                  <BI size={15} /> {b.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex items-center gap-2 mt-4 pb-2" style={{ borderBottom: "1px solid var(--border)" }}>
+          <input
+            autoFocus
+            value={text}
+            onChange={(e) => setText(e.target.value.slice(0, 20))}
+            placeholder="Finish the prompt"
+            className="flex-1 bg-transparent outline-none text-[16px]"
+            style={{ color: "var(--text)" }}
+          />
+          <span className="text-[12px] tabular-nums" style={{ color: "var(--text-muted)" }}>{text.length}/20</span>
+        </div>
+        {text.trim() && (
+          <p className="flex items-center gap-1.5 text-[13px] mt-3" style={{ color: "var(--text-muted)" }}>
+            Preview: <KIcon size={13} /> {k.label} <span style={{ color: "var(--text)", fontWeight: 600 }}>{text.trim()}</span>
+          </p>
+        )}
+        {err && <p className="text-xs mt-2" style={{ color: "var(--heart)" }}>{err}</p>}
+        <button
+          onClick={save}
+          disabled={busy || !text.trim()}
+          className="w-full rounded-xl h-11 mt-4 text-sm transition-transform active:scale-[0.98]"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy || !text.trim() ? 0.5 : 1 }}
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
+        {initial && (
+          <button onClick={remove} disabled={busy} className="w-full h-10 mt-1.5 text-sm" style={{ color: "var(--heart)", fontWeight: 600 }}>
+            Remove banner
+          </button>
+        )}
+        <p className="text-[11px] mt-2 text-center" style={{ color: "var(--text-muted)" }}>
+          Shows on your profile next to your category, for everyone who can see your profile.
+        </p>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Following → Notifications (the bell) ----
+function NotifyPrefsSheet({ targetId, targetName, myId, onClose, onChange }) {
+  const [prefs, setPrefs] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from("post_subscriptions")
+      .select("posts, reels, stories")
+      .eq("user_id", myId)
+      .eq("target_id", targetId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) setErr(/post_subscriptions/.test(error.message) ? "This needs loop-step-12.sql — run it in Supabase first." : error.message);
+        setPrefs({ posts: !!data?.posts, reels: !!data?.reels, stories: !!data?.stories });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetId, myId]);
+  const set = async (key) => {
+    if (!prefs) return;
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefs(next);
+    const { error } = await supabase
+      .from("post_subscriptions")
+      .upsert({ user_id: myId, target_id: targetId, ...next }, { onConflict: "user_id,target_id" });
+    if (error) {
+      setPrefs(prefs);
+      setErr(/post_subscriptions/.test(error.message) ? "This needs loop-step-12.sql — run it in Supabase first." : error.message);
+      return;
+    }
+    setErr("");
+    onChange?.(next.posts || next.reels || next.stories);
+  };
+  const Row = ({ k, label, hint }) => {
+    const on = !!prefs?.[k];
+    return (
+      <button onClick={() => set(k)} disabled={!prefs} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left">
+        <span>
+          <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
+          <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>{hint}</span>
+        </span>
+        <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: on ? ACCENT : "var(--toggle-off)", position: "relative", transition: "background 0.15s" }}>
+          <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: on ? 18 : 2, transition: "left 0.15s" }} />
+        </span>
+      </button>
+    );
+  };
+  return (
+    <StorySheetShell title="Notifications" onClose={onClose}>
+      <div className="pb-6">
+        <p className="px-4 pb-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          Get a notification when <span style={{ color: "var(--text)", fontWeight: 700 }}>{targetName}</span> shares something new.
+        </p>
+        <Row k="posts" label="Posts" hint="New photo posts" />
+        <Row k="reels" label="Reels" hint="New reels and videos" />
+        <Row k="stories" label="Stories" hint="When they add to their story" />
+        {err && <p className="px-4 pt-2 text-xs" style={{ color: "var(--heart)" }}>{err}</p>}
+        <p className="px-4 pt-3 text-[11px]" style={{ color: "var(--text-muted)" }}>
+          They won't know you turned this on. For alerts on your phone, turn on push in Settings → Notifications.
+        </p>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+function FollowingSheet({ profile, myId, myRel, relBusy, bellOn, onToggleRelation, onUnfollow, onOpenNotify, onClose }) {
+  const [closeFriend, setCloseFriend] = useState(null);
+  const [fav, setFav] = useState(null);
+  const [busy, setBusy] = useState("");
+  useEffect(() => {
+    if (!myId || !profile?.id) return;
+    Promise.all([
+      supabase.from("close_friends").select("friend_id").eq("user_id", myId).eq("friend_id", profile.id).maybeSingle(),
+      supabase.from("favorites").select("target_id").eq("user_id", myId).eq("target_id", profile.id).maybeSingle(),
+    ]).then(([cf, fv]) => {
+      setCloseFriend(!cf.error && !!cf.data);
+      setFav(!fv.error && !!fv.data);
+    });
+  }, [myId, profile?.id]);
+  const toggleCloseFriend = async () => {
+    setBusy("cf");
+    const { error } = closeFriend
+      ? await supabase.from("close_friends").delete().eq("user_id", myId).eq("friend_id", profile.id)
+      : await supabase.from("close_friends").insert({ user_id: myId, friend_id: profile.id });
+    if (!error) setCloseFriend(!closeFriend);
+    setBusy("");
+  };
+  const toggleFav = async () => {
+    setBusy("fav");
+    const { error } = fav
+      ? await supabase.from("favorites").delete().eq("user_id", myId).eq("target_id", profile.id)
+      : await supabase.from("favorites").insert({ user_id: myId, target_id: profile.id });
+    if (!error) {
+      setFav(!fav);
+      invalidateFavorites();
+    }
+    setBusy("");
+  };
+  return (
+    <StorySheetShell title={profile.username} onClose={onClose}>
+      <div className="pb-6">
+        <StoryMenuRow
+          icon={bellOn ? <BellRing size={17} color="var(--text)" /> : <Bell size={17} color="var(--text)" />}
+          label="Notifications"
+          onClick={onOpenNotify}
+          trailing={
+            <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
+              {bellOn ? "On" : "Off"} <ChevronRight size={15} />
+            </span>
+          }
+        />
+        <StoryMenuRow
+          icon={<Star size={17} color="#22C55E" fill={closeFriend ? "#22C55E" : "none"} />}
+          label={closeFriend ? "Remove from close friends" : "Add to close friends list"}
+          busy={busy === "cf" || closeFriend === null}
+          onClick={toggleCloseFriend}
+        />
+        <StoryMenuRow
+          icon={<Star size={17} color="#F5B800" fill={fav ? "#F5B800" : "none"} />}
+          label={fav ? "Remove from favourites" : "Add to favourites"}
+          busy={busy === "fav" || fav === null}
+          onClick={toggleFav}
+        />
+        <StoryMenuRow
+          icon={<VolumeX size={17} color="var(--text)" />}
+          label={myRel.muted ? "Unmute" : "Mute"}
+          busy={relBusy === "muted"}
+          onClick={() => onToggleRelation("muted")}
+          trailing={<span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{myRel.muted ? "On" : "Posts & stories"}</span>}
+        />
+        <StoryMenuRow
+          icon={<Shield size={17} color="var(--text)" />}
+          label={myRel.restricted ? "Unrestrict" : "Restrict"}
+          busy={relBusy === "restricted"}
+          onClick={() => onToggleRelation("restricted")}
+        />
+        <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
+        <StoryMenuRow icon={<UserMinus size={17} color="var(--heart)" />} label="Unfollow" danger onClick={onUnfollow} />
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- Shared post inside a chat ----
+const SHARED_POST_RE = /\/p\/([0-9a-fA-F-]{36})/;
+function sharedPostIdOf(text) {
+  const m = String(text || "").match(SHARED_POST_RE);
+  return m ? m[1] : null;
+}
+
+function SharedPostCard({ info, onOpen }) {
+  if (info === null) {
+    return (
+      <div className="rounded-2xl px-3.5 py-3 text-[13px]" style={{ background: "var(--surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+        This post isn't available any more
+      </div>
+    );
+  }
+  const p = info?.post;
+  const author = info?.author;
+  const isVideo = p ? !isPhotoPost(p) && (p.media_count || 1) <= 1 : false;
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        if (p) onOpen(p);
+      }}
+      className="block text-left rounded-2xl overflow-hidden transition-transform active:scale-[0.98]"
+      style={{ width: 236, background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 2px 10px rgba(0,0,0,0.12)" }}
+    >
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Avatar username={author?.username || "?"} avatarUrl={author?.avatar_url} size={26} />
+        <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{author?.username || "…"}</span>
+      </div>
+      <div className="relative w-full overflow-hidden" style={{ aspectRatio: isVideo ? "9 / 13" : "4 / 5", background: "var(--bg-sunken)" }}>
+        {p && <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />}
+        {isVideo && (
+          <>
+            <span className="absolute top-2 right-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+              <Clapperboard size={18} color="#FFFFFF" />
+            </span>
+            <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.38)", backdropFilter: "blur(4px)" }}>
+                <Play size={20} color="#FFFFFF" fill="#FFFFFF" style={{ marginLeft: 2 }} />
+              </span>
+            </span>
+          </>
+        )}
+        {p && (p.media_count || 1) > 1 && (
+          <span className="absolute top-2 right-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+            <Layers size={17} color="#FFFFFF" />
+          </span>
+        )}
+      </div>
+      {p?.caption ? (
+        <p
+          className="px-3 py-2 text-[12.5px]"
+          style={{ color: "var(--text)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.35 }}
+        >
+          <span style={{ fontWeight: 700 }}>{author?.username}</span> {p.caption}
+        </p>
+      ) : (
+        <div style={{ height: 6 }} />
+      )}
+    </button>
+  );
+}
+
+// ---- Theme with your own photo ----
+// The photo is the background; the bubbles keep the colours of the theme
+// you pick under it. A light shade over the photo keeps text readable.
+function withPhoto(t, url) {
+  if (!url) return t;
+  return {
+    ...t,
+    bg: `linear-gradient(rgba(0,0,0,0.30), rgba(0,0,0,0.30)), url("${url}") center / cover no-repeat`,
+    other: "rgba(24,24,28,0.78)",
+    otherText: "#FFFFFF",
+    muted: "rgba(255,255,255,0.85)",
+    photo: url,
+  };
+}
+
+// After a repost: what happens when the note sheet closes or saves.
+function repostNoteHandlers(noteFor, setNoteFor, setNotes, userId) {
+  const mineEntry = (note, me) => ({ userId, note: note || "", mine: true, username: me?.username || "", avatarUrl: me?.avatar_url || null });
+  return {
+    close: (me) => {
+      if (noteFor && setNotes) setNotes((m) => ({ ...m, [noteFor.id]: m[noteFor.id]?.mine ? m[noteFor.id] : mineEntry("", me) }));
+      setNoteFor(null);
+    },
+    saved: (note, me) => {
+      if (noteFor && setNotes) setNotes((m) => ({ ...m, [noteFor.id]: mineEntry(note, me) }));
+      setNoteFor(null);
+    },
+  };
+}
+
+// The number under an icon on the Reels rail. Its space is always kept,
+// so an icon never jumps when its first like, comment or share arrives.
+function RailCount({ show, n }) {
+  return (
+    <span className="text-[12px] leading-none mt-1 tabular-nums" style={{ color: "#FFFFFF", fontWeight: 700, height: 12 }}>
+      {show && n > 0 ? formatCount(n) : ""}
+    </span>
+  );
+}
+
 // ---- Broadcast channels ----
 // One person writes, everyone who joined reads and reacts — like a
 // Telegram channel or an Instagram broadcast channel. The owner chooses
@@ -447,7 +1182,7 @@ function ChannelAvatar({ channel, size = 44 }) {
       {channel?.avatar_url ? (
         <img src={channel.avatar_url} alt="" className="w-full h-full object-cover" />
       ) : (
-        <Megaphone size={Math.round(size * 0.45)} color="#FFFFFF" />
+        <Radio size={Math.round(size * 0.48)} color="#FFFFFF" />
       )}
     </div>
   );
@@ -523,6 +1258,7 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
   const initial = Array.isArray(channel.reactions) ? channel.reactions : CHANNEL_DEFAULT_REACTIONS;
   const [mode, setMode] = useState(initial.length === 0 ? "none" : initial.length >= CHANNEL_ALL_REACTIONS.length ? "all" : "some");
   const [picked, setPicked] = useState(initial.length ? initial : CHANNEL_DEFAULT_REACTIONS);
+  const [replies, setReplies] = useState(channel.replies_enabled !== false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const fileRef = React.useRef(null);
@@ -551,7 +1287,14 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
     setBusy(true);
     setErr("");
     const reactions = mode === "none" ? [] : mode === "all" ? CHANNEL_ALL_REACTIONS : CHANNEL_ALL_REACTIONS.filter((e) => picked.includes(e));
-    const patch = { name: name.trim().slice(0, 60), description: about.trim().slice(0, 300) || null, avatar_url: avatar, reactions };
+    const patch = {
+      name: name.trim().slice(0, 60),
+      description: about.trim().slice(0, 300) || null,
+      avatar_url: avatar,
+      reactions,
+      // Only sent once loop-step-12.sql has added the column.
+      ...("replies_enabled" in channel ? { replies_enabled: replies } : {}),
+    };
     const { error } = await supabase.from("channels").update(patch).eq("id", channel.id);
     setBusy(false);
     if (error) return setErr(error.message);
@@ -585,7 +1328,7 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
   );
 
   return (
-    <div className="absolute inset-0 z-[79] flex flex-col" style={{ background: "var(--bg)" }}>
+    <div className="absolute inset-0 z-[82] flex flex-col" style={{ background: "var(--bg)" }}>
       <ScreenHeader
         title="Edit channel"
         onBack={onClose}
@@ -661,6 +1404,24 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
             })}
           </div>
         )}
+        {"replies_enabled" in channel && (
+          <>
+            <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Replies</p>
+            <button
+              onClick={() => setReplies((v) => !v)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+              style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}
+            >
+              <span>
+                <span className="block text-sm" style={{ color: "var(--text)" }}>Allow replies</span>
+                <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>Members can reply under each post</span>
+              </span>
+              <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: replies ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+                <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: replies ? 18 : 2, transition: "left 0.15s" }} />
+              </span>
+            </button>
+          </>
+        )}
         {err && <p className="px-4 pt-3 text-xs" style={{ color: "var(--heart)" }}>{err}</p>}
 
         <div className="px-4 pt-8">
@@ -677,7 +1438,449 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
   );
 }
 
-// One channel: the posts, their reactions, and the bar at the bottom.
+// Replies under one channel post.
+function ChannelRepliesSheet({ post, channel, me, isOwner, canReply, onClose, onCountChange }) {
+  const [rows, setRows] = useState(null);
+  const [people, setPeople] = useState({});
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const listRef = React.useRef(null);
+
+  const load = async () => {
+    const { data, error } = await supabase
+      .from("channel_replies")
+      .select("id, user_id, content, created_at")
+      .eq("post_id", post.id)
+      .order("created_at", { ascending: true })
+      .limit(300);
+    if (error) {
+      setErr(/channel_replies/.test(error.message) ? "Replies need loop-step-12.sql — run it in Supabase first." : error.message);
+      setRows([]);
+      return;
+    }
+    const list = data || [];
+    const ids = [...new Set(list.map((r) => r.user_id))];
+    if (ids.length) {
+      const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url, is_verified").in("id", ids);
+      setPeople(Object.fromEntries((profs || []).map((pp) => [pp.id, pp])));
+    }
+    setRows(list);
+    setTimeout(() => listRef.current && (listRef.current.scrollTop = listRef.current.scrollHeight), 30);
+  };
+  useEffect(() => {
+    load();
+  }, [post.id]);
+
+  const send = async () => {
+    const body = text.trim();
+    if (!body || busy) return;
+    setBusy(true);
+    setErr("");
+    const { error } = await supabase.from("channel_replies").insert({ post_id: post.id, content: body.slice(0, 500) });
+    setBusy(false);
+    if (error) {
+      setErr(/channel_replies/.test(error.message) ? "Replies need loop-step-12.sql — run it in Supabase first." : error.message);
+      return;
+    }
+    setText("");
+    onCountChange?.(1);
+    load();
+  };
+  const remove = async (r) => {
+    const { error } = await supabase.from("channel_replies").delete().eq("id", r.id);
+    if (error) return setErr(error.message);
+    setRows((prev) => prev.filter((x) => x.id !== r.id));
+    onCountChange?.(-1);
+  };
+
+  return (
+    <StorySheetShell title="Replies" onClose={onClose}>
+      <div className="px-4 pb-2">
+        <div className="rounded-2xl px-3 py-2 text-[13px]" style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)" }}>
+          <span className="block text-[11px] mb-0.5" style={{ color: "var(--text-muted)", fontWeight: 700 }}>{channel?.name}</span>
+          <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+            {post.content || "Photo"}
+          </span>
+        </div>
+      </div>
+      <div ref={listRef} className="px-4" style={{ maxHeight: "42vh", overflowY: "auto" }}>
+        {rows === null ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No replies yet</p>
+        ) : (
+          rows.map((r) => {
+            const pp = people[r.user_id];
+            const mine = r.user_id === me;
+            return (
+              <div key={r.id} className="flex items-start gap-2.5 py-2">
+                <Avatar username={pp?.username || "?"} avatarUrl={pp?.avatar_url} size={32} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] flex items-center gap-1" style={{ color: "var(--text)", fontWeight: 700 }}>
+                    {pp?.username || "…"} {pp?.is_verified && <VerifiedBadge size={11} />}
+                    {r.user_id === channel?.owner_id && (
+                      <span className="text-[10px] px-1.5 rounded-full" style={{ background: "var(--surface)", color: "var(--text-muted)", fontWeight: 600 }}>Admin</span>
+                    )}
+                    <span className="text-[10.5px]" style={{ color: "var(--text-muted)", fontWeight: 400 }}>· {timeAgo(r.created_at)}</span>
+                  </p>
+                  {emojiOnly(r.content) ? (
+                    <BigEmojiMessage parts={emojiOnly(r.content)} />
+                  ) : (
+                    <p className="text-[14px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      <LinkifiedText text={r.content} />
+                    </p>
+                  )}
+                </div>
+                {(mine || isOwner) && (
+                  <button onClick={() => remove(r)} aria-label="Delete reply" className="p-1 shrink-0">
+                    <Trash2 size={14} color="var(--text-muted)" />
+                  </button>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+      {err && <p className="px-4 pt-2 text-xs" style={{ color: "var(--heart)" }}>{err}</p>}
+      <div className="px-4 pt-2 pb-5">
+        {canReply ? (
+          <div className="flex items-end gap-2">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Write a reply…"
+              rows={1}
+              maxLength={500}
+              className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
+              style={{ background: "var(--surface)", color: "var(--text)", maxHeight: 100 }}
+            />
+            <button
+              onClick={send}
+              disabled={busy || !text.trim()}
+              aria-label="Send reply"
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+              style={{ background: ACCENT, opacity: busy || !text.trim() ? 0.5 : 1 }}
+            >
+              <ShareIcon size={19} color="var(--on-accent)" style={{ marginLeft: 2 }} />
+            </button>
+          </div>
+        ) : (
+          <p className="text-xs text-center py-2" style={{ color: "var(--text-muted)" }}>
+            {channel?.replies_enabled === false ? "Replies are turned off for this channel." : "Join the channel to reply."}
+          </p>
+        )}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// Share one channel post.
+function ChannelPostShareSheet({ post, channel, me, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const link = `${window.location.origin}/c/${channel.id}`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      onDone("Link copied");
+    } catch {
+      onDone("Couldn't copy on this device");
+    }
+  };
+  const native = async () => {
+    try {
+      if (navigator.share) await navigator.share({ title: channel.name, text: post.content || "", url: link });
+      else {
+        await navigator.clipboard.writeText(link);
+        onDone("Link copied");
+      }
+    } catch {}
+    onClose();
+  };
+  const toStory = async () => {
+    if (!post.image_url || busy || !me) return;
+    setBusy(true);
+    const { error } = await supabase.from("stories").insert({
+      user_id: me,
+      media_url: post.image_url,
+      media_type: "photo",
+      caption: (post.content || channel.name || "").slice(0, 180) || null,
+    });
+    setBusy(false);
+    onDone(error ? error.message : "Added to your story");
+  };
+  return (
+    <StorySheetShell title="Share" onClose={onClose}>
+      <div className="pb-6">
+        {post.image_url && (
+          <StoryMenuRow icon={<CirclePlus size={17} color="var(--text)" />} label={busy ? "Adding…" : "Add to your story"} busy={busy} onClick={toStory} />
+        )}
+        <StoryMenuRow icon={<Copy size={17} color="var(--text)" />} label="Copy channel link" onClick={copy} />
+        <StoryMenuRow icon={<Share2 size={17} color="var(--text)" />} label="Share to…" onClick={native} />
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// Who's behind the channel, and other channels worth a look.
+function ChannelPeopleScreen({ channel, owner, me, onClose }) {
+  const [others, setOthers] = useState(null);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("channels")
+        .select("id, name, avatar_url, owner_id")
+        .neq("id", channel.id)
+        .order("created_at", { ascending: false })
+        .limit(15);
+      const list = data || [];
+      const ids = [...new Set(list.map((c) => c.owner_id))];
+      let by = {};
+      if (ids.length) {
+        const { data: profs } = await supabase.from("profiles").select("id, username, is_verified").in("id", ids);
+        by = Object.fromEntries((profs || []).map((pp) => [pp.id, pp]));
+      }
+      setOthers(list.map((c) => ({ ...c, ownerName: by[c.owner_id]?.username || "", ownerVerified: !!by[c.owner_id]?.is_verified })));
+    })();
+  }, [channel.id]);
+  const Section = ({ children }) => (
+    <p className="px-4 pt-5 pb-2 text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>{children}</p>
+  );
+  return (
+    <div className="absolute inset-0 z-[81] flex flex-col" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="People" onBack={onClose} />
+      <div className="flex-1 overflow-y-auto pb-8">
+        <Section>Who can post?</Section>
+        {owner && (
+          <div className="flex items-center gap-3 px-4 py-2">
+            <button onClick={() => openProfileGlobal(owner.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+              <Avatar username={owner.username} avatarUrl={owner.avatar_url} size={52} />
+              <span className="min-w-0">
+                <span className="flex items-center gap-1 text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
+                  {owner.full_name || owner.username} {owner.is_verified && <VerifiedBadge size={13} />}
+                </span>
+                <span className="block text-[13px] truncate" style={{ color: "var(--text-muted)" }}>Admin · {owner.username}</span>
+              </span>
+            </button>
+            {owner.id !== me && (
+              <button
+                onClick={() => messageUserGlobal({ id: owner.id, username: owner.username, avatar_url: owner.avatar_url })}
+                className="rounded-xl px-4 h-9 text-[13px] shrink-0 transition-transform active:scale-95"
+                style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700 }}
+              >
+                Message
+              </button>
+            )}
+          </div>
+        )}
+        <Section>Creators with channels</Section>
+        {others === null ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : others.length === 0 ? (
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No other channels yet</p>
+        ) : (
+          others.map((c) => (
+            <div key={c.id} className="flex items-center gap-3 px-4 py-2">
+              <ChannelAvatar channel={c} size={52} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{c.name}</span>
+                <span className="flex items-center gap-1 text-[13px] truncate" style={{ color: "var(--text-muted)" }}>
+                  {c.ownerName} {c.ownerVerified && <VerifiedBadge size={11} />}
+                </span>
+              </span>
+              <button
+                onClick={() => openChannelGlobal(c.id)}
+                className="rounded-xl px-4 h-9 text-[13px] shrink-0 transition-transform active:scale-95"
+                style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700 }}
+              >
+                See channel
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The channel's own page: photo, name, search, mute, link, people, media.
+function ChannelInfoScreen({ channel, owner, me, isOwner, membership, members, posts, onClose, onToggleMute, onJoin, onOptions, onEdit, onTheme, onJumpTo, say }) {
+  const [tab, setTab] = useState("media");
+  const [searching, setSearching] = useState(false);
+  const [q, setQ] = useState("");
+  const [peopleOpen, setPeopleOpen] = useState(false);
+  const link = `${window.location.origin}/c/${channel.id}`;
+  const media = posts.filter((x) => x.image_url).slice().reverse();
+  const linkPosts = posts.filter((x) => /https?:\/\//.test(x.content || "")).slice().reverse();
+  const hits = q.trim() ? posts.filter((x) => (x.content || "").toLowerCase().includes(q.trim().toLowerCase())).slice().reverse() : [];
+  const theme = withPhoto(themeOf(channel.theme), channel.theme_image);
+
+  const Action = ({ icon, label, onClick }) => (
+    <button onClick={onClick} className="flex flex-col items-center gap-1.5 w-20 transition-transform active:scale-95">
+      <span className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "var(--surface)" }}>{icon}</span>
+      <span className="text-[12px]" style={{ color: "var(--text)", fontWeight: 600 }}>{label}</span>
+    </button>
+  );
+  const Row = ({ icon, title, sub, onClick, right }) => (
+    <button onClick={onClick} className="w-full flex items-center gap-4 px-5 py-3 text-left transition-colors active:bg-[var(--active-highlight)]">
+      <span className="shrink-0">{icon}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[15px]" style={{ color: "var(--text)", fontWeight: 600 }}>{title}</span>
+        {sub && <span className="block text-[12.5px] truncate" style={{ color: "var(--text-muted)" }}>{sub}</span>}
+      </span>
+      {right}
+    </button>
+  );
+
+  return (
+    <div className="absolute inset-0 z-[80] flex flex-col" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center px-3 h-14 shrink-0">
+        <button onClick={onClose} aria-label="Back" className="p-1">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto pb-8">
+        <div className="flex flex-col items-center px-6 text-center">
+          <ChannelAvatar channel={channel} size={96} />
+          <p className="text-[22px] mt-3" style={{ color: "var(--text)", fontWeight: 800 }}>{channel.name}</p>
+          {owner && (
+            <p className="flex items-center gap-1 text-[14px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+              {owner.username} {owner.is_verified && <VerifiedBadge size={13} />} · {formatCount(members)} {members === 1 ? "member" : "members"}
+            </p>
+          )}
+          {channel.description && (
+            <p className="text-[13px] mt-2" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{channel.description}</p>
+          )}
+        </div>
+
+        <div className="flex justify-center gap-3 mt-5">
+          <Action icon={<Search size={20} color="var(--text)" />} label="Search" onClick={() => setSearching((v) => !v)} />
+          {isOwner ? (
+            <Action icon={<Pencil size={19} color="var(--text)" />} label="Edit" onClick={onEdit} />
+          ) : membership ? (
+            <Action
+              icon={membership.muted ? <BellOff size={20} color="var(--text)" /> : <Bell size={20} color="var(--text)" />}
+              label={membership.muted ? "Unmute" : "Mute"}
+              onClick={onToggleMute}
+            />
+          ) : (
+            <Action icon={<Plus size={20} color="var(--text)" />} label="Join" onClick={onJoin} />
+          )}
+          <Action icon={<Ellipsis size={20} color="var(--text)" />} label="Options" onClick={onOptions} />
+        </div>
+
+        {searching && (
+          <div className="px-4 mt-4">
+            <div className="flex items-center gap-2 rounded-xl px-3 h-10" style={{ background: "var(--surface)" }}>
+              <Search size={15} color="var(--text-muted)" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search this channel"
+                className="flex-1 bg-transparent outline-none text-sm"
+                style={{ color: "var(--text)" }}
+              />
+            </div>
+            {q.trim() && (
+              <div className="mt-2">
+                {hits.length === 0 ? (
+                  <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>Nothing matches</p>
+                ) : (
+                  hits.slice(0, 30).map((x) => (
+                    <button key={x.id} onClick={() => onJumpTo(x.id)} className="w-full text-left py-2" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                      <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
+                        {new Date(x.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                      </span>
+                      <span className="block text-[13px]" style={{ color: "var(--text)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                        {x.content}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-5">
+          <Row
+            icon={<Link2 size={22} color="var(--text)" />}
+            title="Invitation link"
+            sub={link}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(link);
+                say("Link copied");
+              } catch {
+                say("Couldn't copy on this device");
+              }
+            }}
+          />
+          <Row icon={<Users size={22} color="var(--text)" />} title="People" sub={owner?.username} onClick={() => setPeopleOpen(true)} />
+          {isOwner && (
+            <Row
+              icon={<Palette size={22} color="var(--text)" />}
+              title="Theme & font"
+              sub={`${theme.photo ? "Your photo" : themeOf(channel.theme).name} · ${fontOf(channel.chat_font).name}`}
+              onClick={onTheme}
+            />
+          )}
+          {isOwner && <Row icon={<SlidersHorizontal size={22} color="var(--text)" />} title="Channel controls" sub="Reactions, replies, name and photo" onClick={onEdit} />}
+        </div>
+
+        <div className="flex mt-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+          {[
+            ["media", <ImageIcon key="m" size={21} />],
+            ["links", <Link2 key="l" size={21} />],
+          ].map(([k, icon]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className="flex-1 flex justify-center py-3"
+              style={{ color: tab === k ? "var(--text)" : "var(--text-muted)", borderBottom: tab === k ? "2px solid var(--text)" : "2px solid transparent" }}
+            >
+              {icon}
+            </button>
+          ))}
+        </div>
+        {tab === "media" ? (
+          media.length === 0 ? (
+            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No photos yet</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-0.5">
+              {media.map((x) => (
+                <button key={x.id} onClick={() => onJumpTo(x.id)} className="aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
+                  <img src={x.image_url} alt="" loading="lazy" className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )
+        ) : linkPosts.length === 0 ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No links yet</p>
+        ) : (
+          linkPosts.map((x) => {
+            const url = (x.content.match(/https?:\/\/[^\s]+/) || [])[0];
+            return (
+              <a key={x.id} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                <span className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "var(--surface)" }}>
+                  <ExternalLink size={17} color="var(--text)" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[13px] truncate" style={{ color: "var(--accent-solid)", fontWeight: 600 }}>{url}</span>
+                  <span className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{x.content.replace(url, "").trim() || "Link"}</span>
+                </span>
+              </a>
+            );
+          })
+        )}
+      </div>
+      {peopleOpen && <ChannelPeopleScreen channel={channel} owner={owner} me={me} onClose={() => setPeopleOpen(false)} />}
+    </div>
+  );
+}
+
+// One channel: the posts, their reactions and replies, and the bar at the bottom.
 function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   const [me, setMe] = useState(null);
   const [channel, setChannel] = useState(null);
@@ -685,6 +1888,8 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   const [posts, setPosts] = useState([]);
   const [reactions, setReactions] = useState({}); // postId -> { emoji: count }
   const [myReaction, setMyReaction] = useState({}); // postId -> emoji
+  const [replyCounts, setReplyCounts] = useState({}); // postId -> n
+  const [seenBy, setSeenBy] = useState(0);
   const [members, setMembers] = useState(0);
   const [membership, setMembership] = useState(null); // { muted } | null
   const [error, setError] = useState("");
@@ -692,21 +1897,45 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   const [image, setImage] = useState(null); // { file, url }
   const [sending, setSending] = useState(false);
   const [pickerFor, setPickerFor] = useState(null); // post id
+  const [allFor, setAllFor] = useState(null); // post id showing every reaction
   const [postMenu, setPostMenu] = useState(null); // post
+  const [repliesFor, setRepliesFor] = useState(null); // post
+  const [shareFor, setShareFor] = useState(null); // post
   const [editing, setEditing] = useState(null); // { id, text }
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
   const [flash, setFlash] = useState("");
   const listRef = React.useRef(null);
   const fileRef = React.useRef(null);
   const postRefs = React.useRef({});
   const pressRef = React.useRef(null);
+  const memberRef = React.useRef(false);
 
   const isOwner = !!(channel && me && channel.owner_id === me);
   const allowed = Array.isArray(channel?.reactions) ? channel.reactions : CHANNEL_DEFAULT_REACTIONS;
+  const repliesOn = channel?.replies_enabled !== false;
+  const theme = withPhoto(themeOf(channel?.theme), channel?.theme_image);
+  const themed = !!theme.bg;
+  const font = fontOf(channel?.chat_font);
+  const bubbleBg = themed ? "var(--surface)" : "var(--bg)";
   const say = (m) => {
     setFlash(m);
     setTimeout(() => setFlash(""), 2000);
+  };
+
+  const markSeen = (uid) => {
+    if (!memberRef.current || !uid) return;
+    supabase
+      .from("channel_members")
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq("channel_id", channelId)
+      .eq("user_id", uid)
+      .then(
+        () => {},
+        () => {}
+      );
   };
 
   const loadPosts = async (scroll) => {
@@ -719,13 +1948,16 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     const list = (rows || []).slice().reverse();
     setPosts(list);
     const ids = list.map((x) => x.id);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (ids.length) {
-      const { data: rx } = await supabase.from("channel_reactions").select("post_id, user_id, emoji").in("post_id", ids);
+      const [{ data: rx }, rc] = await Promise.all([
+        supabase.from("channel_reactions").select("post_id, user_id, emoji").in("post_id", ids),
+        supabase.rpc("channel_reply_counts", { p_ids: ids }),
+      ]);
       const counts = {};
       const mine = {};
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
       (rx || []).forEach((row) => {
         counts[row.post_id] = counts[row.post_id] || {};
         counts[row.post_id][row.emoji] = (counts[row.post_id][row.emoji] || 0) + 1;
@@ -733,7 +1965,14 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       });
       setReactions(counts);
       setMyReaction(mine);
+      if (!rc?.error && Array.isArray(rc?.data)) setReplyCounts(Object.fromEntries(rc.data.map((r) => [r.post_id, Number(r.replies)])));
+      const last = list[list.length - 1];
+      try {
+        const { data: seen, error: seenErr } = await supabase.rpc("channel_seen_count", { p_channel: channelId, p_since: last.created_at });
+        if (!seenErr) setSeenBy(Number(seen || 0));
+      } catch {}
     }
+    markSeen(user?.id);
     if (scroll) setTimeout(() => listRef.current && (listRef.current.scrollTop = listRef.current.scrollHeight), 30);
   };
 
@@ -749,12 +1988,13 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     }
     setChannel(ch);
     const [{ data: prof }, { data: mem }, { data: counts }] = await Promise.all([
-      supabase.from("profiles").select("id, username, avatar_url, is_verified").eq("id", ch.owner_id).maybeSingle(),
+      supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").eq("id", ch.owner_id).maybeSingle(),
       supabase.from("channel_members").select("muted").eq("channel_id", channelId).eq("user_id", user?.id || "").maybeSingle(),
       supabase.rpc("channel_member_counts", { p_ids: [channelId] }),
     ]);
     setOwner(prof || null);
     setMembership(mem || null);
+    memberRef.current = !!mem;
     setMembers(Number((counts || [])[0]?.members || 0));
     await loadPosts(true);
   };
@@ -770,13 +2010,16 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     const { error: err } = await supabase.from("channel_members").insert({ channel_id: channelId, user_id: me });
     if (err && !/duplicate/i.test(err.message)) return say(err.message);
     setMembership({ muted: false });
+    memberRef.current = true;
     setMembers((n) => n + 1);
+    markSeen(me);
     say("You joined — new posts will reach you");
   };
   const leave = async () => {
     setMenuOpen(false);
     await supabase.from("channel_members").delete().eq("channel_id", channelId).eq("user_id", me);
     setMembership(null);
+    memberRef.current = false;
     setMembers((n) => Math.max(0, n - 1));
   };
   const toggleMute = async () => {
@@ -879,6 +2122,11 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     } catch {}
   };
 
+  const jumpTo = (postId) => {
+    setInfoOpen(false);
+    setTimeout(() => postRefs.current[postId]?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+  };
+
   const pinned = [...posts].reverse().find((x) => x.pinned);
   const dayLabel = (iso) => {
     const d = new Date(iso);
@@ -887,6 +2135,12 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     if (d.toDateString() === today.toDateString()) return "Today";
     if (d.toDateString() === y.toDateString()) return "Yesterday";
     return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  };
+  const pill = {
+    background: bubbleBg,
+    border: themed ? "none" : "1px solid var(--border)",
+    color: "var(--text)",
+    fontWeight: 700,
   };
 
   if (error) {
@@ -899,20 +2153,31 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   }
 
   return (
-    <div className="absolute inset-0 z-[77] flex flex-col" style={{ background: "var(--bg)" }}>
+    <div className="absolute inset-0 z-[77] flex flex-col" style={{ background: "var(--bg)", fontFamily: font.stack }}>
       {/* header */}
-      <div className="flex items-center gap-2.5 px-3 h-14 shrink-0" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+      <div className="flex items-center gap-2 px-3 h-14 shrink-0" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <button onClick={onClose} aria-label="Back" className="p-1">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
-        <ChannelAvatar channel={channel} size={38} />
-        <div className="flex-1 min-w-0">
-          <p className="text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{channel?.name || "…"}</p>
-          <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-            {formatCount(members)} {members === 1 ? "member" : "members"}
-            {membership?.muted ? " · muted" : ""}
-          </p>
-        </div>
+        <button onClick={() => channel && setInfoOpen(true)} className="flex items-center gap-2.5 flex-1 min-w-0 text-left">
+          <ChannelAvatar channel={channel} size={38} />
+          <span className="min-w-0">
+            <span className="block text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{channel?.name || "…"}</span>
+            <span className="flex items-center gap-1 text-[11.5px] truncate" style={{ color: "var(--text-muted)" }}>
+              {owner && (
+                <>
+                  {owner.username} {owner.is_verified && <VerifiedBadge size={11} />} ·
+                </>
+              )}{" "}
+              {formatCount(members)} {members === 1 ? "member" : "members"}
+            </span>
+          </span>
+        </button>
+        {membership && !isOwner && (
+          <button onClick={toggleMute} aria-label={membership.muted ? "Unmute" : "Mute"} className="p-1.5">
+            {membership.muted ? <BellOff size={21} color="var(--text)" /> : <Bell size={21} color="var(--text)" />}
+          </button>
+        )}
         <button onClick={() => setMenuOpen(true)} aria-label="More" className="p-1.5">
           <Ellipsis size={20} color="var(--text)" />
         </button>
@@ -934,7 +2199,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       )}
 
       {/* posts */}
-      <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3" style={{ background: "var(--bg-sunken)" }}>
+      <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3" style={themed ? chatAreaStyle(theme) : { background: "var(--bg-sunken)" }}>
         {channel && (
           <div className="flex flex-col items-center text-center px-6 pt-2 pb-5">
             <ChannelAvatar channel={channel} size={72} />
@@ -965,101 +2230,167 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
           const showDay = i === 0 || new Date(posts[i - 1].created_at).toDateString() !== new Date(post.created_at).toDateString();
           const counts = reactions[post.id] || {};
           const chips = Object.entries(counts).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+          const showAll = allFor === post.id;
+          const shownChips = showAll ? chips : chips.slice(0, 3);
+          const extra = showAll ? 0 : chips.slice(3).reduce((s, [, n]) => s + n, 0);
+          const big = !post.image_url ? emojiOnly(post.content) : null;
+          const rc = replyCounts[post.id] || 0;
+          const isLast = i === posts.length - 1;
           return (
             <React.Fragment key={post.id}>
               {showDay && (
-                <div className="flex justify-center my-2.5">
-                  <span className="text-[11px] px-2.5 py-1 rounded-full" style={{ background: "var(--surface)", color: "var(--text-muted)", fontWeight: 600 }}>
-                    {dayLabel(post.created_at)}
-                  </span>
-                </div>
-              )}
-              <div ref={(el) => (postRefs.current[post.id] = el)} className="mb-2.5" style={{ maxWidth: "92%" }}>
-                <div
-                  className="rounded-2xl overflow-hidden select-none"
-                  style={{ background: "var(--bg)", border: "1px solid var(--border)", borderTopLeftRadius: 6 }}
-                  onTouchStart={() => {
-                    pressRef.current = setTimeout(() => setPostMenu(post), 450);
-                  }}
-                  onTouchEnd={() => clearTimeout(pressRef.current)}
-                  onTouchMove={() => clearTimeout(pressRef.current)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setPostMenu(post);
-                  }}
-                >
-                  {post.image_url && <img src={post.image_url} alt="" loading="lazy" className="w-full object-cover" style={{ maxHeight: 420 }} />}
-                  <div className="px-3 pt-2 pb-1.5">
-                    {post.content && (
-                      <p className="text-[14px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
-                        <LinkifiedText text={post.content} />
-                      </p>
-                    )}
-                    <p className="text-[10px] mt-1 text-right" style={{ color: "var(--text-muted)" }}>
-                      {post.pinned && "📌 "}
-                      {post.edited_at ? "edited · " : ""}
-                      {new Date(post.created_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                    </p>
-                  </div>
-                </div>
-                {allowed.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                    {chips.map(([emo, n]) => {
-                      const mineOn = myReaction[post.id] === emo;
-                      return (
-                        <button
-                          key={emo}
-                          onClick={() => allowed.includes(emo) && react(post.id, emo)}
-                          className="flex items-center gap-1 rounded-full px-2 h-7 text-[13px] transition-transform active:scale-95"
-                          style={{
-                            background: mineOn ? "var(--accent-solid)" : "var(--bg)",
-                            border: `1px solid ${mineOn ? "var(--accent-solid)" : "var(--border)"}`,
-                            color: mineOn ? "var(--on-accent)" : "var(--text)",
-                            fontWeight: 700,
-                          }}
-                        >
-                          <span style={{ fontSize: 15 }}>{emo}</span> {formatCount(n)}
-                        </button>
-                      );
-                    })}
-                    <button
-                      onClick={() => setPickerFor(pickerFor === post.id ? null : post.id)}
-                      aria-label="Add a reaction"
-                      className="w-7 h-7 rounded-full flex items-center justify-center"
-                      style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+                <>
+                  <div className="flex justify-center my-3">
+                    <span
+                      className="text-[11px] px-2.5 py-1 rounded-full uppercase"
+                      style={{ background: themed ? "var(--surface)" : "transparent", color: "var(--text-muted)", fontWeight: 600, letterSpacing: "0.3px" }}
                     >
-                      <SmilePlus size={14} color="var(--text-muted)" />
+                      {dayLabel(post.created_at)}
+                    </span>
+                  </div>
+                  {owner && (
+                    <p className="text-[12px] mb-1" style={{ color: "var(--text-muted)", marginLeft: 40 }}>
+                      {owner.full_name || owner.username} · Admin
+                    </p>
+                  )}
+                </>
+              )}
+              <div ref={(el) => (postRefs.current[post.id] = el)} className="mb-3">
+                <div className="flex items-end gap-2">
+                  <ChannelAvatar channel={channel} size={32} />
+                  <div className="flex items-center gap-2 min-w-0" style={{ maxWidth: "84%" }}>
+                    <div
+                      className={big ? "select-none" : "rounded-2xl overflow-hidden select-none min-w-0"}
+                      style={big ? undefined : { background: bubbleBg, border: themed ? "none" : "1px solid var(--border)", borderBottomLeftRadius: 6 }}
+                      onTouchStart={() => {
+                        pressRef.current = setTimeout(() => setPostMenu(post), 450);
+                      }}
+                      onTouchEnd={() => clearTimeout(pressRef.current)}
+                      onTouchMove={() => clearTimeout(pressRef.current)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setPostMenu(post);
+                      }}
+                    >
+                      {big ? (
+                        <BigEmojiMessage parts={big} />
+                      ) : (
+                        <>
+                          {post.image_url && <img src={post.image_url} alt="" loading="lazy" className="w-full object-cover" style={{ maxHeight: 420 }} />}
+                          <div className="px-3.5 pt-2 pb-1.5">
+                            {post.content && (
+                              <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+                                <LinkifiedText text={post.content} />
+                              </p>
+                            )}
+                            <p className="text-[10px] mt-1 text-right" style={{ color: "var(--text-muted)" }}>
+                              {post.pinned && "📌 "}
+                              {post.edited_at ? "edited · " : ""}
+                              {new Date(post.created_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setShareFor(post)}
+                      aria-label="Share"
+                      className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+                      style={{ background: themed ? "var(--surface)" : "var(--surface)" }}
+                    >
+                      <ShareIcon size={16} color="var(--text)" style={{ marginLeft: 1 }} />
                     </button>
                   </div>
-                )}
-                {pickerFor === post.id && (
-                  <div className="flex flex-wrap gap-1 mt-1.5 p-1.5 rounded-2xl" style={{ background: "var(--bg)", border: "1px solid var(--border)", boxShadow: "0 6px 20px rgba(0,0,0,0.18)" }}>
-                    {allowed.map((emo) => (
-                      <button
-                        key={emo}
-                        onClick={() => react(post.id, emo)}
-                        className="w-9 h-9 rounded-full flex items-center justify-center transition-transform active:scale-125"
-                        style={{ fontSize: 22, background: myReaction[post.id] === emo ? "var(--surface)" : "transparent" }}
-                      >
-                        {emo}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                </div>
+                <div style={{ marginLeft: 40, maxWidth: "84%" }}>
+                  {(repliesOn || allowed.length > 0) && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      {repliesOn && (
+                        <button
+                          onClick={() => setRepliesFor(post)}
+                          className="flex items-center gap-1 rounded-full px-2.5 h-8 text-[13px] transition-transform active:scale-95"
+                          style={pill}
+                        >
+                          <Reply size={15} /> {rc > 0 && formatCount(rc)}
+                        </button>
+                      )}
+                      {allowed.length > 0 &&
+                        shownChips.map(([emo, n]) => {
+                          const mineOn = myReaction[post.id] === emo;
+                          return (
+                            <button
+                              key={emo}
+                              onClick={() => allowed.includes(emo) && react(post.id, emo)}
+                              className="flex items-center gap-1 rounded-full px-2.5 h-8 text-[13px] transition-transform active:scale-95"
+                              style={{
+                                ...pill,
+                                background: mineOn ? "var(--accent-solid)" : pill.background,
+                                border: mineOn ? "1px solid var(--accent-solid)" : pill.border,
+                                color: mineOn ? "var(--on-accent)" : "var(--text)",
+                              }}
+                            >
+                              <span style={{ fontSize: 16 }}>{emo}</span> {formatCount(n)}
+                            </button>
+                          );
+                        })}
+                      {extra > 0 && (
+                        <button
+                          onClick={() => setAllFor(post.id)}
+                          className="rounded-full px-2.5 h-8 text-[13px] transition-transform active:scale-95"
+                          style={pill}
+                        >
+                          +{formatCount(extra)}
+                        </button>
+                      )}
+                      {allowed.length > 0 && (
+                        <button
+                          onClick={() => setPickerFor(pickerFor === post.id ? null : post.id)}
+                          aria-label="Add a reaction"
+                          className="w-8 h-8 rounded-full flex items-center justify-center"
+                          style={pill}
+                        >
+                          <SmilePlus size={15} color="var(--text-muted)" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {pickerFor === post.id && (
+                    <div
+                      className="flex flex-wrap gap-0.5 mt-1.5 p-1.5 rounded-3xl"
+                      style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)", animation: "loopPop 0.16s ease-out" }}
+                    >
+                      {allowed.map((emo) => (
+                        <button
+                          key={emo}
+                          onClick={() => react(post.id, emo)}
+                          className="w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-125"
+                          style={{ background: myReaction[post.id] === emo ? "var(--active-highlight)" : "transparent" }}
+                        >
+                          <AnimatedEmoji emoji={emo} size={30} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
+              {isLast && seenBy > 0 && (
+                <p className="text-[11.5px] text-right pr-1 -mt-1 mb-2" style={{ color: "var(--text-muted)" }}>
+                  Seen by {formatCount(seenBy)}
+                </p>
+              )}
             </React.Fragment>
           );
         })}
       </div>
 
       {flash && (
-        <div className="absolute left-0 right-0 bottom-24 flex justify-center pointer-events-none z-10">
+        <div className="absolute left-0 right-0 bottom-24 flex justify-center pointer-events-none z-[90]">
           <span className="rounded-full px-4 py-2 text-[12px]" style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600 }}>{flash}</span>
         </div>
       )}
 
       {/* bottom bar */}
-      <div className="shrink-0 px-3 py-2.5" style={{ borderTop: "1px solid var(--border-subtle)", background: "var(--bg)" }}>
+      <div className="shrink-0 px-3 py-2.5" style={{ borderTop: "1px solid var(--border-subtle)", background: "var(--bg)", paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))" }}>
         {isOwner ? (
           <>
             {image && (
@@ -1102,15 +2433,17 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                 className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
                 style={{ background: "var(--surface)", color: "var(--text)", maxHeight: 120 }}
               />
-              <button
-                onClick={send}
-                disabled={sending || (!text.trim() && !image)}
-                aria-label="Post"
-                className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                style={{ background: ACCENT, opacity: sending || (!text.trim() && !image) ? 0.5 : 1 }}
-              >
-                <SendHorizontal size={18} color="var(--on-accent)" />
-              </button>
+              {(text.trim() || image) && (
+                <button
+                  onClick={send}
+                  disabled={sending}
+                  aria-label="Post"
+                  className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+                  style={{ background: ACCENT, opacity: sending ? 0.5 : 1, animation: "loopPop 0.18s ease-out" }}
+                >
+                  <ShareIcon size={19} color="var(--on-accent)" style={{ marginLeft: 2 }} />
+                </button>
+              )}
             </div>
           </>
         ) : membership ? (
@@ -1127,6 +2460,14 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       {menuOpen && channel && (
         <StorySheetShell title={channel.name} onClose={() => setMenuOpen(false)}>
           <div className="pb-6">
+            <StoryMenuRow
+              icon={<Info size={17} color="var(--text)" />}
+              label="Channel info"
+              onClick={() => {
+                setMenuOpen(false);
+                setInfoOpen(true);
+              }}
+            />
             {isOwner && (
               <StoryMenuRow
                 icon={<Pencil size={17} color="var(--text)" />}
@@ -1134,6 +2475,16 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                 onClick={() => {
                   setMenuOpen(false);
                   setSettingsOpen(true);
+                }}
+              />
+            )}
+            {isOwner && (
+              <StoryMenuRow
+                icon={<Palette size={17} color="var(--text)" />}
+                label="Theme & font"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setThemeOpen(true);
                 }}
               />
             )}
@@ -1153,6 +2504,16 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       {postMenu && (
         <StorySheetShell title="Post" onClose={() => setPostMenu(null)}>
           <div className="pb-6">
+            {repliesOn && (
+              <StoryMenuRow
+                icon={<Reply size={17} color="var(--text)" />}
+                label="Replies"
+                onClick={() => {
+                  setRepliesFor(postMenu);
+                  setPostMenu(null);
+                }}
+              />
+            )}
             {postMenu.content && (
               <StoryMenuRow
                 icon={<Copy size={17} color="var(--text)" />}
@@ -1198,6 +2559,73 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
             </button>
           </div>
         </StorySheetShell>
+      )}
+
+      {repliesFor && channel && (
+        <ChannelRepliesSheet
+          post={repliesFor}
+          channel={channel}
+          me={me}
+          isOwner={isOwner}
+          canReply={repliesOn && (isOwner || !!membership)}
+          onClose={() => setRepliesFor(null)}
+          onCountChange={(d) => setReplyCounts((prev) => ({ ...prev, [repliesFor.id]: Math.max(0, (prev[repliesFor.id] || 0) + d) }))}
+        />
+      )}
+
+      {shareFor && channel && (
+        <ChannelPostShareSheet
+          post={shareFor}
+          channel={channel}
+          me={me}
+          onClose={() => setShareFor(null)}
+          onDone={(m) => {
+            setShareFor(null);
+            say(m);
+          }}
+        />
+      )}
+
+      {infoOpen && channel && (
+        <ChannelInfoScreen
+          channel={channel}
+          owner={owner}
+          me={me}
+          isOwner={isOwner}
+          membership={membership}
+          members={members}
+          posts={posts}
+          onClose={() => setInfoOpen(false)}
+          onToggleMute={toggleMute}
+          onJoin={join}
+          onOptions={() => {
+            setInfoOpen(false);
+            setMenuOpen(true);
+          }}
+          onEdit={() => setSettingsOpen(true)}
+          onTheme={() => {
+            setInfoOpen(false);
+            setThemeOpen(true);
+          }}
+          onJumpTo={jumpTo}
+          say={say}
+        />
+      )}
+
+      {themeOpen && channel && (
+        <CustomiseSheet
+          table="channels"
+          rowId={channel.id}
+          theme={channel.theme || "default"}
+          font={channel.chat_font || "default"}
+          image={channel.theme_image || null}
+          title="Channel theme"
+          onClose={() => setThemeOpen(false)}
+          onApplied={(t, f, img) => {
+            setChannel((c) => ({ ...c, theme: t, chat_font: f, theme_image: img }));
+            setThemeOpen(false);
+          }}
+        />
       )}
 
       {settingsOpen && channel && (
@@ -1367,12 +2795,16 @@ async function attachSounds(list) {
     const ownerIds = [...new Set((snds || []).map((x) => x.owner_id).filter(Boolean))];
     const [srcRes, ownerRes] = await Promise.all([
       srcIds.length ? supabase.from("posts").select("id, media_url, cover_url").in("id", srcIds) : Promise.resolve({ data: [] }),
-      ownerIds.length ? supabase.from("profiles").select("id, username").in("id", ownerIds) : Promise.resolve({ data: [] }),
+      ownerIds.length ? supabase.from("profiles").select("id, username, avatar_url").in("id", ownerIds) : Promise.resolve({ data: [] }),
     ]);
     const src = {};
     (srcRes.data || []).forEach((x) => (src[x.id] = x));
     const owner = {};
-    (ownerRes.data || []).forEach((x) => (owner[x.id] = x.username));
+    const ownerPic = {};
+    (ownerRes.data || []).forEach((x) => {
+      owner[x.id] = x.username;
+      ownerPic[x.id] = x.avatar_url || null;
+    });
     return list.map((pp) => {
       const snd = byId[soundFor[pp.id]];
       if (!snd) return pp;
@@ -1383,6 +2815,7 @@ async function attachSounds(list) {
           id: snd.id,
           title: snd.title || "Original sound",
           ownerName: owner[snd.owner_id] || "",
+          ownerAvatar: ownerPic[snd.owner_id] || null,
           sourceUrl: from?.media_url || null,
           cover: from?.cover_url || null,
           // Someone else's sound: play that audio instead of this video's own.
@@ -5306,16 +6739,25 @@ function PostMediaCarousel({ media }) {
 // function isn't installed yet.
 async function fetchPostCounts(postIds) {
   if (!postIds || postIds.length === 0) return {};
-  const { data, error } = await supabase.rpc("post_counts", { p_ids: postIds });
+  const [{ data, error }, shareRes] = await Promise.all([
+    supabase.rpc("post_counts", { p_ids: postIds }),
+    // Shares need loop-step-12.sql; without it they just stay at zero.
+    Promise.resolve(supabase.rpc("post_share_counts", { p_ids: postIds })).catch(() => ({ data: null })),
+  ]);
   if (error || !data) return {};
+  const shares = {};
+  (shareRes?.data || []).forEach((r) => (shares[r.post_id] = Number(r.shares) || 0));
   return Object.fromEntries(
-    data.map((r) => [r.post_id, { likes: Number(r.likes), comments: Number(r.comments), reposts: Number(r.reposts), saves: Number(r.saves) }])
+    data.map((r) => [
+      r.post_id,
+      { likes: Number(r.likes), comments: Number(r.comments), reposts: Number(r.reposts), saves: Number(r.saves), shares: shares[r.post_id] || 0 },
+    ])
   );
 }
 // Overlay the true counts onto posts that already have their own guesses.
 function applyCounts(post, c) {
   if (!c) return post;
-  return { ...post, likeCount: c.likes, commentCount: c.comments, repostCount: c.reposts, saveCount: c.saves };
+  return { ...post, likeCount: c.likes, commentCount: c.comments, repostCount: c.reposts, saveCount: c.saves, shareCount: c.shares || 0 };
 }
 
 async function fetchPostMediaMap(postIds) {
@@ -5599,7 +7041,6 @@ function SuggestedReelsStrip({ reels, onOpenReel }) {
 
 // Mute choice shared by every video on Home, so unmuting one keeps sound on
 // as you scroll — the way Instagram's feed works.
-let feedMutedPref = true;
 
 // A video on Home: plays muted while on screen, pauses when scrolled away.
 // One tap opens it in Reels (reels) or toggles play (plain videos);
@@ -5607,7 +7048,7 @@ let feedMutedPref = true;
 function FeedVideo({ post, onOpenReel, onLike }) {
   const ref = React.useRef(null);
   const audioRef = React.useRef(null);
-  const [muted, setMuted] = useState(feedMutedPref);
+  const [muted, setMuted] = useGlobalMuted();
   const borrowed = !!post.sound?.borrowed;
   useBorrowedAudio(ref, audioRef, borrowed, post.id);
   const [burst, setBurst] = useState(0);
@@ -5633,7 +7074,8 @@ function FeedVideo({ post, onOpenReel, onLike }) {
 
   const onTap = useTapDetector(
     () => {
-      if (post.media_type === "reel" && onOpenReel) {
+      // A single video is a reel, the way Instagram shares every video post.
+      if ((post.media_type === "reel" || post.media_type === "video") && !post.notReel && onOpenReel) {
         onOpenReel(post.id);
         return;
       }
@@ -5665,7 +7107,7 @@ function FeedVideo({ post, onOpenReel, onLike }) {
           </div>
         </div>
       )}
-      {post.media_type === "reel" && (
+      {(post.media_type === "reel" || post.media_type === "video") && !post.notReel && (
         <div className="absolute top-2.5 right-2.5 pointer-events-none" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
           <Clapperboard size={18} color="#FFFFFF" />
         </div>
@@ -5673,7 +7115,6 @@ function FeedVideo({ post, onOpenReel, onLike }) {
       <button
         onClick={(e) => {
           e.stopPropagation();
-          feedMutedPref = !muted;
           setMuted(!muted);
         }}
         aria-label={muted ? "Unmute" : "Mute"}
@@ -5943,7 +7384,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     const { data } = await supabase
       .from("posts")
       .select("id, media_url, user_id, views_count, created_at")
-      .eq("media_type", "reel")
+      .in("media_type", ["reel", "video"])
       .eq("archived", false)
       .is("removed_at", null)
       .lte("created_at", new Date().toISOString())
@@ -6077,6 +7518,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   };
 
   const [sharePost, setSharePost] = useState(null);
+  const [noteFor, setNoteFor] = useState(null); // post whose repost note is being written
+  const [repostNotes, setRepostNotes] = useRepostNotes(posts.map((p) => p.id), userId);
   const [collectionPost, setCollectionPost] = useState(null);
   const [saveError, setSaveError] = useState("");
   const savePressRef = React.useRef(null);
@@ -6115,9 +7558,18 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
     if (post.reposted) {
       await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
+      setRepostNotes((m) => ({ ...m, [post.id]: null }));
     } else {
-      await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
+      const { error } = await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
+      if (!error) setNoteFor(post);
     }
+  };
+
+  const undoRepost = async (post) => {
+    setNoteFor(null);
+    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, reposted: false, repostCount: Math.max(0, (p.repostCount || 1) - 1) } : p)));
+    setRepostNotes((m) => ({ ...m, [post.id]: null }));
+    await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
   };
 
   const sendFeedback = async (post, kind) => {
@@ -6249,11 +7701,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 {post.suggested && (
                   <span className="text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>Suggested for you</span>
                 )}
-                {post.location && (
-                  <span className="flex items-center gap-0.5 text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
-                    <MapPin size={9} /> {post.location}
-                  </span>
-                )}
+                <LocationLink location={post.location} />
               </div>
 
               {post.suggested && post.user_id !== userId && (
@@ -6287,9 +7735,18 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   <img src={post.media_url} alt="" className="w-full h-full object-cover" />
                 </FeedPhotoTap>
               ) : (
-                <FeedVideo post={post.media_type === "photo" ? { ...post, media_type: "video" } : post} onOpenReel={onOpenReel} onLike={() => !post.liked && toggleLike(post)} />
+                <FeedVideo post={post.media_type === "photo" ? { ...post, media_type: "video", notReel: true } : post} onOpenReel={onOpenReel} onLike={() => !post.liked && toggleLike(post)} />
               )}
               <MediaTagOverlay tags={post.tags} isVideo={!isPhotoPost(post)} onOpenProfile={onOpenProfile} />
+              {repostNotes[post.id] && (
+                <div className="absolute left-3 z-[6]" style={{ bottom: post.tags && post.tags.length ? 46 : 12 }}>
+                  <RepostNoteBubble
+                    entry={repostNotes[post.id]}
+                    avatarSize={30}
+                    onTap={(en) => (en.mine ? setNoteFor(post) : onOpenProfile(en.userId))}
+                  />
+                </div>
+              )}
             </div>
 
             <PollBlock postId={post.id} currentUserId={userId} />
@@ -6303,7 +7760,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   >
                     <ShareIcon size={23} color="var(--text)" strokeWidth={1.9} />
                   </button>
-                  <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
+                  <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                    {countPrefs.shares !== false && post.shareCount > 0 ? formatCount(post.shareCount) : "\u00A0"}
+                  </span>
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                   <button
@@ -6519,7 +7978,22 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       )}
 
       {sharePost && (
-        <ShareSheet item={sharePost} currentUserId={userId} onClose={() => setSharePost(null)} />
+        <ShareSheet
+          item={sharePost}
+          currentUserId={userId}
+          onClose={() => setSharePost(null)}
+          onShared={() => setPosts((prev) => prev.map((p) => (p.id === sharePost.id ? { ...p, shareCount: (p.shareCount || 0) + 1 } : p)))}
+        />
+      )}
+      {noteFor && (
+        <RepostNoteSheet
+          post={noteFor}
+          meId={userId}
+          initialNote={repostNotes[noteFor.id]?.mine ? repostNotes[noteFor.id].note : ""}
+          onClose={repostNoteHandlers(noteFor, setNoteFor, setRepostNotes, userId).close}
+          onSaved={repostNoteHandlers(noteFor, setNoteFor, setRepostNotes, userId).saved}
+          onUndo={() => undoRepost(noteFor)}
+        />
       )}
 
       {collectionPost && (
@@ -6589,7 +8063,7 @@ const writeRailPinned = (v) => {
   }
 };
 
-function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onOpenPost }) {
+function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onOpenPost, onBack }) {
   const [reels, setReels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -6604,7 +8078,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   const railLongRef = React.useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [playing, setPlaying] = useState(true);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useGlobalMuted();
   const [autoScroll, setAutoScroll] = useState(getAutoScrollPref());
   const [fullscreen, setFullscreen] = useState(false);
   const [toast, setToast] = useState("");
@@ -6612,6 +8086,8 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   const [commentSheetOpen, setCommentSheetOpen] = useState(false);
   const [likesPopupOpen, setLikesPopupOpen] = useState(false);
   const [shareReel, setShareReel] = useState(null);
+  const [noteFor, setNoteFor] = useState(null); // reel whose repost note is being written
+  const [repostNotes, setRepostNotes] = useRepostNotes(reels.map((r) => r.id), userId);
   const [collectionReel, setCollectionReel] = useState(null);
   const savePressRef = React.useRef(null);
   const longPressedRef = React.useRef(false);
@@ -6720,7 +8196,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       let q = supabase
         .from("posts")
         .select(REEL_COLS)
-        .eq("media_type", "reel")
+        .in("media_type", ["reel", "video"])
         .eq("archived", false)
         .is("removed_at", null)
         .lte("created_at", new Date().toISOString())
@@ -6896,11 +8372,21 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       )
     );
 
+    const target = reel;
     if (wasReposted) {
-      await supabase.from("reposts").delete().eq("post_id", reel.id).eq("user_id", userId);
+      await supabase.from("reposts").delete().eq("post_id", target.id).eq("user_id", userId);
+      setRepostNotes((m) => ({ ...m, [target.id]: null }));
     } else {
-      await supabase.from("reposts").insert({ post_id: reel.id, user_id: userId });
+      const { error } = await supabase.from("reposts").insert({ post_id: target.id, user_id: userId });
+      if (!error) setNoteFor(target);
     }
+  };
+
+  const undoRepost = async (post) => {
+    setNoteFor(null);
+    setReels((prev) => prev.map((r) => (r.id === post.id ? { ...r, reposted: false, repostCount: Math.max(0, (r.repostCount || 1) - 1) } : r)));
+    setRepostNotes((m) => ({ ...m, [post.id]: null }));
+    await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
   };
 
   const toggleSave = async () => {
@@ -7176,17 +8662,22 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         </div>
       )}
 
-      {/* top label + options menu */}
+      {/* top label + options menu — sits above the pause/play buttons */}
       <div
-        className="absolute top-4 left-0 right-0 flex items-center justify-center"
+        className="absolute top-4 left-0 right-0 z-30 flex items-center justify-center"
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
+        {onBack && (
+          <button onClick={onBack} aria-label="Back" className="absolute left-3 p-0.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+            <ChevronLeft size={26} color="#FFFFFF" />
+          </button>
+        )}
         <span className="text-base" style={{ color: "#FFFFFF", fontWeight: 700, fontFamily: "'Sora', sans-serif", filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
           Reels
         </span>
-        <div className="absolute right-3" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
-          <button onClick={() => setMenuOpen((v) => !v)}>
+        <div className="absolute right-3">
+          <button onClick={() => setMenuOpen((v) => !v)} aria-label="More" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
             <Ellipsis size={20} color="#FFFFFF" />
           </button>
           {menuOpen && (
@@ -7259,6 +8750,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   ["likes", "Likes"],
                   ["comments", "Comments"],
                   ["reposts", "Reposts"],
+                  ["shares", "Shares"],
                   ["saves", "Saves"],
                 ].map(([key, label]) => (
                   <button
@@ -7270,11 +8762,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                     <span>{label}</span>
                     <span
                       className="rounded-full"
-                      style={{ width: 30, height: 17, background: countPrefs[key] ? ACCENT : "var(--toggle-off)", position: "relative" }}
+                      style={{ width: 30, height: 17, background: countPrefs[key] !== false ? ACCENT : "var(--toggle-off)", position: "relative" }}
                     >
                       <span
                         className="rounded-full bg-white absolute"
-                        style={{ width: 13, height: 13, top: 2, left: countPrefs[key] ? 15 : 2, transition: "left 0.15s" }}
+                        style={{ width: 13, height: 13, top: 2, left: countPrefs[key] !== false ? 15 : 2, transition: "left 0.15s" }}
                       />
                     </span>
                   </button>
@@ -7312,6 +8804,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
+        {repostNotes[reel.id] && (
+          <div className="mb-2.5">
+            <RepostNoteBubble entry={repostNotes[reel.id]} onTap={(en) => (en.mine ? setNoteFor(reel) : onOpenProfile(en.userId))} />
+          </div>
+        )}
         <div className="flex items-center gap-2.5 mb-2.5">
           <button onClick={() => onOpenProfile(reel.user_id)} className="flex items-center gap-2.5 min-w-0">
             <div className="w-9 h-9 rounded-full shrink-0 overflow-hidden flex items-center justify-center text-[13px]" style={{ background: "rgba(255,255,255,0.22)", color: "#FFFFFF", fontWeight: 600 }}>
@@ -7337,9 +8834,9 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
           )}
         </div>
         {reel.location && (
-          <span className="flex items-center gap-1 text-[11px] mb-1.5" style={{ color: "rgba(255,255,255,0.85)" }}>
-            <MapPin size={11} /> {reel.location}
-          </span>
+          <div className="mb-1.5">
+            <LocationLink location={reel.location} light size={12} />
+          </div>
         )}
         <CaptionText
           caption={reel.caption}
@@ -7349,7 +8846,6 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         />
         <TaggedPeopleLine tags={reel.tags} onOpenProfile={onOpenProfile} light />
         <PostLinkChip url={reel.link_url} light />
-        <SoundLine sound={reel.sound} onOpen={(snd) => setSoundOpen(snd.id)} />
       </div>
 
       {soundOpen && (
@@ -7381,51 +8877,49 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       >
         <div className="relative flex flex-col items-center">
           {expanded && (
-            <div
-              className="absolute bottom-24 flex flex-col items-center gap-5 py-4 px-2.5 rounded-full"
-              style={{
-                background: "rgba(0,0,0,0.42)",
-                backdropFilter: "blur(12px)",
-                border: "1px solid rgba(255,255,255,0.14)",
-                boxShadow: "0 8px 28px rgba(0,0,0,0.4)",
-              }}
-            >
+            <div className="absolute bottom-[100px] flex flex-col items-center gap-4" style={{ animation: "loopSheetUp 0.18s ease-out" }}>
               <button
                 onClick={toggleLike}
                 onTouchStart={(e) => {
                   e.currentTarget._pressTimer = setTimeout(() => setLikesPopupOpen(true), 500);
                 }}
                 onTouchEndCapture={(e) => clearTimeout(e.currentTarget._pressTimer)}
-                className="flex flex-col items-center gap-1"
-                style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
+                className="flex flex-col items-center transition-transform active:scale-90"
+                style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
               >
-                <Heart size={28} color={reel.liked ? "#ED4956" : "#FFFFFF"} fill={reel.liked ? "#ED4956" : "none"} strokeWidth={2} />
-                {countPrefs.likes && !reel.hide_likes && reel.likeCount > 0 && (
-                  <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.likeCount)}</span>
-                )}
+                <Heart size={30} color={reel.liked ? "#ED4956" : "#FFFFFF"} fill={reel.liked ? "#ED4956" : "none"} strokeWidth={2} />
+                <RailCount show={countPrefs.likes && !reel.hide_likes} n={reel.likeCount} />
               </button>
               {!reel.comments_disabled ? (
-                <button onClick={() => setCommentSheetOpen(true)} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
-                  <MessageCircle size={27} color="#FFFFFF" strokeWidth={2} />
-                  {countPrefs.comments && !reel.hide_comments && reel.commentCount > 0 && (
-                    <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.commentCount)}</span>
-                  )}
+                <button
+                  onClick={() => setCommentSheetOpen(true)}
+                  className="flex flex-col items-center transition-transform active:scale-90"
+                  style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
+                >
+                  <MessageCircle size={29} color="#FFFFFF" strokeWidth={2} style={{ transform: "scaleX(-1)" }} />
+                  <RailCount show={countPrefs.comments && !reel.hide_comments} n={reel.commentCount} />
                 </button>
               ) : (
-                <MessageCircle size={27} color="rgba(255,255,255,0.35)" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }} />
+                <span className="flex flex-col items-center" style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}>
+                  <MessageCircle size={29} color="rgba(255,255,255,0.35)" style={{ transform: "scaleX(-1)" }} />
+                  <RailCount show={false} n={0} />
+                </span>
               )}
-              <button onClick={toggleRepost} className="flex flex-col items-center gap-1" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
-                <RepostIcon size={28} color={reel.reposted ? "var(--accent-end)" : "#FFFFFF"} strokeWidth={2} active={reel.reposted} />
-                {countPrefs.reposts && !reel.hide_reposts && reel.repostCount > 0 && (
-                  <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.repostCount)}</span>
-                )}
+              <button
+                onClick={toggleRepost}
+                className="flex flex-col items-center transition-transform active:scale-90"
+                style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
+              >
+                <RepostIcon size={30} color={reel.reposted ? "var(--accent-end)" : "#FFFFFF"} strokeWidth={2} active={reel.reposted} />
+                <RailCount show={countPrefs.reposts && !reel.hide_reposts} n={reel.repostCount} />
               </button>
               <button
                 onClick={() => setShareReel(reel)}
-                className="flex flex-col items-center gap-1 transition-transform active:scale-90"
-                style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
+                className="flex flex-col items-center transition-transform active:scale-90"
+                style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
               >
-                <ShareIcon size={26} color="#FFFFFF" strokeWidth={2} />
+                <ShareIcon size={28} color="#FFFFFF" strokeWidth={2} />
+                <RailCount show={countPrefs.shares !== false} n={reel.shareCount} />
               </button>
               <button
                 onClick={() => {
@@ -7451,13 +8945,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   longPressedRef.current = true;
                   setCollectionReel(reel);
                 }}
-                className="flex flex-col items-center gap-1 transition-transform active:scale-90"
-                style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}
+                className="flex flex-col items-center transition-transform active:scale-90"
+                style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
               >
-                <Bookmark size={26} color="#FFFFFF" fill={reel.saved ? "#FFFFFF" : "none"} strokeWidth={2} />
-                {countPrefs.saves && !reel.hide_saves && reel.saveCount > 0 && (
-                  <span className="text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{formatCount(reel.saveCount)}</span>
-                )}
+                <Bookmark size={28} color="#FFFFFF" fill={reel.saved ? "#FFFFFF" : "none"} strokeWidth={2} />
+                <RailCount show={countPrefs.saves && !reel.hide_saves} n={reel.saveCount} />
               </button>
             </div>
           )}
@@ -7466,14 +8958,23 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
             <LikesViewsPopup post={reel} isOwner={reel.user_id === userId} onClose={() => setLikesPopupOpen(false)} onOpenProfile={onOpenProfile} />
           )}
 
-          {/* audio / sound-source shortcut, sits just above the main heart button */}
-          <button
-            onClick={() => showToast("Reels using this audio — coming soon")}
-            className="w-9 h-9 rounded-xl mb-3 flex items-center justify-center transition-transform active:scale-90"
-            style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.18)" }}
-          >
-            <Music2 size={15} color="#FFFFFF" />
-          </button>
+          {/* The sound: its maker's picture with a ♪ — tap for the sound's page */}
+          {(() => {
+            const pic = reel.sound?.ownerAvatar || reel.sound?.cover || reel.avatarUrl;
+            return (
+              <button
+                onClick={() => (reel.sound ? setSoundOpen(reel.sound.id) : showToast(`Original audio · ${reel.username}`))}
+                aria-label={reel.sound ? `${reel.sound.title} · ${reel.sound.ownerName}` : "Original audio"}
+                className="relative w-10 h-10 rounded-xl mb-3 overflow-hidden transition-transform active:scale-90"
+                style={{ border: "2px solid rgba(255,255,255,0.92)", boxShadow: "0 2px 10px rgba(0,0,0,0.45)", background: "rgba(0,0,0,0.45)" }}
+              >
+                {pic && <img src={pic} alt="" className="absolute inset-0 w-full h-full object-cover" />}
+                <span className="absolute inset-0 flex items-center justify-center" style={{ background: pic ? "rgba(0,0,0,0.3)" : "transparent" }}>
+                  <Music2 size={15} color="#FFFFFF" />
+                </span>
+              </button>
+            );
+          })()}
 
           <button
             onClick={() => {
@@ -7553,7 +9054,22 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         />
       )}
       {shareReel && (
-        <ShareSheet item={shareReel} currentUserId={userId} onClose={() => setShareReel(null)} />
+        <ShareSheet
+          item={shareReel}
+          currentUserId={userId}
+          onClose={() => setShareReel(null)}
+          onShared={() => setReels((prev) => prev.map((r) => (r.id === shareReel.id ? { ...r, shareCount: (r.shareCount || 0) + 1 } : r)))}
+        />
+      )}
+      {noteFor && (
+        <RepostNoteSheet
+          post={noteFor}
+          meId={userId}
+          initialNote={repostNotes[noteFor.id]?.mine ? repostNotes[noteFor.id].note : ""}
+          onClose={repostNoteHandlers(noteFor, setNoteFor, setRepostNotes, userId).close}
+          onSaved={repostNoteHandlers(noteFor, setNoteFor, setRepostNotes, userId).saved}
+          onUndo={() => undoRepost(noteFor)}
+        />
       )}
 
       {collectionReel && (
@@ -9022,7 +10538,9 @@ function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover", squ
 }
 
 // Tag people: search by username, pick from the list, shown as chips.
-function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint }) {
+function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint, bare = false, icon }) {
+  const [open, setOpen] = useState(false);
+  const RowIcon = icon || UserPlus;
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [me, setMe] = useState(null);
@@ -9065,15 +10583,43 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
     setResults([]);
   };
 
+  // In a list of rows: one tidy line that opens when tapped.
+  const header = bare ? (
+    <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left">
+      <RowIcon size={15} color="var(--text-muted)" />
+      <span className="flex-1" style={{ color: "var(--text)" }}>{title}</span>
+      {value.length > 0 && (
+        <span className="flex items-center gap-1.5">
+          <span className="flex">
+            {value.slice(0, 3).map((p, i) => (
+              <span key={p.id} className="rounded-full" style={{ marginLeft: i ? -7 : 0, border: "2px solid var(--surface)" }}>
+                <Avatar username={p.username} avatarUrl={p.avatar_url} size={20} />
+              </span>
+            ))}
+          </span>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            {value.length === 1 ? value[0].username : `${value.length} people`}
+          </span>
+        </span>
+      )}
+      <ChevronRight size={16} color="var(--text-muted)" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+    </button>
+  ) : null;
+  if (bare && !open) return header;
+
   return (
-    <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        <UserPlus size={15} color="var(--text-muted)" />
-        <span className="text-sm flex-1" style={{ color: "var(--text)", fontWeight: 600 }}>{title}</span>
-        {value.length > 0 && (
-          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{max < 20 ? `${value.length}/${max}` : value.length}</span>
-        )}
-      </div>
+    <div className={bare ? "" : "rounded-xl mb-4 overflow-hidden"} style={bare ? undefined : { background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {bare ? (
+        header
+      ) : (
+        <div className="flex items-center gap-2 px-3 py-2.5">
+          <UserPlus size={15} color="var(--text-muted)" />
+          <span className="text-sm flex-1" style={{ color: "var(--text)", fontWeight: 600 }}>{title}</span>
+          {value.length > 0 && (
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>{max < 20 ? `${value.length}/${max}` : value.length}</span>
+          )}
+        </div>
+      )}
       {hint && (
         <p className="px-3 -mt-1.5 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>{hint}</p>
       )}
@@ -9915,14 +11461,20 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
           </div>
         </div>
 
-        <TagPeoplePicker value={taggedPeople} onChange={setTaggedPeople} />
-        <TagPeoplePicker
-          value={collabPeople}
-          onChange={setCollabPeople}
-          title="Invite collaborators"
-          max={3}
-          hint="If they accept, this post shows on their profile too, with both your names on it."
-        />
+        <div className="rounded-xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <TagPeoplePicker bare value={taggedPeople} onChange={setTaggedPeople} />
+          <div style={{ borderTop: "1px solid var(--border)" }}>
+            <TagPeoplePicker
+              bare
+              icon={Users}
+              value={collabPeople}
+              onChange={setCollabPeople}
+              title="Invite collaborators"
+              max={3}
+              hint="If they accept, this post shows on their profile too, with both your names on it."
+            />
+          </div>
+        </div>
 
         {/* Poll */}
         <div className="rounded-xl mb-4 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -11185,6 +12737,9 @@ function SettingsScreen({
             </div>
           ))}
         </div>
+        <p className="text-[11px] text-center px-8 pt-4 pb-8" style={{ color: "var(--text-muted)" }}>
+          Animated emoji: Noto Emoji Animation by Google, licensed under CC BY 4.0.
+        </p>
       </div>
     );
   }
@@ -11429,6 +12984,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
   const [likesPopupOpen, setLikesPopupOpen] = useState(false);
   const [commentSheetOpen, setCommentSheetOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [noteFor, setNoteFor] = useState(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [countPrefs] = useCountPrefs();
   const pressTimer = React.useRef(null);
@@ -11510,7 +13066,8 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
     if (was) {
       await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
     } else {
-      await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
+      const { error } = await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
+      if (!error) setNoteFor(post);
     }
   };
 
@@ -11558,11 +13115,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
             <div className="flex flex-col leading-tight min-w-0 text-left">
               <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
-              {post.location && (
-                <span className="flex items-center gap-0.5 text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
-                  <MapPin size={9} /> {post.location}
-                </span>
-              )}
+              <LocationLink location={post.location} />
             </div>
           </button>
         </div>
@@ -11598,7 +13151,9 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             >
               <ShareIcon size={23} color="var(--text)" strokeWidth={1.9} />
             </button>
-            <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
+            <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                    {countPrefs.shares !== false && post.shareCount > 0 ? formatCount(post.shareCount) : "\u00A0"}
+                  </span>
           </div>
           <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
             <button onClick={toggleSave} className="h-7 flex items-center justify-center transition-transform active:scale-90">
@@ -11707,7 +13262,25 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
         />
       )}
       {shareOpen && post && (
-        <ShareSheet item={post} currentUserId={userId} onClose={() => setShareOpen(false)} />
+        <ShareSheet
+          item={post}
+          currentUserId={userId}
+          onClose={() => setShareOpen(false)}
+          onShared={() => setPost((prev) => ({ ...prev, shareCount: (prev.shareCount || 0) + 1 }))}
+        />
+      )}
+      {noteFor && (
+        <RepostNoteSheet
+          post={noteFor}
+          meId={userId}
+          onClose={() => setNoteFor(null)}
+          onSaved={() => setNoteFor(null)}
+          onUndo={async () => {
+            setNoteFor(null);
+            setPost((prev) => ({ ...prev, reposted: false, repostCount: Math.max(0, (prev.repostCount || 1) - 1) }));
+            await supabase.from("reposts").delete().eq("post_id", noteFor.id).eq("user_id", userId);
+          }}
+        />
       )}
     </div>
   );
@@ -13578,6 +15151,11 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   const [checking, setChecking] = useState(false);
   const [available, setAvailable] = useState(null);
   const fileRef = React.useRef(null);
+  const [banner, setBanner] = useState(null);
+  const [bannerOpen, setBannerOpen] = useState(false);
+  useEffect(() => {
+    if (currentUserId) fetchBanner(currentUserId).then(setBanner);
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -14013,6 +15591,39 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         </div>
         <p className="text-[11px] mt-1 mb-4" style={{ color: "var(--text-muted)" }}>Shown under your name on your profile.</p>
 
+        <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Banners</label>
+        <button
+          type="button"
+          onClick={() => setBannerOpen(true)}
+          className="w-full flex items-center gap-3 rounded-2xl px-4 h-12 mb-1 text-left transition-transform active:scale-[0.99]"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
+        >
+          <CirclePlus size={17} color="var(--text-muted)" />
+          <span className="flex-1 text-sm" style={{ color: "var(--text)" }}>Fill in the blank</span>
+          {banner ? (
+            <span className="text-[12px] truncate max-w-[45%]" style={{ color: "var(--text-muted)" }}>
+              {bannerKindOf(banner.kind).label} {banner.text}
+            </span>
+          ) : (
+            <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>Add</span>
+          )}
+          <ChevronRight size={16} color="var(--text-muted)" />
+        </button>
+        <p className="text-[11px] mt-1 mb-4" style={{ color: "var(--text-muted)" }}>
+          Say what you're into right now — like "Reading Atomic Habits". It sits next to your category.
+        </p>
+        {bannerOpen && (
+          <BannerSheet
+            userId={currentUserId}
+            initial={banner}
+            onClose={() => setBannerOpen(false)}
+            onSaved={(b) => {
+              setBanner(b);
+              setBannerOpen(false);
+            }}
+          />
+        )}
+
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Contact options</label>
         <div className="rounded-2xl overflow-hidden mb-1" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
           <div className="flex items-center gap-3 px-4 h-12">
@@ -14102,6 +15713,8 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
   const [error, setError] = useState("");
   const [commentFor, setCommentFor] = useState(null);
   const [shareFor, setShareFor] = useState(null);
+  const [noteFor, setNoteFor] = useState(null);
+  const [countPrefs] = useCountPrefs();
   const [optionsFor, setOptionsFor] = useState(null);
   const [likesFor, setLikesFor] = useState(null);
   const likePressRef = React.useRef(null);
@@ -14250,6 +15863,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
     const { error: err } = was
       ? await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", currentUserId)
       : await supabase.from("reposts").insert({ post_id: post.id, user_id: currentUserId });
+    if (!err && !was) setNoteFor(post);
     if (err) {
       setPosts((prev) =>
         prev.map((p) =>
@@ -14308,11 +15922,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                   <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
                   <div className="flex flex-col leading-tight min-w-0 text-left">
                     <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
-                    {post.location && (
-                      <span className="flex items-center gap-0.5 text-[11px] truncate" style={{ color: "var(--text-secondary)" }}>
-                        <MapPin size={9} /> {post.location}
-                      </span>
-                    )}
+                    <LocationLink location={post.location} />
                   </div>
                 </button>
                 <button
@@ -14347,7 +15957,9 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                     <button onClick={() => setShareFor(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
                       <ShareIcon size={23} color="var(--text)" strokeWidth={1.9} />
                     </button>
-                    <span className="text-[11px] leading-none h-3 mt-1">&nbsp;</span>
+                    <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                    {countPrefs.shares !== false && post.shareCount > 0 ? formatCount(post.shareCount) : "\u00A0"}
+                  </span>
                   </div>
                   <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                     <button onClick={() => toggleSave(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
@@ -14458,7 +16070,26 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
       )}
 
       {shareFor && (
-        <ShareSheet item={shareFor} currentUserId={currentUserId} onClose={() => setShareFor(null)} />
+        <ShareSheet
+          item={shareFor}
+          currentUserId={currentUserId}
+          onClose={() => setShareFor(null)}
+          onShared={() => setPosts((prev) => prev.map((p) => (p.id === shareFor.id ? { ...p, shareCount: (p.shareCount || 0) + 1 } : p)))}
+        />
+      )}
+      {noteFor && (
+        <RepostNoteSheet
+          post={noteFor}
+          meId={currentUserId}
+          onClose={() => setNoteFor(null)}
+          onSaved={() => setNoteFor(null)}
+          onUndo={async () => {
+            const target = noteFor;
+            setNoteFor(null);
+            setPosts((prev) => prev.map((p) => (p.id === target.id ? { ...p, reposted: false, repostCount: Math.max(0, (p.repostCount || 1) - 1) } : p)));
+            await supabase.from("reposts").delete().eq("post_id", target.id).eq("user_id", currentUserId);
+          }}
+        />
       )}
 
       {likesFor && (
@@ -15633,6 +17264,8 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   const [reportNote, setReportNote] = useState("");
   const [avatarViewer, setAvatarViewer] = useState(false);
   const [birthdayInfo, setBirthdayInfo] = useState(null); // { date, shared }
+  const [banner, setBanner] = useState(null); // { kind, text } — "Fill in the blank"
+  const [bellOn, setBellOn] = useState(false); // Following → Notifications
   const [ownChannel, setOwnChannel] = useState(null); // { id, name, members }
   const [coverFor, setCoverFor] = useState(null); // a video of yours whose cover you're changing
   const [coverBusy, setCoverBusy] = useState(false);
@@ -15704,12 +17337,13 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
     } catch {
       setBirthdayInfo(null);
     }
+    fetchBanner(targetId).then(setBanner);
 
     // Their broadcast channel, if they have one.
     try {
       const { data: chans, error: chErr } = await supabase
         .from("channels")
-        .select("id, name")
+        .select("id, name, avatar_url")
         .eq("owner_id", targetId)
         .order("created_at", { ascending: true })
         .limit(1);
@@ -15849,13 +17483,33 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         if (!skip.has(f.follower_id) && !ids.includes(f.follower_id) && !isBlockedEither(rel, f.follower_id)) ids.push(f.follower_id);
       });
     }
+    const fromTheirs = new Set((theirs || []).map((f) => f.following_id));
+    if (ids.length < 6) {
+      // Nobody around them yet: fill up with other people on Loop.
+      let { data: others, error: oErr } = await supabase
+        .from("profiles")
+        .select("id")
+        .neq("id", myId)
+        .order("created_at", { ascending: false })
+        .limit(40);
+      if (oErr) ({ data: others } = await supabase.from("profiles").select("id").neq("id", myId).limit(40));
+      (others || []).forEach((o) => {
+        if (!skip.has(o.id) && !ids.includes(o.id) && !isBlockedEither(rel, o.id)) ids.push(o.id);
+      });
+    }
     ids = ids.slice(0, 12);
     if (ids.length === 0) {
       setSimilar([]);
       return;
     }
     const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", ids);
-    setSimilar((profs || []).map((pp) => ({ ...pp, mutualName: profile.username, mutualCount: 1, followed: false })));
+    const order = new Map(ids.map((id, i) => [id, i]));
+    setSimilar(
+      (profs || [])
+        .slice()
+        .sort((a, b) => order.get(a.id) - order.get(b.id))
+        .map((pp) => ({ ...pp, mutualName: fromTheirs.has(pp.id) ? profile.username : null, mutualCount: 1, followed: false }))
+    );
   };
 
   const followSimilar = async (pp) => {
@@ -16028,6 +17682,18 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       cancelled = true;
     };
   }, [initialHighlightId, profile]);
+
+  // Is the bell on for this account?
+  useEffect(() => {
+    if (!profile?.id || !myId || profile.id === myId) return;
+    supabase
+      .from("post_subscriptions")
+      .select("posts, reels, stories")
+      .eq("user_id", myId)
+      .eq("target_id", profile.id)
+      .maybeSingle()
+      .then(({ data, error }) => setBellOn(!error && !!(data && (data.posts || data.reels || data.stories))));
+  }, [profile?.id, myId]);
 
   const birthdayShared = !!birthdayInfo?.shared;
   const birthdayLine = birthdayInfo?.date
@@ -16212,8 +17878,38 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>
           {profile.full_name || profile.username}
         </p>
-        {profile.category && (
-          <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>{profile.category}</p>
+        {/* One line: category · what they're into right now · birthday */}
+        {(profile.category || banner || birthdayLine) && (
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[13px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            {profile.category && <span>{profile.category}</span>}
+            {banner &&
+              (() => {
+                const bk = bannerKindOf(banner.kind);
+                const BI = bk.icon;
+                return (
+                  <>
+                    {profile.category && <span aria-hidden="true">·</span>}
+                    <button
+                      onClick={() => isOwnProfile && setSheet("banner")}
+                      className="flex items-center gap-1 min-w-0"
+                      style={{ cursor: isOwnProfile ? "pointer" : "default" }}
+                    >
+                      <BI size={13} className="shrink-0" /> {bk.label}{" "}
+                      <span className="truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{banner.text}</span>
+                    </button>
+                  </>
+                );
+              })()}
+            {birthdayLine && (
+              <>
+                {(profile.category || banner) && <span aria-hidden="true">·</span>}
+                <span className="flex items-center gap-1">
+                  <Cake size={13} /> {birthdayLine}
+                  {isOwnProfile && !birthdayShared && <span style={{ opacity: 0.7 }}>(only you)</span>}
+                </span>
+              </>
+            )}
+          </div>
         )}
         {profile.bio && (
           <p className="text-[13px] mt-0.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{profile.bio}</p>
@@ -16221,21 +17917,16 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         {ownChannel && (
           <button
             onClick={() => openChannelGlobal(ownChannel.id)}
-            className="flex items-center gap-2 mt-2 rounded-xl px-2.5 py-1.5 max-w-full"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+            className="flex items-center gap-1.5 mt-2 max-w-full rounded-full pl-1 pr-2 h-7 transition-transform active:scale-[0.98]"
+            style={{ background: "var(--surface)" }}
           >
-            <Megaphone size={14} color="var(--accent-solid)" className="shrink-0" />
-            <span className="text-[12px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{ownChannel.name}</span>
-            <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
+            <ChannelAvatar channel={ownChannel} size={21} />
+            <span className="text-[12.5px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{ownChannel.name}</span>
+            <span className="text-[11.5px] shrink-0" style={{ color: "var(--text-muted)" }}>
               · {formatCount(ownChannel.members)} {ownChannel.members === 1 ? "member" : "members"}
             </span>
+            <ChevronRight size={14} color="var(--text-muted)" className="shrink-0" />
           </button>
-        )}
-        {birthdayLine && (
-          <p className="flex items-center gap-1.5 text-[12px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-            <Cake size={12} /> {birthdayLine}
-            {isOwnProfile && !birthdayShared && <span style={{ opacity: 0.7 }}>· only you</span>}
-          </p>
         )}
         {Array.isArray(profile.links) && profile.links.length > 0 && (
           <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
@@ -16259,9 +17950,9 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         <>
           <div className="flex gap-1.5 px-4 mb-3">
             <button
-              onClick={toggleFollow}
+              onClick={isFollowing ? () => setSheet("following") : toggleFollow}
               disabled={followBusy}
-              className="flex-1 rounded-lg h-9 text-[13px] transition-transform active:scale-[0.98]"
+              className="flex-1 flex items-center justify-center gap-1 rounded-lg h-9 text-[13px] transition-transform active:scale-[0.98]"
               style={{
                 background: isFollowing ? "var(--surface)" : ACCENT,
                 border: isFollowing ? "1px solid var(--border)" : "none",
@@ -16270,7 +17961,9 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
                 opacity: followBusy ? 0.6 : 1,
               }}
             >
+              {isFollowing && bellOn && <BellRing size={13} />}
               {isFollowing ? "Following" : "Follow"}
+              {isFollowing && <ChevronDown size={14} />}
             </button>
             {!myRel.blockedBy && (
               <button
@@ -16661,6 +18354,37 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       )}
 
       {sheet === "contact" && <ContactSheet profile={profile} onClose={() => setSheet(null)} />}
+
+      {sheet === "following" && !isOwnProfile && (
+        <FollowingSheet
+          profile={profile}
+          myId={myId}
+          myRel={myRel}
+          relBusy={relBusy}
+          bellOn={bellOn}
+          onToggleRelation={toggleRelation}
+          onOpenNotify={() => setSheet("notifyPrefs")}
+          onUnfollow={async () => {
+            setSheet(null);
+            await toggleFollow();
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
+      {sheet === "notifyPrefs" && !isOwnProfile && (
+        <NotifyPrefsSheet targetId={profile.id} targetName={profile.username} myId={myId} onClose={() => setSheet(null)} onChange={setBellOn} />
+      )}
+      {sheet === "banner" && isOwnProfile && (
+        <BannerSheet
+          userId={myId}
+          initial={banner}
+          onClose={() => setSheet(null)}
+          onSaved={(b) => {
+            setBanner(b);
+            setSheet(null);
+          }}
+        />
+      )}
 
       {avatarViewer && (
         <AvatarViewer
@@ -18348,32 +20072,69 @@ const CHAT_FONTS = [
 const themeOf = (key) => CHAT_THEMES.find((t) => t.key === key) || CHAT_THEMES[0];
 const fontOf = (key) => CHAT_FONTS.find((f) => f.key === key) || CHAT_FONTS[0];
 
-function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
+function CustomiseSheet({ conversationId, table = "conversations", rowId, theme, font, image = null, title = "Chat theme", onClose, onApplied }) {
   const [pickedTheme, setPickedTheme] = useState(theme || "default");
   const [pickedFont, setPickedFont] = useState(font || "default");
+  const [pickedImage, setPickedImage] = useState(image || null);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const photoRef = React.useRef(null);
 
-  const t = themeOf(pickedTheme);
+  const t = withPhoto(themeOf(pickedTheme), pickedImage);
   const f = fontOf(pickedFont);
+
+  // Your own picture from the phone becomes the background.
+  const pickPhoto = async (file) => {
+    setUploading(true);
+    setError("");
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const small = await compressImage(file, 1440, 0.82);
+      const path = `${user.id}/${Date.now()}-theme.jpg`;
+      const { error: upErr } = await supabase.storage.from("posts").upload(path, small, { contentType: "image/jpeg" });
+      if (upErr) throw upErr;
+      setPickedImage(supabase.storage.from("posts").getPublicUrl(path).data.publicUrl);
+    } catch (e) {
+      setError(e?.message || "That picture didn't upload");
+    }
+    setUploading(false);
+  };
 
   const apply = async () => {
     setBusy(true);
     setError("");
+    const patch = { theme: pickedTheme, chat_font: pickedFont };
+    // Only touch the photo column when the photo changed, so themes keep
+    // working even before loop-step-12.sql has been run.
+    if ((pickedImage || null) !== (image || null)) patch.theme_image = pickedImage || null;
     const { error: err } = await supabase
-      .from("conversations")
-      .update({ theme: pickedTheme, chat_font: pickedFont })
-      .eq("id", conversationId);
+      .from(table)
+      .update(patch)
+      .eq("id", rowId || conversationId);
     setBusy(false);
     if (err) {
-      setError(err.message);
+      setError(/theme_image|chat_font|theme/.test(err.message) && /column/.test(err.message) ? "Your own photo needs loop-step-12.sql — run it in Supabase first." : err.message);
       return;
     }
-    onApplied(pickedTheme, pickedFont);
+    onApplied(pickedTheme, pickedFont, pickedImage || null);
   };
 
   return (
-    <StorySheetShell title="Chat theme" onClose={onClose}>
+    <StorySheetShell title={title} onClose={onClose}>
+      <input
+        ref={photoRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) pickPhoto(file);
+        }}
+      />
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
 
       {/* Live preview — stays at the top while you scroll the themes */}
@@ -18403,12 +20164,39 @@ function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
 
       <p className="px-4 text-[12px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Themes</p>
       <div className="grid grid-cols-3 gap-2.5 px-4">
+        <button onClick={() => photoRef.current?.click()} disabled={uploading} className="flex flex-col items-center gap-1.5 transition-transform active:scale-95">
+          <span
+            className="relative w-full rounded-2xl overflow-hidden flex flex-col items-center justify-center gap-1"
+            style={{
+              aspectRatio: "3 / 4",
+              background: pickedImage ? `url("${pickedImage}") center / cover no-repeat` : "var(--bg-sunken)",
+              border: pickedImage ? "2.5px solid var(--accent-solid)" : "1.5px dashed var(--border)",
+            }}
+          >
+            {uploading ? (
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Uploading…</span>
+            ) : pickedImage ? (
+              <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "var(--accent-solid)" }}>
+                <Check size={12} color="var(--on-accent)" strokeWidth={3} />
+              </span>
+            ) : (
+              <>
+                <ImagePlus size={22} color="var(--text)" />
+                <span className="text-[10px] px-1 text-center" style={{ color: "var(--text-muted)" }}>From your phone</span>
+              </>
+            )}
+          </span>
+          <span className="text-[11px]" style={{ color: "var(--text)", fontWeight: pickedImage ? 700 : 500 }}>{pickedImage ? "Change photo" : "Custom"}</span>
+        </button>
         {CHAT_THEMES.map((th) => {
-          const on = pickedTheme === th.key;
+          const on = !pickedImage && pickedTheme === th.key;
           return (
             <button
               key={th.key}
-              onClick={() => setPickedTheme(th.key)}
+              onClick={() => {
+                setPickedTheme(th.key);
+                setPickedImage(null);
+              }}
               className="flex flex-col items-center gap-1.5 transition-transform active:scale-95"
             >
               <span
@@ -18433,6 +20221,33 @@ function CustomiseSheet({ conversationId, theme, font, onClose, onApplied }) {
           );
         })}
       </div>
+
+      {pickedImage && (
+        <>
+          <div className="flex items-center justify-between px-4 mt-4 mb-2">
+            <p className="text-[12px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Bubble colour</p>
+            <button onClick={() => setPickedImage(null)} className="text-[12px]" style={{ color: "var(--heart)", fontWeight: 600 }}>
+              Remove photo
+            </button>
+          </div>
+          <div className="flex gap-2.5 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
+            {CHAT_THEMES.map((th) => (
+              <button
+                key={th.key}
+                onClick={() => setPickedTheme(th.key)}
+                aria-label={th.name}
+                className="rounded-full shrink-0 transition-transform active:scale-90"
+                style={{
+                  width: 34,
+                  height: 34,
+                  background: th.bubble,
+                  border: pickedTheme === th.key ? "3px solid var(--text)" : "2px solid var(--border)",
+                }}
+              />
+            ))}
+          </div>
+        </>
+      )}
 
       <p className="px-4 text-[12px] mt-4 mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Font</p>
       <div className="flex gap-2 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
@@ -18689,7 +20504,7 @@ function NicknamesSheet({ conversationId, currentUserId, onClose, onSaved }) {
 // One sheet used by Feed, Reels and PostDetail. Sends into a DM (reusing
 // the conversation tables), copies a link, or hands off to the OS share
 // sheet where the browser supports it.
-function ShareSheet({ item, currentUserId, onClose }) {
+function ShareSheet({ item, currentUserId, onClose, onShared }) {
   const [groups, setGroups] = useState([]);
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState("");
@@ -18701,6 +20516,14 @@ function ShareSheet({ item, currentUserId, onClose }) {
 
   const link = `${window.location.origin}/p/${item.id}`;
   const label = isPhotoPost(item) ? "📷 Shared a post" : "🎬 Shared a reel";
+  const sharedOnce = React.useRef(false);
+  const noteShared = (kind, target) => {
+    recordShare(item.id, kind, target);
+    if (!sharedOnce.current) {
+      sharedOnce.current = true;
+      onShared?.();
+    }
+  };
 
   const say = (m) => {
     setFlash(m);
@@ -18746,6 +20569,7 @@ function ShareSheet({ item, currentUserId, onClose }) {
       content: item.caption ? `${label} · ${item.caption}\n${link}` : `${label}\n${link}`,
     });
     if (error) throw error;
+    noteShared("dm", conversationId);
     await supabase
       .from("conversations")
       .update({ last_message: label, last_message_at: new Date().toISOString() })
@@ -18784,6 +20608,7 @@ function ShareSheet({ item, currentUserId, onClose }) {
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(link);
+      noteShared("link", "");
       say("Link copied");
     } catch {
       say("Couldn't copy on this device");
@@ -18814,6 +20639,7 @@ function ShareSheet({ item, currentUserId, onClose }) {
       );
       return;
     }
+    noteShared("story", "");
     say("Added to your story");
   };
 
@@ -18821,6 +20647,7 @@ function ShareSheet({ item, currentUserId, onClose }) {
     try {
       if (navigator.share) {
         await navigator.share({ title: "Loop", text: item.caption || "", url: link });
+        noteShared("external", "");
         return;
       }
       await navigator.clipboard.writeText(link);
@@ -20096,7 +21923,38 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const msgRefs = React.useRef({});
   const [emojiSheetFor, setEmojiSheetFor] = useState(null);
   const [sheet, setSheet] = useState(null); // customise | invite | nicknames
-  const [convoMeta, setConvoMeta] = useState({ theme: "default", chat_font: "default", invite_code: null, avatar_url: null });
+  const [convoMeta, setConvoMeta] = useState({ theme: "default", chat_font: "default", theme_image: null, invite_code: null, avatar_url: null });
+  const [sharedInfo, setSharedInfo] = useState({}); // postId -> { post, author } | null
+  const [sharedOpen, setSharedOpen] = useState(null); // a shared post opened from the chat
+
+  // Posts and reels sent into this chat show as cards, not bare links.
+  useEffect(() => {
+    const ids = [...new Set(messages.filter((m) => !m.deleted).map((m) => sharedPostIdOf(m.content)).filter(Boolean))].filter(
+      (id) => !(id in sharedInfo)
+    );
+    if (!ids.length) return;
+    let cancelled = false;
+    (async () => {
+      const { data: ps } = await supabase
+        .from("posts")
+        .select("id, user_id, media_url, media_type, media_count, cover_url, caption")
+        .in("id", ids);
+      const uids = [...new Set((ps || []).map((p) => p.user_id))];
+      const { data: profs } = uids.length
+        ? await supabase.from("profiles").select("id, username, avatar_url").in("id", uids)
+        : { data: [] };
+      if (cancelled) return;
+      const next = {};
+      ids.forEach((id) => {
+        const p = (ps || []).find((x) => x.id === id);
+        next[id] = p ? { post: p, author: (profs || []).find((u) => u.id === p.user_id) || null } : null;
+      });
+      setSharedInfo((prev) => ({ ...prev, ...next }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages]);
   const [nicknames, setNicknames] = useState({}); // userId -> nickname
   const [rel, setRel] = useState(null); // block/mute lists, loaded once
   const [recording, setRecording] = useState(false);
@@ -20216,7 +22074,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const loadConvoMeta = async () => {
     const { data } = await supabase
       .from("conversations")
-      .select("theme, chat_font, invite_code, avatar_url, title")
+      .select("*")
       .eq("id", conversationId)
       .maybeSingle();
     if (data) {
@@ -20515,7 +22373,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     return isGroup ? memberNames[userId] || "unknown" : title;
   };
 
-  const chatTheme = themeOf(convoMeta.theme);
+  const chatTheme = withPhoto(themeOf(convoMeta.theme), convoMeta.theme_image);
   const chatFont = fontOf(convoMeta.chat_font);
 
   const myLastMessage = [...messages].reverse().find((m) => m.sender_id === currentUserId && !m.deleted);
@@ -20563,7 +22421,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ background: "var(--bg)", fontFamily: chatFont.stack }}>
+    <div className="relative flex flex-col h-full" style={{ background: "var(--bg)", fontFamily: chatFont.stack }}>
       {/* header */}
       <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
@@ -20778,6 +22636,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     </div>
                   ) : m.audio_url ? (
                     <AudioBubble src={m.audio_url} duration={m.audio_duration} mine={mine} />
+                  ) : sharedPostIdOf(m.content) ? (
+                    <SharedPostCard info={sharedInfo[sharedPostIdOf(m.content)]} onOpen={(p) => setSharedOpen(p)} />
+                  ) : !m.image_url && emojiOnly(m.content) ? (
+                    <BigEmojiMessage parts={emojiOnly(m.content)} />
                   ) : (
                     <>
                       {m.image_url && (
@@ -20800,7 +22662,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                             marginTop: m.image_url ? 4 : 0,
                           }}
                         >
-                          {m.content}
+                          <LinkifiedText text={m.content} light={mine} />
                         </div>
                       )}
                     </>
@@ -20837,10 +22699,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                                 ev.stopPropagation();
                                 react(m, e);
                               }}
-                              className="text-lg leading-none px-1 transition-transform active:scale-125"
-                              style={{ opacity: myRx?.emoji === e ? 1 : 0.85 }}
+                              className="leading-none px-0.5 transition-transform active:scale-125"
+                              style={{ opacity: myRx?.emoji === e ? 1 : 0.9 }}
                             >
-                              {e}
+                              <AnimatedEmoji emoji={e} size={28} />
                             </button>
                           ))}
                           <button
@@ -21023,19 +22885,21 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         {recording ? (
           <button
             onClick={stopRecording}
+            aria-label="Send voice message"
             className="rounded-full w-10 h-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
-            style={{ background: ACCENT }}
+            style={{ background: ACCENT, boxShadow: "0 3px 10px rgba(0,0,0,0.18)" }}
           >
-            <SendHorizontal size={18} color="var(--on-accent)" />
+            <ShareIcon size={19} color="var(--on-accent)" style={{ marginLeft: 2 }} />
           </button>
         ) : text.trim() ? (
           <button
             onClick={send}
             disabled={sending}
+            aria-label="Send"
             className="rounded-full w-10 h-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
-            style={{ background: ACCENT }}
+            style={{ background: ACCENT, boxShadow: "0 3px 10px rgba(0,0,0,0.18)", animation: "loopPop 0.18s ease-out" }}
           >
-            <SendHorizontal size={18} color="var(--on-accent)" />
+            <ShareIcon size={19} color="var(--on-accent)" style={{ marginLeft: 2 }} />
           </button>
         ) : (
           <button
@@ -21069,6 +22933,28 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", whiteSpace: "nowrap" }}
         >
           {chatToast}
+        </div>
+      )}
+
+      {sharedOpen && (
+        <div className="absolute inset-0 z-[90] flex flex-col" style={{ background: isPhotoPost(sharedOpen) || (sharedOpen.media_count || 1) > 1 ? "var(--bg)" : "#000" }}>
+          {isPhotoPost(sharedOpen) || (sharedOpen.media_count || 1) > 1 ? (
+            <PostDetailScreen
+              postId={sharedOpen.id}
+              onBack={() => setSharedOpen(null)}
+              onOpenProfile={(id) => openProfileGlobal(id)}
+              onOpenReport={(id) => reportPostGlobal(id)}
+              onDeleted={() => setSharedOpen(null)}
+            />
+          ) : (
+            <ReelsScreen
+              startReelId={sharedOpen.id}
+              onBack={() => setSharedOpen(null)}
+              onOpenProfile={(id) => openProfileGlobal(id)}
+              onOpenReport={(id) => reportPostGlobal(id)}
+              onOpenPost={(id) => setSharedOpen({ id, media_type: "photo" })}
+            />
+          )}
         </div>
       )}
 
@@ -21129,9 +23015,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           conversationId={conversationId}
           theme={convoMeta.theme}
           font={convoMeta.chat_font}
+          image={convoMeta.theme_image || null}
           onClose={() => setSheet(null)}
-          onApplied={(t, f) => {
-            setConvoMeta((prev) => ({ ...prev, theme: t, chat_font: f }));
+          onApplied={(t, f, img) => {
+            setConvoMeta((prev) => ({ ...prev, theme: t, chat_font: f, theme_image: img }));
             setSheet(null);
           }}
         />
@@ -21280,6 +23167,12 @@ function NotificationsScreen({ onBack }) {
       ? "mentioned you in their story"
       : type === "channel_post"
       ? "posted in their channel"
+      : type === "new_post"
+      ? "shared a new post"
+      : type === "new_reel"
+      ? "shared a new reel"
+      : type === "new_story"
+      ? "added to their story"
       : "";
 
   const iconFor = (type) =>
@@ -21296,7 +23189,13 @@ function NotificationsScreen({ onBack }) {
       : type === "collection"
       ? Bookmark
       : type === "channel_post"
-      ? Megaphone
+      ? Radio
+      : type === "new_post"
+      ? ImageIcon
+      : type === "new_reel"
+      ? Clapperboard
+      : type === "new_story"
+      ? BellRing
       : type === "story_mention"
       ? AtSign
       : CircleUserRound;
@@ -21329,8 +23228,12 @@ function NotificationsScreen({ onBack }) {
               <div
                 key={n.id}
                 className="flex items-center gap-3 px-4 py-2.5"
-                onClick={() => n.type === "channel_post" && n.channel_id && openChannelGlobal(n.channel_id)}
-                style={{ cursor: n.type === "channel_post" ? "pointer" : "default" }}
+                onClick={() => {
+                  if (n.type === "channel_post" && n.channel_id) openChannelGlobal(n.channel_id);
+                  else if ((n.type === "new_post" || n.type === "new_reel") && n.post_id) viewPostGlobal(n.post_id);
+                  else if (n.type === "new_story" && n.actor_id) openProfileGlobal(n.actor_id);
+                }}
+                style={{ cursor: ["channel_post", "new_post", "new_reel", "new_story"].includes(n.type) ? "pointer" : "default" }}
               >
                 <Avatar username={n.username} avatarUrl={n.avatarUrl} size={44} />
                 <div className="flex-1 min-w-0">
@@ -22189,7 +24092,7 @@ const PEOPLE_LIST_META = {
 };
 
 // #hashtag page: every post whose caption uses the tag.
-function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
+function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
   const [posts, setPosts] = useState(null);
   const [openAt, setOpenAt] = useState(null); // index of the post being viewed
   const [me, setMe] = useState(null);
@@ -22198,11 +24101,15 @@ function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
   }, []);
   useEffect(() => {
     (async () => {
-      const safe = tag.replace(/[%_]/g, "");
-      const { data } = await supabase
-        .from("posts")
-        .select("id, user_id, media_url, media_type, media_count, created_at, views_count, cover_url")
-        .ilike("caption", `%#${safe}%`)
+      let q = supabase.from("posts").select("id, user_id, media_url, media_type, media_count, created_at, views_count, cover_url");
+      if (location) {
+        // Same place name, any capital letters.
+        q = q.ilike("location", location.replace(/[\\%_*]/g, (m) => "\\" + m));
+      } else {
+        const safe = tag.replace(/[%_]/g, "");
+        q = q.ilike("caption", `%#${safe}%`);
+      }
+      const { data } = await q
         .eq("archived", false)
         .is("removed_at", null)
         .lte("created_at", new Date().toISOString())
@@ -22211,7 +24118,7 @@ function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
       const rel = await getRelations();
       setPosts((data || []).filter((pp) => !isHiddenFromFeed(rel, pp.user_id)));
     })();
-  }, [tag]);
+  }, [tag, location]);
   if (openAt !== null && posts && posts[openAt]) {
     return (
       <ProfileFeedScreen
@@ -22227,16 +24134,27 @@ function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
   }
   return (
     <div className="flex-1 overflow-y-auto pb-6" style={{ background: "var(--bg)" }}>
-      <ScreenHeader title={`#${tag}`} onBack={onBack} />
+      <ScreenHeader title={location ? "Location" : `#${tag}`} onBack={onBack} />
       <div className="flex items-center gap-4 px-4 py-5">
         <div className="w-20 h-20 rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <span style={{ color: "var(--text)", fontSize: 34, fontWeight: 700 }}>#</span>
+          {location ? <MapPin size={34} color="var(--text)" /> : <span style={{ color: "var(--text)", fontSize: 34, fontWeight: 700 }}>#</span>}
         </div>
-        <div>
-          <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>#{tag}</p>
+        <div className="min-w-0">
+          <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700, wordBreak: "break-word" }}>{location || `#${tag}`}</p>
           <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
             {posts === null ? "…" : `${formatCount(posts.length)} ${posts.length === 1 ? "post" : "posts"}`}
           </p>
+          {location && (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 mt-2 rounded-lg px-3 h-8 text-[12px]"
+              style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
+            >
+              <MapPin size={13} /> Open in Maps
+            </a>
+          )}
         </div>
       </div>
       {posts === null ? (
@@ -22246,7 +24164,7 @@ function HashtagScreen({ tag, onBack, onOpenProfile, onOpenReport }) {
           ))}
         </div>
       ) : posts.length === 0 ? (
-        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>No posts with #{tag} yet</p>
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>{location ? "No posts from this place yet" : `No posts with #${tag} yet`}</p>
       ) : (
         <div className="grid grid-cols-3 gap-0.5">
           {posts.map((pp) => (
@@ -22708,6 +24626,7 @@ export default function App() {
   const [timeNudge, setTimeNudge] = useState(null); // { kind, minutes }
   const [locked, setLocked] = useState(() => !!readQuickUnlock());
   const [hashtag, setHashtag] = useState(null);
+  const [locationPage, setLocationPage] = useState(null); // a place name
   const [uploadMode, setUploadMode] = useState("photo");
   const [presetSound, setPresetSound] = useState(null); // from "Use this sound"
   const [uploadNonce, setUploadNonce] = useState(0);
@@ -22715,6 +24634,43 @@ export default function App() {
     const onTag = (e) => setHashtag(e.detail);
     window.addEventListener("loop:hashtag", onTag);
     return () => window.removeEventListener("loop:hashtag", onTag);
+  }, []);
+  // Places, profiles, posts and chats opened from deep inside other screens.
+  useEffect(() => {
+    const onLocation = (e) => setLocationPage(e.detail);
+    const onProfile = (e) => {
+      setChannelOpen(null);
+      setInboxOpen(false);
+      setMessageTarget(null);
+      setNotificationsOpen(false);
+      setViewPostId(null);
+      setProfileFeed(null);
+      setLocationPage(null);
+      setHashtag(null);
+      setViewProfileId(e.detail);
+    };
+    const onReport = (e) => setReportPostId(e.detail);
+    const onViewPost = (e) => {
+      setNotificationsOpen(false);
+      setViewPostId(e.detail);
+    };
+    const onMessageUser = (e) => {
+      setChannelOpen(null);
+      setMessageTarget(e.detail);
+      setInboxOpen(true);
+    };
+    window.addEventListener("loop:location", onLocation);
+    window.addEventListener("loop:open-profile", onProfile);
+    window.addEventListener("loop:report-post", onReport);
+    window.addEventListener("loop:view-post", onViewPost);
+    window.addEventListener("loop:message-user", onMessageUser);
+    return () => {
+      window.removeEventListener("loop:location", onLocation);
+      window.removeEventListener("loop:open-profile", onProfile);
+      window.removeEventListener("loop:report-post", onReport);
+      window.removeEventListener("loop:view-post", onViewPost);
+      window.removeEventListener("loop:message-user", onMessageUser);
+    };
   }, []);
   const sessionSecondsRef = React.useRef(0);
   const snoozeUntilRef = React.useRef(0);
@@ -22903,7 +24859,7 @@ export default function App() {
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
   const ActiveScreen = TABS.find((t) => t.key === active).screen;
-  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null || locked || channelOpen !== null;
+  const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null || locationPage !== null || locked || channelOpen !== null;
 
   // ---- Back button ----
   // Every screen that opens on top (a profile, a post, Settings, Your
@@ -22917,6 +24873,7 @@ export default function App() {
     [moderationOpen, () => setModerationOpen(false)],
     [reportPostId !== null, () => setReportPostId(null)],
     [hashtag !== null, () => setHashtag(null)],
+    [locationPage !== null, () => setLocationPage(null)],
     [editProfileOpen, () => setEditProfileOpen(false)],
     [activityOpen, () => setActivityOpen(false)],
     [archiveOpen, () => setArchiveOpen(false)],
@@ -22985,6 +24942,12 @@ export default function App() {
         if (ch) {
           window.history.replaceState(null, "", "/");
           setChannelOpen(ch[1]);
+          return;
+        }
+        const sharedPost = window.location.pathname.match(/^\/p\/([0-9a-fA-F-]{36})\/?$/);
+        if (sharedPost) {
+          window.history.replaceState(null, "", "/");
+          setViewPostId(sharedPost[1]);
           return;
         }
         const match = window.location.pathname.match(/^\/u\/([a-zA-Z0-9_.]{1,30})\/?$/);
@@ -23072,7 +25035,7 @@ export default function App() {
         className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
-        <ErrorBoundary key={active + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen) + String(hashtag)}>
+        <ErrorBoundary key={active + String(locationPage) + String(inboxOpen) + String(notificationsOpen) + String(interestsOpen) + String(commentsPostId) + String(reportPostId) + String(viewProfileId) + String(settingsOpen) + String(viewPostId) + String(savedOpen) + String(profileFeed !== null) + String(editProfileOpen) + String(activityOpen) + String(archiveOpen) + String(peopleList) + String(profileRefresh) + String(moderationOpen) + String(hashtag)}>
           {locked ? (
             <LockScreen
               onUnlock={() => setLocked(false)}
@@ -23105,6 +25068,19 @@ export default function App() {
               onBack={() => setHashtag(null)}
               onOpenProfile={(id) => {
                 setHashtag(null);
+                setProfileFeed(null);
+                setViewPostId(null);
+                setViewProfileId(id);
+              }}
+              onOpenReport={(id) => setReportPostId(id)}
+            />
+          ) : locationPage !== null ? (
+            <HashtagScreen
+              key={`loc-${locationPage}`}
+              location={locationPage}
+              onBack={() => setLocationPage(null)}
+              onOpenProfile={(id) => {
+                setLocationPage(null);
                 setProfileFeed(null);
                 setViewPostId(null);
                 setViewProfileId(id);
