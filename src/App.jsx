@@ -108,8 +108,14 @@ import {
   Camera,
   Contact,
   HeartOff,
-  MonitorSmartphone,
   ArrowUpRight,
+  BadgeCheck,
+  Inbox,
+  Ghost,
+  Languages,
+  ZoomIn,
+  Move,
+  SunMoon,
 } from "lucide-react";
 import QRCode from "qrcode";
 
@@ -254,6 +260,25 @@ const THEME_CSS = `
   @keyframes loopSheetUp {
     0% { transform: translateY(24px); opacity: 0; }
     100% { transform: translateY(0); opacity: 1; }
+  }
+  @keyframes loopFade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes loopSpin { to { transform: rotate(360deg); } }
+  @keyframes loopFxPop {
+    0% { transform: translate(0, 0) scale(0.3); opacity: 0; }
+    30% { transform: translate(0, var(--dy)) scale(1.4); opacity: 1; }
+    65% { transform: translate(0, var(--dy)) scale(1.12); opacity: 1; }
+    100% { transform: translate(0, var(--dy)) scale(0.55); opacity: 0; }
+  }
+  @keyframes loopFxBurst {
+    0% { transform: translate(0, 0) scale(0.2); opacity: 0; }
+    20% { opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy)) scale(var(--s)) rotate(var(--r)); opacity: 0; }
+  }
+  @keyframes loopFxShower {
+    0% { transform: translate(0, 0) scale(0.3) rotate(0deg); opacity: 0; }
+    10% { opacity: 1; }
+    55% { transform: translate(calc(var(--dx) * 0.55), var(--dy)) scale(var(--s)) rotate(calc(var(--r) * 0.5)); opacity: 1; }
+    100% { transform: translate(var(--dx), calc(var(--dy) * 0.4 + 140px)) scale(calc(var(--s) * 0.8)) rotate(var(--r)); opacity: 0; }
   }
   .loop-heart-burst {
     position: absolute; left: 50%; top: 50%;
@@ -537,7 +562,7 @@ function AnimatedEmoji({ emoji, size = 64 }) {
   useEffect(() => setAt(0), [emoji]);
   if (at >= codes.length) {
     return (
-      <span style={{ fontSize: Math.round(size * 0.8), lineHeight: `${size}px`, width: size, height: size, display: "inline-block", textAlign: "center" }}>
+      <span style={{ fontSize: Math.round(size * 0.8), lineHeight: `${size}px`, width: size, height: size, display: "inline-block", textAlign: "center", flexShrink: 0 }}>
         {emoji}
       </span>
     );
@@ -551,17 +576,1675 @@ function AnimatedEmoji({ emoji, size = 64 }) {
       loading="lazy"
       draggable={false}
       onError={() => setAt((i) => i + 1)}
-      style={{ width: size, height: size, display: "inline-block" }}
+      style={{ width: size, height: size, display: "inline-block", maxWidth: "none", flexShrink: 0 }}
     />
   );
 }
-function BigEmojiMessage({ parts }) {
+function BigEmojiMessage({ parts, onTap }) {
   const size = parts.length === 1 ? 96 : parts.length === 2 ? 72 : 58;
   return (
-    <div className="flex items-center gap-1 py-0.5">
+    <div
+      data-bigemoji="1"
+      className="flex items-center gap-1 py-0.5"
+      onClick={
+        onTap
+          ? (e) => {
+              e.stopPropagation();
+              onTap(e.currentTarget);
+            }
+          : undefined
+      }
+      style={onTap ? { cursor: "pointer" } : undefined}
+    >
       {parts.map((e, i) => (
         <AnimatedEmoji key={i} emoji={e} size={size} />
       ))}
+    </div>
+  );
+}
+
+
+// ---- Little celebrations: reaction bursts and emoji showers ----
+// Any screen can fire one; a single layer at the top of the app draws it,
+// so it is never clipped by a scrolling list or hidden behind a sheet.
+const FX_EVENT = "loop:fx";
+function fxEmit(detail) {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(FX_EVENT, { detail }));
+}
+// A reaction lands: it pops big where it landed and small copies burst out
+// around it, the way Telegram does it.
+function playReactionBurst(emoji, x, y) {
+  fxEmit({ kind: "burst", emoji, x, y });
+}
+// Tapping a big emoji in a chat sends a shower of it across the screen.
+function playEmojiShower(emoji, x, y, fromRight) {
+  fxEmit({ kind: "shower", emoji, x, y, fromRight });
+}
+function centerOf(el) {
+  const r = el?.getBoundingClientRect?.();
+  return r && r.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+}
+function prefersLessMotion() {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+// The bubble itself gives a little wobble when tapped.
+function wobble(el) {
+  try {
+    el?.animate?.(
+      [
+        { transform: "scale(1)" },
+        { transform: "scale(1.22) rotate(-7deg)" },
+        { transform: "scale(0.94) rotate(4deg)" },
+        { transform: "scale(1.04) rotate(-2deg)" },
+        { transform: "scale(1)" },
+      ],
+      { duration: 620, easing: "ease-out" }
+    );
+  } catch {}
+}
+
+function FxLayer() {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    const on = (e) => {
+      const d = e.detail || {};
+      if (!d.emoji || !Number.isFinite(d.x) || !Number.isFinite(d.y) || prefersLessMotion()) return;
+      const id = `${Date.now()}-${Math.random()}`;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const parts = [];
+      if (d.kind === "burst") {
+        parts.push({ main: true, dx: 0, dy: -22, s: 1, r: 0, size: 62, delay: 0, dur: 950 });
+        const n = 11;
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 + Math.random() * 0.45;
+          const dist = 44 + Math.random() * 46;
+          parts.push({
+            dx: Math.cos(a) * dist,
+            dy: Math.sin(a) * dist - 14,
+            s: 0.45 + Math.random() * 0.45,
+            r: (Math.random() - 0.5) * 140,
+            size: 24,
+            delay: 70 + Math.random() * 90,
+            dur: 620 + Math.random() * 280,
+          });
+        }
+      } else {
+        const dir = d.fromRight ? -1 : 1;
+        const n = 24;
+        for (let i = 0; i < n; i++) {
+          parts.push({
+            dx: dir * vw * (0.3 + Math.random() * 0.8),
+            dy: -vh * (0.12 + Math.random() * 0.5),
+            s: 0.7 + Math.random() * 0.8,
+            r: dir * (90 + Math.random() * 300),
+            size: 32 + Math.random() * 24,
+            delay: Math.random() * 480,
+            dur: 1300 + Math.random() * 800,
+          });
+        }
+      }
+      setItems((prev) => [...prev.slice(-4), { id, x: d.x, y: d.y, emoji: d.emoji, kind: d.kind, parts }]);
+      const longest = Math.max(...parts.map((p) => p.delay + p.dur));
+      setTimeout(() => setItems((prev) => prev.filter((it) => it.id !== id)), longest + 150);
+    };
+    window.addEventListener(FX_EVENT, on);
+    return () => window.removeEventListener(FX_EVENT, on);
+  }, []);
+  if (!items.length) return null;
+  return (
+    <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 300, overflow: "hidden" }} aria-hidden="true">
+      {items.map((it) =>
+        it.parts.map((p, i) => (
+          <span
+            key={`${it.id}-${i}`}
+            className="absolute"
+            style={{
+              left: it.x - p.size / 2,
+              top: it.y - p.size / 2,
+              width: p.size,
+              height: p.size,
+              "--dx": `${p.dx}px`,
+              "--dy": `${p.dy}px`,
+              "--s": p.s,
+              "--r": `${p.r}deg`,
+              animation: `${p.main ? "loopFxPop" : it.kind === "burst" ? "loopFxBurst" : "loopFxShower"} ${p.dur}ms cubic-bezier(.2,.75,.3,1) ${p.delay}ms both`,
+              filter: p.main ? "drop-shadow(0 6px 14px rgba(0,0,0,0.35))" : undefined,
+            }}
+          >
+            <AnimatedEmoji emoji={it.emoji} size={Math.round(p.size)} />
+          </span>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ---- Long-press a message: reactions on top, actions below ----
+// Telegram-style. The row shows seven reactions and a ⌄ that opens the
+// full grid. It sits in a fixed layer measured from the message itself, so
+// it is never squeezed by a short bubble or cut off behind the composer.
+const CHAT_QUICK_REACTIONS = ["❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F525}", "\u{1F44D}", "\u{1F64F}"];
+const CHAT_MORE_REACTIONS = [
+  ...CHAT_QUICK_REACTIONS,
+  "\u{1F60D}", "\u{1F970}", "\u{1F601}", "\u{1F923}", "\u{1F62D}", "\u{1F621}", "\u{1F92F}",
+  "\u{1F631}", "\u{1F914}", "\u{1F44F}", "\u{1F389}", "\u{1F4AF}", "⚡", "\u{1F680}",
+  "\u{1F44E}", "\u{1F494}", "\u{1F91D}", "\u{1F60E}", "\u{1F97A}", "\u{1F440}", "✨",
+];
+
+function ReactionContextOverlay({ anchor, align = "left", quick = [], more = [], current, onReact, onMoreEmoji, actions = [], onClose }) {
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    try {
+      navigator.vibrate?.(8);
+    } catch {}
+  }, []);
+  if (!anchor) return null;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 390;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 780;
+  const frame = (typeof document !== "undefined" && document.querySelector(".loop-frame")?.getBoundingClientRect()) || { left: 0, right: vw, top: 0, bottom: vh };
+  const pad = 8;
+  const L = Math.max(frame.left, 0) + pad;
+  const R = Math.min(frame.right, vw) - pad;
+  const T = Math.max(frame.top, 0) + pad + 6;
+  const B = Math.min(frame.bottom, vh) - pad;
+  const hasMore = more.length > quick.length || !!onMoreEmoji;
+  const cell = 40;
+  const barW = Math.min(R - L, quick.length * cell + (hasMore ? cell : 0) + 14);
+  const barH = 52;
+  const menuW = Math.min(R - L, 220);
+  const menuH = actions.length ? actions.length * 46 + 10 : 0;
+  const gap = 8;
+  const showBar = quick.length > 0;
+
+  let barTop = anchor.top - gap - barH;
+  let menuTop = anchor.bottom + gap;
+  if (showBar && barTop < T) {
+    barTop = anchor.bottom + gap;
+    menuTop = barTop + barH + gap;
+  }
+  if (!showBar) menuTop = anchor.bottom + gap;
+  if (menuH && menuTop + menuH > B) {
+    // No room below: put everything above the message instead.
+    menuTop = anchor.top - gap - menuH;
+    barTop = menuTop - gap - barH;
+    if ((showBar ? barTop : menuTop) < T) {
+      // A very tall message: keep the menu on screen near the bottom.
+      menuTop = B - menuH;
+      barTop = menuTop - gap - barH;
+    }
+  }
+  const leftFor = (w) => {
+    const want = align === "right" ? anchor.right - w : anchor.left;
+    return Math.min(Math.max(want, L), R - w);
+  };
+  const barAbove = barTop < anchor.top;
+  const gridList = more.length ? more : quick;
+  const gridRows = Math.ceil((gridList.length + (onMoreEmoji ? 1 : 0)) / 7);
+  const gridH = Math.min(5, gridRows) * cell + 16;
+
+  const emo = (e) => (
+    <button
+      key={e}
+      onClick={(ev) => {
+        ev.stopPropagation();
+        onReact(e, ev.currentTarget);
+      }}
+      className="flex items-center justify-center rounded-full shrink-0 transition-transform active:scale-125"
+      style={{ width: cell - 2, height: cell - 2, background: current === e ? "var(--active-highlight)" : "transparent" }}
+      aria-label={`React ${e}`}
+    >
+      <AnimatedEmoji emoji={e} size={30} />
+    </button>
+  );
+
+  return (
+    <>
+      <div
+        className="fixed inset-0"
+        style={{ zIndex: 85, background: "rgba(0,0,0,0.42)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)", animation: "loopFade 0.16s ease-out" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+      {showBar && !expanded && (
+        <div
+          className="fixed flex items-center rounded-full px-1.5"
+          style={{
+            zIndex: 87,
+            top: barTop,
+            left: leftFor(barW),
+            width: barW,
+            height: barH,
+            background: "var(--surface-raised)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+            animation: "loopPop 0.2s ease-out",
+            transformOrigin: align === "right" ? "right center" : "left center",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center flex-1 min-w-0 overflow-x-auto">
+            {quick.map(emo)}
+          </div>
+          {hasMore && (
+            <button
+              onClick={() => setExpanded(true)}
+              aria-label="More reactions"
+              className="flex items-center justify-center rounded-full shrink-0 transition-transform active:scale-90"
+              style={{ width: 32, height: 32, marginLeft: 2, background: "var(--bg-sunken)" }}
+            >
+              <ChevronDown size={18} color="var(--text)" strokeWidth={2.4} />
+            </button>
+          )}
+        </div>
+      )}
+      {showBar && expanded && (
+        <div
+          className="fixed rounded-[22px] p-2 overflow-y-auto"
+          style={{
+            zIndex: 87,
+            left: leftFor(barW),
+            width: barW,
+            maxHeight: gridH,
+            top: barAbove ? Math.max(T, barTop + barH - gridH) : barTop,
+            background: "var(--surface-raised)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 12px 36px rgba(0,0,0,0.4)",
+            animation: "loopPop 0.18s ease-out",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="grid" style={{ gridTemplateColumns: `repeat(7, ${cell - 2}px)`, justifyContent: "space-between", rowGap: 2 }}>
+            {gridList.map(emo)}
+            {onMoreEmoji && (
+              <button
+                onClick={onMoreEmoji}
+                aria-label="All emoji"
+                className="flex items-center justify-center rounded-full"
+                style={{ width: cell - 2, height: cell - 2, background: "var(--bg-sunken)" }}
+              >
+                <Plus size={17} color="var(--text)" strokeWidth={2.5} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {menuH > 0 && !expanded && (
+        <div
+          className="fixed rounded-2xl overflow-hidden py-1"
+          style={{
+            zIndex: 87,
+            top: menuTop,
+            left: leftFor(menuW),
+            width: menuW,
+            background: "var(--surface-raised)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+            animation: "loopPop 0.2s ease-out",
+            transformOrigin: align === "right" ? "top right" : "top left",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {actions.map((a) => (
+            <button
+              key={a.label}
+              onClick={a.onClick}
+              className="w-full flex items-center justify-between gap-3 px-4 text-[14px] transition-colors active:bg-[var(--active-highlight)]"
+              style={{ height: 46, color: a.danger ? "var(--heart)" : "var(--text)" }}
+            >
+              <span>{a.label}</span>
+              {a.icon}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---- Adjust preview: which part of the picture shows on your grid ----
+function parseGridPos(pos) {
+  const parts = String(pos || "")
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+  if (parts.length !== 3 || !parts.every((n) => Number.isFinite(n))) return { x: 50, y: 50, z: 1 };
+  const c = (n, a, b) => Math.min(b, Math.max(a, n));
+  return { x: c(parts[0], 0, 100), y: c(parts[1], 0, 100), z: c(parts[2], 1, 3) };
+}
+function gridPosStyle(pos) {
+  if (!pos) return undefined;
+  const { x, y, z } = parseGridPos(pos);
+  return {
+    objectPosition: `${x}% ${y}%`,
+    ...(z > 1.001 ? { transform: `scale(${z})`, transformOrigin: `${x}% ${y}%` } : {}),
+  };
+}
+
+function AdjustPreviewEditor({ post, onBack, onSaved }) {
+  const [pos, setPos] = useState({ x: 50, y: 50, z: 1 });
+  const [natural, setNatural] = useState(null); // { w, h }
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const frameRef = React.useRef(null);
+  const dragRef = React.useRef(null);
+  const isVideo = !isPhotoPost(post);
+  const src = isVideo ? post.cover_url || null : post.media_url;
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from("posts")
+      .select("grid_pos")
+      .eq("id", post.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) setErr(/grid_pos/.test(error.message) ? "This needs loop-step-14.sql — run it in Supabase first." : error.message);
+        else if (data?.grid_pos) setPos(parseGridPos(data.grid_pos));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [post.id]);
+
+  // How far the picture can move inside the square, in pixels.
+  const range = () => {
+    const W = frameRef.current?.offsetWidth || 300;
+    let ox = 0;
+    let oy = 0;
+    if (natural?.w && natural?.h) {
+      const k = Math.max(W / natural.w, W / natural.h);
+      ox = natural.w * k - W;
+      oy = natural.h * k - W;
+    }
+    const extra = W * (pos.z - 1);
+    return { x: Math.max(1, ox * pos.z + extra), y: Math.max(1, oy * pos.z + extra) };
+  };
+
+  const onDown = (e) => {
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {}
+    dragRef.current = { x: e.clientX, y: e.clientY, start: pos };
+  };
+  const onMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const r = range();
+    const c = (n) => Math.min(100, Math.max(0, n));
+    // Drag the picture right and you see more of its left side.
+    setPos((p) => ({ ...p, x: c(d.start.x - ((e.clientX - d.x) / r.x) * 100), y: c(d.start.y - ((e.clientY - d.y) / r.y) * 100) }));
+  };
+  const onUp = () => {
+    dragRef.current = null;
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setErr("");
+    const plain = Math.abs(pos.x - 50) < 0.5 && Math.abs(pos.y - 50) < 0.5 && pos.z < 1.01;
+    const value = plain ? null : `${pos.x.toFixed(1)} ${pos.y.toFixed(1)} ${pos.z.toFixed(2)}`;
+    const { error } = await supabase.from("posts").update({ grid_pos: value }).eq("id", post.id);
+    setBusy(false);
+    if (error) {
+      setErr(/grid_pos/.test(error.message) ? "This needs loop-step-14.sql — run it in Supabase first." : error.message);
+      return;
+    }
+    try {
+      window.dispatchEvent(new CustomEvent("loop:grid-pos", { detail: { id: post.id, pos: value } }));
+    } catch {}
+    onSaved?.(value);
+  };
+
+  const style = gridPosStyle(`${pos.x} ${pos.y} ${pos.z}`);
+  return (
+    <div className="px-4 pb-6">
+      <p className="text-[12px] mb-3" style={{ color: "var(--text-muted)" }}>
+        Choose what people see of this post on your profile grid. Drag the picture, or zoom in with the slider. The post itself doesn't change.
+      </p>
+      <div
+        ref={frameRef}
+        className="relative w-full aspect-square rounded-2xl overflow-hidden select-none"
+        style={{ background: "var(--surface)", touchAction: "none", cursor: "grab", maxWidth: 360, margin: "0 auto" }}
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+      >
+        {src ? (
+          <img
+            src={src}
+            alt=""
+            draggable={false}
+            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            className="w-full h-full object-cover pointer-events-none"
+            style={style}
+          />
+        ) : (
+          <video
+            src={videoThumb(post.media_url)}
+            muted
+            playsInline
+            preload="metadata"
+            onLoadedMetadata={(e) => setNatural({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight })}
+            className="w-full h-full object-cover pointer-events-none"
+            style={style}
+          />
+        )}
+        {/* the rule-of-thirds lines, like a camera */}
+        <div className="absolute inset-0 pointer-events-none" style={{ border: "1px solid rgba(255,255,255,0.55)", borderRadius: 16 }}>
+          {[33.33, 66.66].map((p) => (
+            <React.Fragment key={p}>
+              <span className="absolute top-0 bottom-0" style={{ left: `${p}%`, width: 1, background: "rgba(255,255,255,0.45)" }} />
+              <span className="absolute left-0 right-0" style={{ top: `${p}%`, height: 1, background: "rgba(255,255,255,0.45)" }} />
+            </React.Fragment>
+          ))}
+        </div>
+        <span
+          className="absolute left-1/2 bottom-2.5 -translate-x-1/2 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] pointer-events-none"
+          style={{ background: "rgba(0,0,0,0.55)", color: "#fff", fontWeight: 600 }}
+        >
+          <Move size={12} /> Drag to move
+        </span>
+      </div>
+      <div className="flex items-center gap-3 mt-4" style={{ maxWidth: 360, margin: "16px auto 0" }}>
+        <ZoomIn size={17} color="var(--text-muted)" />
+        <input
+          type="range"
+          min={1}
+          max={3}
+          step={0.01}
+          value={pos.z}
+          onChange={(e) => setPos((p) => ({ ...p, z: Number(e.target.value) }))}
+          className="flex-1"
+          style={{ accentColor: "var(--accent-solid)" }}
+          aria-label="Zoom"
+        />
+        <span className="text-[12px] tabular-nums w-9 text-right" style={{ color: "var(--text-muted)" }}>{pos.z.toFixed(1)}×</span>
+      </div>
+      {err && <p className="text-xs mt-3" style={{ color: "var(--heart)" }}>{err}</p>}
+      <div className="flex gap-2 mt-4">
+        <button onClick={onBack} className="flex-1 rounded-xl h-11 text-sm" style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}>
+          Back
+        </button>
+        <button
+          onClick={() => setPos({ x: 50, y: 50, z: 1 })}
+          className="flex-1 rounded-xl h-11 text-sm"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+        >
+          Reset
+        </button>
+        <button onClick={save} disabled={busy} className="flex-1 rounded-xl h-11 text-sm" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---- Terms, Privacy, Community Guidelines ----
+const LEGAL_UPDATED = "7 November 2026";
+const LEGAL_DOCS = {
+  terms: {
+    title: "Terms of Use",
+    intro:
+      "These terms are the agreement between you and Loop. By creating an account or using Loop you agree to them. If you don't agree, please don't use Loop.",
+    sections: [
+      ["Who can use Loop", [
+        "You must be at least 13 years old.",
+        "You must give true information when you sign up, and keep your password to yourself. You're responsible for what happens on your account.",
+        "You can't use Loop if we have removed your account before for breaking these terms, or if the law doesn't allow you to.",
+      ]],
+      ["Your content", [
+        "You own what you post — photos, videos, stories, messages, channel posts and comments.",
+        "To run Loop we need your permission to store, show, copy and resize what you share, to the people you choose. You give us that permission when you post. It ends when you delete the content or your account, except where someone else already shared it or we must keep it by law.",
+        "Only post what you have the right to post. Don't upload someone else's photos, music or videos without permission.",
+      ]],
+      ["What you can't do", [
+        "Break the Community Guidelines or the law.",
+        "Pretend to be someone else, or run fake or automated accounts.",
+        "Try to get into other people's accounts, collect their data, or harm Loop's servers.",
+        "Sell, buy or rent accounts, usernames or verified badges.",
+      ]],
+      ["Verified badge", [
+        "A badge means we confirmed the account is the real presence of the person, brand or organisation it represents. It is not an endorsement.",
+        "Badges are free and given only through Settings → Request verified badge. We can remove a badge if the account breaks the rules, changes its name to mislead, or is sold.",
+      ]],
+      ["Messages, vanish mode and channels", [
+        "Messages are private between the people in the chat, but anyone in a chat can screenshot it. Vanish mode removes seen messages from Loop when the chat is closed; it can't stop screenshots.",
+        "Channel owners are responsible for what they and their admins post.",
+      ]],
+      ["When we remove things", [
+        "We may remove content or limit, suspend or ban an account that breaks these terms or the guidelines, or when the law requires it. You can see what happened in Settings → Account status.",
+        "You can delete your account any time in Settings. It is removed for good after 30 days.",
+      ]],
+      ["Our service", [
+        "Loop is free and built by a small team. We work hard to keep it running and safe, but we can't promise it will never go down or lose data. Keep copies of what matters to you.",
+        "Loop is provided as it is. As far as the law allows, we aren't responsible for losses caused by other users, by content you see, or by the service being unavailable.",
+      ]],
+      ["Changes and law", [
+        "If we change these terms we'll update the date at the top and, for big changes, tell you in the app.",
+        "These terms follow the laws of Bangladesh.",
+      ]],
+    ],
+  },
+  privacy: {
+    title: "Privacy Policy",
+    intro:
+      "This explains what Loop keeps about you, why, and the choices you have. We don't sell your information, and Loop has no ads that track you.",
+    sections: [
+      ["What we keep", [
+        "Account: username, name, email or phone, password (stored scrambled — we can't read it), and your birthday.",
+        "Profile: photo, bio, links, category, banner and anything else you add.",
+        "What you share: posts, reels, stories, comments, likes, saves, reposts and notes, channel posts, and messages.",
+        "How you use Loop: who you follow, block, mute or restrict; your settings; your time-management limits; login attempts, to protect your account.",
+        "Your device: if you turn on push notifications, a code from your browser that lets us send them.",
+      ]],
+      ["Why we keep it", [
+        "To show your content to the people you choose and to run features like the feed, messages, notifications and channels.",
+        "To keep Loop safe: to find spam, stop break-ins, review reports and enforce the guidelines.",
+        "We don't use your information for advertising.",
+      ]],
+      ["Who can see it", [
+        "Public account: your posts and profile can be seen by anyone on Loop. Private account: only people you approve.",
+        "Your birthday, login email/phone and profile contact details are private unless you choose otherwise. Your birth year is never shown.",
+        "Messages are seen only by the people in the chat. Message requests don't show you've read them until you accept.",
+        "Loop's moderators can see reported content, and an account's history when they review it.",
+      ]],
+      ["Services that help run Loop", [
+        "Supabase stores the database, photos and videos, and handles sign-in. Vercel serves the app.",
+        "Animated emoji pictures load from Google's servers. Push notifications go through your browser's push service (for example Google or Apple).",
+        "When a channel uses Auto-Translate, the post's text is sent to a translation service (your browser's built-in translator, or MyMemory) to translate it. Nothing else about you is sent.",
+      ]],
+      ["How long we keep it", [
+        "Until you delete it, or your account. A deleted account is kept for 30 days in case you change your mind, then erased. Copies in backups disappear soon after.",
+        "Vanish-mode messages are deleted once everyone has seen them and closed the chat.",
+      ]],
+      ["Your choices", [
+        "Edit or delete your posts, profile and messages any time.",
+        "Make your account private, control who can message you, and turn notifications on or off.",
+        "Delete your account in Settings → Delete account.",
+        "Ask us what we hold about you, or to correct it, through Settings → Help.",
+      ]],
+      ["Children", [
+        "Loop is for people aged 13 and over. If we learn an account belongs to someone younger, we remove it.",
+        "Mature (18+) posts are hidden from anyone under 18 or without a birthday.",
+      ]],
+      ["Security and changes", [
+        "Data travels encrypted (HTTPS) and the database only lets each account reach what it's allowed to. No system is perfect, so use a strong password.",
+        "If this policy changes we'll update the date at the top and tell you about big changes in the app.",
+      ]],
+    ],
+  },
+  guidelines: {
+    title: "Community Guidelines",
+    intro:
+      "Loop is for sharing your life with the people you care about. These rules keep it safe and friendly. They apply to posts, reels, stories, comments, messages, notes and channels.",
+    sections: [
+      ["Be real", [
+        "Use your own photos and videos, or ones you have permission to share. Give credit.",
+        "Don't pretend to be someone else, and don't run fake accounts or buy followers.",
+      ]],
+      ["Be respectful", [
+        "No hate speech: don't attack people for their religion, ethnicity, nationality, caste, gender, sexual orientation, disability or illness.",
+        "No bullying or harassment. Don't threaten, shame or keep messaging someone who asked you to stop.",
+        "Don't share someone's private information — phone numbers, addresses, ID cards — or private photos of them.",
+      ]],
+      ["Keep it safe", [
+        "No violence or threats, and no support for terrorist or violent groups.",
+        "No nudity or sexual content. Content that is mature but allowed must be marked Mature (18+).",
+        "Zero tolerance for anything that sexualises or endangers children. We remove it, ban the account and report it.",
+        "No selling of drugs, weapons, animals or other illegal goods.",
+      ]],
+      ["No scams or spam", [
+        "No fake giveaways, phishing links, pyramid schemes or asking for money under false pretences.",
+        "Don't flood comments, messages or tags, or post the same thing again and again.",
+      ]],
+      ["Honest information", [
+        "Don't spread false information that could cause real harm, such as about health, elections or emergencies.",
+      ]],
+      ["Self-harm", [
+        "Don't post content that encourages suicide, self-harm or eating disorders. Talking about your own struggles to get support is allowed.",
+        "If someone is in danger right now, call 999 in Bangladesh, or your local emergency number.",
+      ]],
+      ["Reporting and what happens next", [
+        "Tap ⋯ on any post or profile and choose Report. Reports are private — the person isn't told who reported them.",
+        "Depending on how serious it is, we remove the content, suspend the account for 7 or 30 days, or ban it permanently. You can check your Account status in Settings.",
+      ]],
+    ],
+  },
+};
+
+function LegalScreen({ doc, onBack }) {
+  const d = LEGAL_DOCS[doc] || LEGAL_DOCS.terms;
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title={d.title} onBack={onBack} />
+      <div className="px-5 pt-4 pb-10">
+        <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Last updated {LEGAL_UPDATED}</p>
+        <p className="text-[14px] mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.55 }}>{d.intro}</p>
+        {d.sections.map(([heading, lines], i) => (
+          <div key={heading} className="mt-6">
+            <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>
+              {i + 1}. {heading}
+            </p>
+            <div className="mt-2 flex flex-col gap-2">
+              {lines.map((t) => (
+                <div key={t} className="flex gap-2.5">
+                  <span className="rounded-full shrink-0" style={{ width: 5, height: 5, marginTop: 8, background: "var(--text-muted)" }} />
+                  <p className="text-[13.5px]" style={{ color: "var(--text-secondary)", lineHeight: 1.55 }}>{t}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        <p className="text-[12px] mt-8" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+          Questions? Write to us from Settings → Help.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
+// ---- Verified badge: asking for one ----
+// The checklist comes from the database (verification_checklist), so the
+// app and the rules can never disagree. A person on the team still reviews
+// every request — meeting the checklist doesn't guarantee a badge.
+const VERIFY_RULES = {
+  account_30_days: "Your account is at least 30 days old",
+  profile_photo: "You have a profile photo",
+  full_name: "Your name is filled in on your profile",
+  bio: "You have a bio",
+  public_account: "Your account is public",
+  five_posts: "You've shared at least 5 posts",
+  no_suspension: "No suspension in the last 90 days",
+  not_recently_declined: "No declined request in the last 30 days",
+};
+const VERIFY_CATEGORIES = ["Creator", "Public figure", "News / journalist", "Music / art", "Sports", "Business / brand", "Organisation", "Government", "Other"];
+
+function verifyErrorText(msg) {
+  const m = msg || "";
+  if (/verification_requests|request_verification|verification_checklist/.test(m) && /does not exist|not find|schema cache/i.test(m)) return "This needs loop-step-14.sql — run it in Supabase first.";
+  if (/rules_not_met/.test(m)) return "Some of the checklist above isn't done yet.";
+  if (/already_pending/.test(m)) return "You already have a request waiting.";
+  if (/already_verified/.test(m)) return "Your account is already verified.";
+  if (/bad_links/.test(m)) return "Links must start with https:// (up to 3).";
+  if (/check constraint/.test(m)) return "Please fill in every box — the reason needs at least 20 letters.";
+  return m;
+}
+
+function VerificationRequestScreen({ onBack }) {
+  const [state, setState] = useState(null); // { verified, request, checklist }
+  const [err, setErr] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [category, setCategory] = useState("Creator");
+  const [country, setCountry] = useState("Bangladesh");
+  const [links, setLinks] = useState(["", "", ""]);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setErr("");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const [{ data: prof }, req, chk] = await Promise.all([
+      supabase.from("profiles").select("full_name, is_verified").eq("id", user.id).maybeSingle(),
+      supabase.from("verification_requests").select("id, status, note, created_at, decided_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1),
+      supabase.rpc("verification_checklist"),
+    ]);
+    if (req.error || chk.error) {
+      setErr(verifyErrorText((req.error || chk.error).message));
+      setState({ verified: !!prof?.is_verified, request: null, checklist: [] });
+      return;
+    }
+    setFullName((v) => v || prof?.full_name || "");
+    setState({ verified: !!prof?.is_verified, request: (req.data || [])[0] || null, checklist: chk.data || [] });
+  };
+  useEffect(() => {
+    load();
+  }, []);
+
+  const allOk = state && state.checklist.length > 0 && state.checklist.every((r) => r.ok);
+  const cleanLinks = links.map((l) => l.trim()).filter(Boolean);
+  const canSend = allOk && fullName.trim() && category && cleanLinks.length > 0 && reason.trim().length >= 20 && !busy;
+
+  const submit = async () => {
+    if (!canSend) return;
+    setBusy(true);
+    setErr("");
+    const { error } = await supabase.rpc("request_verification", {
+      p_full_name: fullName.trim(),
+      p_category: category,
+      p_country: country.trim(),
+      p_links: cleanLinks.map((l) => (/^https?:\/\//i.test(l) ? l : `https://${l}`)),
+      p_reason: reason.trim(),
+    });
+    setBusy(false);
+    if (error) {
+      setErr(verifyErrorText(error.message));
+      return;
+    }
+    load();
+  };
+
+  const req = state?.request;
+  const pending = req?.status === "pending";
+  const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
+
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Verified badge" onBack={onBack} />
+      <div className="px-5 pt-5 pb-10">
+        <div className="flex flex-col items-center text-center">
+          <VerifiedBadge size={54} />
+          <p className="text-[17px] mt-3" style={{ color: "var(--text)", fontWeight: 800 }}>
+            {state?.verified ? "Your account is verified" : "Request a verified badge"}
+          </p>
+          <p className="text-[13px] mt-1.5" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+            The badge shows that Loop has confirmed this is the real account of a notable person, creator, brand or organisation. It's free. A person on the Loop team reviews every request.
+          </p>
+        </div>
+
+        {!state ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        ) : state.verified ? (
+          <div className="rounded-2xl p-4 mt-6 text-center" style={{ background: "var(--surface)" }}>
+            <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              Keep your account public and follow the Community Guidelines. A badge can be removed if the account changes its name to mislead people, breaks the rules, or is sold.
+            </p>
+          </div>
+        ) : pending ? (
+          <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
+            <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>We're reviewing your request</p>
+            <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              Sent {timeAgo(req.created_at)} ago. You'll get a notification when it's decided. Loop will never ask for your password or money for a badge.
+            </p>
+          </div>
+        ) : (
+          <>
+            {req?.status === "rejected" && (
+              <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
+                <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Your last request wasn't approved</p>
+                {req.note && <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{req.note}</p>}
+                <p className="text-[12px] mt-1.5" style={{ color: "var(--text-muted)" }}>You can ask again 30 days after the decision.</p>
+              </div>
+            )}
+
+            <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Checklist</p>
+            <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
+              {state.checklist.map((r, i) => (
+                <div key={r.rule} className="flex items-center gap-3 px-4 py-3" style={{ borderTop: i ? "1px solid var(--border-subtle)" : "none" }}>
+                  <span
+                    className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                    style={{ background: r.ok ? "#22C55E" : "transparent", border: r.ok ? "none" : "1.5px solid var(--toggle-off)" }}
+                  >
+                    {r.ok && <Check size={12} color="#fff" strokeWidth={3} />}
+                  </span>
+                  <span className="text-[13.5px]" style={{ color: r.ok ? "var(--text)" : "var(--text-secondary)" }}>{VERIFY_RULES[r.rule] || r.rule}</span>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>What the team looks for</p>
+            <div className="flex flex-col gap-2">
+              {[
+                ["Authentic", "A real person, registered business or organisation."],
+                ["Unique", "The only account for that person or business."],
+                ["Notable", "Known and searched for — for example in news articles. Paid posts and press releases don't count."],
+                ["Complete", "A public account with a photo, bio and recent posts."],
+              ].map(([h, t]) => (
+                <p key={h} className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                  <span style={{ color: "var(--text)", fontWeight: 700 }}>{h}.</span> {t}
+                </p>
+              ))}
+            </div>
+
+            <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Your request</p>
+            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Name you're known by</label>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value.slice(0, 80))} className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
+            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Category</label>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {VERIFY_CATEGORIES.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCategory(c)}
+                  className="rounded-full px-3 h-8 text-[12.5px]"
+                  style={{
+                    fontWeight: 600,
+                    background: category === c ? "var(--text)" : "var(--surface)",
+                    color: category === c ? "var(--bg)" : "var(--text)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Country or region</label>
+            <input value={country} onChange={(e) => setCountry(e.target.value.slice(0, 60))} className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
+            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Links that show you're notable (news articles, official site) — at least one</label>
+            {links.map((l, i) => (
+              <input
+                key={i}
+                value={l}
+                onChange={(e) => setLinks((prev) => prev.map((x, j) => (j === i ? e.target.value.slice(0, 300) : x)))}
+                placeholder="https://"
+                inputMode="url"
+                className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-2"
+                style={box}
+              />
+            ))}
+            <label className="text-[11px] block mt-1 mb-1.5" style={{ color: "var(--text-muted)" }}>Why should this account be verified?</label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value.slice(0, 1000))}
+              rows={4}
+              placeholder="Who you are and why people look for your account"
+              className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none"
+              style={box}
+            />
+            <p className="text-[11px] text-right mt-1" style={{ color: "var(--text-muted)" }}>{reason.trim().length}/1000 · at least 20</p>
+          </>
+        )}
+
+        {err && <p className="text-xs mt-3" style={{ color: "var(--heart)" }}>{err}</p>}
+
+        {state && !state.verified && !pending && (
+          <>
+            <button
+              onClick={submit}
+              disabled={!canSend}
+              className="w-full rounded-xl h-12 text-sm mt-4"
+              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: canSend ? 1 : 0.45 }}
+            >
+              {busy ? "Sending…" : "Send request"}
+            </button>
+            <p className="text-[11px] text-center mt-2" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+              We don't ask for ID cards. Loop will never ask for your password or money for a badge.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Moderation → Badges (admins only): every request, oldest first.
+function VerificationQueue({ flash }) {
+  const [status, setStatus] = useState("pending");
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(null);
+  const load = async () => {
+    setRows(null);
+    setErr("");
+    const { data, error } = await supabase.rpc("mod_list_verification", { p_status: status });
+    if (error) {
+      setErr(/admins_only/.test(error.message) ? "Only admins review badge requests." : verifyErrorText(error.message));
+      setRows([]);
+      return;
+    }
+    setRows(data || []);
+  };
+  useEffect(() => {
+    load();
+  }, [status]);
+
+  const decide = async (r, approve) => {
+    let note = null;
+    if (approve) {
+      if (!window.confirm(`Give @${r.username} the verified badge?`)) return;
+    } else {
+      note = window.prompt("Why isn't it approved? They will see this.", "We couldn't confirm the account is notable yet.");
+      if (note === null) return;
+    }
+    setBusy(r.id);
+    const { error } = await supabase.rpc("mod_decide_verification", { p_id: r.id, p_approve: approve, p_note: note });
+    setBusy(null);
+    if (error) {
+      flash(error.message);
+      return;
+    }
+    flash(approve ? "Badge given" : "Request declined");
+    load();
+  };
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-3">
+        {[
+          ["pending", "Waiting"],
+          ["approved", "Approved"],
+          ["rejected", "Declined"],
+        ].map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setStatus(k)}
+            className="rounded-full px-3.5 h-8 text-xs"
+            style={{ fontWeight: 700, background: status === k ? "var(--text)" : "var(--surface)", color: status === k ? "var(--bg)" : "var(--text)", border: "1px solid var(--border)" }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {err ? (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{err}</p>
+      ) : rows === null ? (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center py-12">
+          <BadgeCheck size={34} color="var(--text-muted)" strokeWidth={1.5} />
+          <p className="text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>{status === "pending" ? "No requests waiting" : "Nothing here yet"}</p>
+        </div>
+      ) : (
+        rows.map((r) => (
+          <div key={r.id} className="rounded-2xl p-3 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <button onClick={() => openProfileGlobal(r.user_id)} className="flex items-center gap-3 text-left w-full">
+              <Avatar username={r.username || "?"} avatarUrl={r.avatar_url} size={42} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>@{r.username}</span>
+                <span className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
+                  {r.full_name} · {r.category}
+                  {r.country ? ` · ${r.country}` : ""}
+                </span>
+              </span>
+              <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>{timeAgo(r.created_at)}</span>
+            </button>
+            <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>
+              {formatCount(Number(r.followers || 0))} followers · {formatCount(Number(r.posts || 0))} posts
+            </p>
+            <p className="text-[13px] mt-2" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{r.reason}</p>
+            {(r.links || []).length > 0 && (
+              <div className="flex flex-col gap-1 mt-2">
+                {r.links.map((l) => (
+                  <a key={l} href={l} target="_blank" rel="noopener noreferrer nofollow" className="text-[12.5px] truncate" style={{ color: "var(--accent-solid)" }}>
+                    {l}
+                  </a>
+                ))}
+              </div>
+            )}
+            {r.note && <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>Note: {r.note}</p>}
+            {r.status === "pending" && (
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() => decide(r, true)}
+                  disabled={busy === r.id}
+                  className="rounded-lg px-4 h-9 text-xs"
+                  style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy === r.id ? 0.6 : 1 }}
+                >
+                  Give badge
+                </button>
+                <button
+                  onClick={() => decide(r, false)}
+                  disabled={busy === r.id}
+                  className="rounded-lg px-4 h-9 text-xs"
+                  style={{ background: "transparent", color: "var(--heart)", border: "1px solid var(--heart)", fontWeight: 700 }}
+                >
+                  Decline
+                </button>
+              </div>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ---- Reels: a lighter copy for slow connections ----
+// Loop has no video server, so the phone that posts a reel makes the light
+// copy itself: after posting it quietly plays the video once and records a
+// 480p version (roughly a tenth of the size). It takes as long as the video,
+// and keeps going while you use the app. Viewers then choose in ⋯ → Quality.
+const QUALITY_KEY = "loop_video_quality";
+function getVideoQuality() {
+  try {
+    return localStorage.getItem(QUALITY_KEY) || "auto";
+  } catch {
+    return "auto";
+  }
+}
+function saveVideoQuality(v) {
+  try {
+    localStorage.setItem(QUALITY_KEY, v);
+  } catch {}
+}
+function connectionIsSlow() {
+  const c = typeof navigator !== "undefined" ? navigator.connection || navigator.mozConnection || navigator.webkitConnection : null;
+  if (!c) return false;
+  return !!c.saveData || ["slow-2g", "2g", "3g"].includes(c.effectiveType) || (typeof c.downlink === "number" && c.downlink > 0 && c.downlink < 1.5);
+}
+function pickReelSrc(reel, quality) {
+  if (!reel) return "";
+  const low = reel.media_url_low;
+  if (!low) return reel.media_url;
+  if (quality === "saver") return low;
+  if (quality === "auto" && connectionIsSlow()) return low;
+  return reel.media_url;
+}
+async function attachLowCopies(list) {
+  const ids = (list || []).map((r) => r.id).filter(Boolean);
+  if (!ids.length) return list;
+  try {
+    const { data, error } = await supabase.from("posts").select("id, media_url_low").in("id", ids);
+    if (error || !data) return list;
+    const by = Object.fromEntries(data.filter((r) => r.media_url_low).map((r) => [r.id, r.media_url_low]));
+    return list.map((r) => (by[r.id] ? { ...r, media_url_low: by[r.id] } : r));
+  } catch {
+    return list;
+  }
+}
+function canMakeLowCopy() {
+  try {
+    return (
+      typeof MediaRecorder !== "undefined" &&
+      typeof HTMLCanvasElement !== "undefined" &&
+      !!HTMLCanvasElement.prototype.captureStream &&
+      !!(window.AudioContext || window.webkitAudioContext)
+    );
+  } catch {
+    return false;
+  }
+}
+function pickLowMime() {
+  // H.264 first: every phone can play it, and most decode it in hardware.
+  const list = [
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+    "video/mp4;codecs=avc1,mp4a",
+    "video/mp4;codecs=avc1.42E01E,opus",
+    "video/mp4;codecs=avc1,opus",
+    "video/mp4",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  for (const m of list) {
+    try {
+      if (MediaRecorder.isTypeSupported(m)) return m;
+    } catch {}
+  }
+  return "";
+}
+
+function recordLowCopy(src, onProgress, signal) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.playsInline = true;
+    video.preload = "auto";
+    let audio = null;
+    let raf = 0;
+    let done = false;
+    const onVis = () => {
+      if (document.hidden) fail(new Error("Loop was closed — open ⋯ → Quality on the reel to try again"));
+    };
+    const cleanup = () => {
+      cancelAnimationFrame(raf);
+      document.removeEventListener("visibilitychange", onVis);
+      try {
+        video.pause();
+      } catch {}
+      try {
+        audio && audio.close();
+      } catch {}
+      video.removeAttribute("src");
+      try {
+        video.load();
+      } catch {}
+    };
+    function fail(e) {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(e instanceof Error ? e : new Error(String(e)));
+    }
+    signal?.addEventListener?.("abort", () => fail(new Error("cancelled")));
+    video.onerror = () => fail(new Error("This video couldn't be read"));
+    video.onloadedmetadata = async () => {
+      try {
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        const dur = video.duration;
+        if (!vw || !vh) throw new Error("No picture in this video");
+        if (!Number.isFinite(dur) || dur <= 0) throw new Error("Couldn't tell how long this video is");
+        if (dur > 240) throw new Error("Too long for a data-saver copy");
+        const scale = Math.min(1, 480 / Math.min(vw, vh));
+        const w = Math.max(2, Math.round((vw * scale) / 2) * 2);
+        const h = Math.max(2, Math.round((vh * scale) / 2) * 2);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const g = canvas.getContext("2d");
+        const stream = canvas.captureStream(30);
+        const AC = window.AudioContext || window.webkitAudioContext;
+        audio = new AC();
+        if (audio.state === "suspended") await audio.resume().catch(() => {});
+        const node = audio.createMediaElementSource(video);
+        const dest = audio.createMediaStreamDestination();
+        node.connect(dest); // not to the speakers — it plays silently
+        dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+        const mime = pickLowMime();
+        const recorder = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 650000, audioBitsPerSecond: 64000 });
+        const chunks = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size) chunks.push(e.data);
+        };
+        recorder.onstop = () => {
+          if (done) return;
+          done = true;
+          const type = (recorder.mimeType || mime || "video/webm").split(";")[0];
+          cleanup();
+          resolve(new Blob(chunks, { type }));
+        };
+        const draw = () => {
+          if (done) return;
+          g.drawImage(video, 0, 0, w, h);
+          onProgress?.(Math.min(0.99, video.currentTime / dur));
+          raf = requestAnimationFrame(draw);
+        };
+        video.onended = () => {
+          try {
+            if (recorder.state !== "inactive") recorder.stop();
+          } catch (e) {
+            fail(e);
+          }
+        };
+        document.addEventListener("visibilitychange", onVis);
+        recorder.start(1000);
+        await video.play();
+        draw();
+      } catch (e) {
+        fail(e?.name === "NotAllowedError" ? new Error("Tap ⋯ → Quality on the reel to make the data-saver copy") : e);
+      }
+    };
+    video.src = src;
+  });
+}
+
+const lowCopyJobs = new Map(); // postId -> { state, progress, error, ctrl }
+function emitLowCopy() {
+  try {
+    window.dispatchEvent(new CustomEvent("loop:lowcopy"));
+  } catch {}
+}
+async function startLowCopyJob({ postId, file, url, userId }) {
+  if (!postId || !userId) return;
+  const existing = lowCopyJobs.get(postId);
+  if (existing && existing.state === "working") return;
+  if (!canMakeLowCopy()) {
+    lowCopyJobs.set(postId, { state: "error", error: "This browser can't make a data-saver copy" });
+    emitLowCopy();
+    return;
+  }
+  const job = { state: "working", progress: 0, ctrl: new AbortController() };
+  lowCopyJobs.set(postId, job);
+  emitLowCopy();
+  let objectUrl = null;
+  try {
+    const src = file ? (objectUrl = URL.createObjectURL(file)) : url;
+    const blob = await recordLowCopy(
+      src,
+      (p) => {
+        if (p - job.progress >= 0.01) {
+          job.progress = p;
+          emitLowCopy();
+        }
+      },
+      job.ctrl.signal
+    );
+    if (blob.size < 20000) throw new Error("The copy came out empty");
+    if (file?.size && blob.size > file.size * 0.8) throw new Error("This video is already light — no copy needed");
+    const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+    const path = `${userId}/${Date.now()}-low.${ext}`;
+    const { error: upErr } = await supabase.storage.from("posts").upload(path, blob, { contentType: blob.type });
+    if (upErr) throw upErr;
+    const lowUrl = supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
+    const { error } = await supabase.from("posts").update({ media_url_low: lowUrl }).eq("id", postId).eq("user_id", userId);
+    if (error) {
+      supabase.storage.from("posts").remove([path]).catch(() => {});
+      throw new Error(/media_url_low/.test(error.message) ? "Data saver needs loop-step-14.sql" : error.message);
+    }
+    job.state = "done";
+    job.url = lowUrl;
+  } catch (e) {
+    job.state = e?.message === "cancelled" ? "cancelled" : "error";
+    job.error = e?.message || "That didn't work";
+  }
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  emitLowCopy();
+  setTimeout(() => {
+    if (lowCopyJobs.get(postId) === job) {
+      lowCopyJobs.delete(postId);
+      emitLowCopy();
+    }
+  }, job.state === "done" ? 3500 : 7000);
+}
+function useLowCopyJobs() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const on = () => setTick((t) => t + 1);
+    window.addEventListener("loop:lowcopy", on);
+    return () => window.removeEventListener("loop:lowcopy", on);
+  }, []);
+  return lowCopyJobs;
+}
+
+// A small pill at the top while a copy is being made.
+function LowCopyChip() {
+  const jobs = useLowCopyJobs();
+  const entries = [...jobs.entries()];
+  if (!entries.length) return null;
+  const [postId, job] = entries[entries.length - 1];
+  const text =
+    job.state === "working"
+      ? `Making data-saver copy · ${Math.round(job.progress * 100)}%`
+      : job.state === "done"
+      ? "Data-saver copy ready"
+      : job.state === "cancelled"
+      ? "Data-saver copy stopped"
+      : job.error;
+  return (
+    <div className="fixed left-0 right-0 flex justify-center pointer-events-none" style={{ top: "calc(10px + env(safe-area-inset-top, 0px))", zIndex: 120 }}>
+      <div
+        className="pointer-events-auto flex items-center gap-2 rounded-full pl-3 pr-1.5 h-8 text-[12px]"
+        style={{ background: "rgba(20,20,24,0.88)", color: "#fff", fontWeight: 600, boxShadow: "0 6px 18px rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", maxWidth: 340 }}
+      >
+        {job.state === "working" ? (
+          <span className="rounded-full shrink-0" style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.35)", borderTopColor: "#fff", animation: "loopSpin 0.8s linear infinite" }} />
+        ) : job.state === "done" ? (
+          <Check size={14} color="#4ADE80" strokeWidth={3} />
+        ) : (
+          <Info size={14} color="#FBBF24" />
+        )}
+        <span className="truncate">{text}</span>
+        {job.state === "working" ? (
+          <button onClick={() => job.ctrl?.abort()} aria-label="Stop" className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.14)" }}>
+            <X size={12} color="#fff" />
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              lowCopyJobs.delete(postId);
+              emitLowCopy();
+            }}
+            aria-label="Close"
+            className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+            style={{ background: "rgba(255,255,255,0.14)" }}
+          >
+            <X size={12} color="#fff" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Translation for channels ----
+// The phone's own translator when the browser has one (nothing leaves the
+// phone); otherwise the free MyMemory service gets the post's text only.
+const translateMemo = new Map();
+const hasBangla = (t) => /[ঀ-৿]/.test(t || "");
+function translateTarget() {
+  try {
+    const pick = localStorage.getItem("loop_translate_to");
+    if (pick === "bn" || pick === "en") return pick;
+  } catch {}
+  const lang = (typeof navigator !== "undefined" && (navigator.language || "")) || "";
+  return /^bn/i.test(lang) ? "bn" : "en";
+}
+function needsTranslation(text, target) {
+  if (!text || !/[\p{L}]/u.test(text)) return false;
+  return (hasBangla(text) ? "bn" : "en") !== target;
+}
+function splitForTranslation(text) {
+  const enc = new TextEncoder();
+  const parts = text.match(/[^.!?।\n]+[.!?।\n]*\s*/g) || [text];
+  const out = [];
+  let cur = "";
+  for (const p of parts) {
+    const next = cur + p;
+    if (enc.encode(next).length > 440 && cur) {
+      out.push(cur);
+      cur = p;
+    } else cur = next;
+  }
+  if (cur) out.push(cur);
+  return out.slice(0, 8);
+}
+function translateText(text, target) {
+  const source = hasBangla(text) ? "bn" : "en";
+  const key = `${target}|${text}`;
+  if (translateMemo.has(key)) return translateMemo.get(key);
+  const job = (async () => {
+    try {
+      const T = typeof self !== "undefined" ? self.Translator : null;
+      if (T?.create) {
+        const ok = await T.availability({ sourceLanguage: source, targetLanguage: target });
+        if (ok && ok !== "unavailable") {
+          const tr = await T.create({ sourceLanguage: source, targetLanguage: target });
+          return await tr.translate(text);
+        }
+      }
+    } catch {}
+    const pieces = [];
+    for (const chunk of splitForTranslation(text)) {
+      const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${source}|${target}`);
+      const j = await r.json();
+      const t = j?.responseData?.translatedText;
+      if (!t || Number(j?.responseStatus) !== 200 || /MYMEMORY WARNING|QUERY LENGTH LIMIT/i.test(t)) throw new Error("no translation");
+      pieces.push(t);
+    }
+    return pieces.join(" ");
+  })();
+  translateMemo.set(key, job);
+  job.catch(() => translateMemo.delete(key));
+  return job;
+}
+
+function TranslatedText({ text, children, force }) {
+  const [pickedTarget, setTarget] = useState(translateTarget);
+  // Asked to translate a post that's already in your language: use the other one.
+  const target = force && !needsTranslation(text, pickedTarget) ? (pickedTarget === "bn" ? "en" : "bn") : pickedTarget;
+  const [out, setOut] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [original, setOriginal] = useState(false);
+  const wanted = needsTranslation(text, target);
+  useEffect(() => {
+    let cancelled = false;
+    setOut(null);
+    setFailed(false);
+    if (!wanted) return;
+    translateText(text, target).then(
+      (t) => !cancelled && setOut(t),
+      () => !cancelled && setFailed(true)
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [text, target, wanted]);
+  const switchTo = (t) => {
+    try {
+      localStorage.setItem("loop_translate_to", t);
+    } catch {}
+    setTarget(t);
+    setOriginal(false);
+  };
+  if (!wanted) return children;
+  return (
+    <>
+      {out && !original ? (
+        <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>{out}</p>
+      ) : (
+        children
+      )}
+      <p className="flex flex-wrap items-center gap-1.5 text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+        <Languages size={12} />
+        {failed ? "Couldn't translate right now" : !out ? "Translating…" : original ? "Original" : `Translated to ${target === "bn" ? "বাংলা" : "English"}`}
+        {out && (
+          <button onClick={() => setOriginal((v) => !v)} style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
+            {original ? "Show translation" : "Show original"}
+          </button>
+        )}
+        <button onClick={() => switchTo(target === "bn" ? "en" : "bn")} style={{ color: "var(--text-muted)", textDecoration: "underline" }}>
+          {target === "bn" ? "English" : "বাংলা"}
+        </button>
+      </p>
+    </>
+  );
+}
+
+// ---- Channel: welcome message ----
+function ChannelWelcomeScreen({ channel, onClose, onSaved }) {
+  const [text, setText] = useState(channel.welcome_message || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const ready = "welcome_message" in channel;
+  const save = async (value) => {
+    setBusy(true);
+    setErr("");
+    const v = (value ?? text).trim().slice(0, 1000) || null;
+    const { error } = await supabase.from("channels").update({ welcome_message: v }).eq("id", channel.id);
+    setBusy(false);
+    if (error) return setErr(/welcome_message/.test(error.message) ? "This needs loop-step-14.sql — run it in Supabase first." : error.message);
+    onSaved({ ...channel, welcome_message: v });
+  };
+  return (
+    <div className="absolute inset-0 z-[84] flex flex-col" style={{ background: "var(--bg)" }}>
+      <ScreenHeader
+        title="Welcome message"
+        onBack={onClose}
+        right={
+          <button onClick={() => save()} disabled={busy || !ready} className="text-[15px]" style={{ color: "var(--accent-solid)", fontWeight: 700, opacity: busy || !ready ? 0.5 : 1 }}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        }
+      />
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-10">
+        <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          New members see this message when they join. Only they can see it — it isn't posted to the channel.
+        </p>
+        {!ready && <p className="text-xs mt-3" style={{ color: "var(--heart)" }}>This needs loop-step-14.sql — run it in Supabase first.</p>}
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value.slice(0, 1000))}
+          rows={5}
+          placeholder="Welcome! Here's what you'll find in this channel…"
+          className="w-full rounded-2xl px-4 py-3 text-sm outline-none resize-none mt-4"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+        />
+        <p className="text-[11px] text-right mt-1" style={{ color: "var(--text-muted)" }}>{text.length}/1000</p>
+        {text.trim() && (
+          <>
+            <p className="text-[12px] mt-4 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Preview</p>
+            <div className="rounded-2xl p-3" style={{ background: "var(--bg-sunken)" }}>
+              <ChannelWelcomeBubble channel={channel} text={text.trim()} />
+            </div>
+          </>
+        )}
+        {channel.welcome_message && (
+          <button onClick={() => save("")} disabled={busy} className="w-full h-11 text-sm mt-5 rounded-xl" style={{ color: "var(--heart)", fontWeight: 700, background: "var(--surface)" }}>
+            Remove welcome message
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChannelWelcomeBubble({ channel, text }) {
+  return (
+    <div className="flex items-end gap-2">
+      <ChannelAvatar channel={channel} size={32} />
+      <div className="rounded-2xl px-3.5 pt-2 pb-1.5 min-w-0" style={{ background: "var(--bg)", border: "1px solid var(--border)", borderBottomLeftRadius: 6, maxWidth: "84%" }}>
+        <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+          <LinkifiedText text={text} />
+        </p>
+        <p className="flex items-center justify-end gap-1 text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
+          <Lock size={9} /> Only visible to you
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---- Channel: administrators ----
+function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
+  const [admins, setAdmins] = useState(null);
+  const [err, setErr] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState([]);
+  const [sign, setSign] = useState(!!channel.sign_messages);
+  const [showAuthors, setShowAuthors] = useState(!!channel.show_author_profiles);
+  const ready = "sign_messages" in channel;
+
+  const load = async () => {
+    setErr("");
+    const { data, error } = await supabase.from("channel_admins").select("user_id, created_at").eq("channel_id", channel.id).order("created_at");
+    if (error) {
+      setErr(/channel_admins/.test(error.message) ? "This needs loop-step-14.sql — run it in Supabase first." : error.message);
+      setAdmins([]);
+      return;
+    }
+    const ids = (data || []).map((a) => a.user_id);
+    const { data: profs } = ids.length ? await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").in("id", ids) : { data: [] };
+    const by = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+    setAdmins(ids.map((id) => by[id] || { id, username: "unknown" }));
+  };
+  useEffect(() => {
+    load();
+  }, [channel.id]);
+
+  useEffect(() => {
+    const term = q.trim().replace(/^@/, "");
+    if (!adding || !term) {
+      setFound([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").ilike("username", `%${term}%`).limit(15);
+      if (!cancelled) setFound((data || []).filter((p) => p.id !== channel.owner_id));
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [q, adding]);
+
+  const add = async (p) => {
+    const { error } = await supabase.from("channel_admins").insert({ channel_id: channel.id, user_id: p.id });
+    if (error && !/duplicate/i.test(error.message)) return setErr(error.message);
+    setAdding(false);
+    setQ("");
+    load();
+  };
+  const remove = async (p) => {
+    if (!window.confirm(`Remove ${p.username} as an admin?`)) return;
+    const { error } = await supabase.from("channel_admins").delete().eq("channel_id", channel.id).eq("user_id", p.id);
+    if (error) return setErr(error.message);
+    load();
+  };
+  const saveFlag = async (patch) => {
+    const { error } = await supabase.from("channels").update(patch).eq("id", channel.id);
+    if (error) {
+      setErr(/sign_messages|show_author_profiles/.test(error.message) ? "This needs loop-step-14.sql — run it in Supabase first." : error.message);
+      return false;
+    }
+    onSaved({ ...channel, ...patch });
+    return true;
+  };
+
+  const toggle = ({ on, label, hint, onFlip, disabled }) => (
+    <button onClick={onFlip} disabled={disabled} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ opacity: disabled ? 0.5 : 1 }}>
+      <span>
+        <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
+        <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{hint}</span>
+      </span>
+      <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+        <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: on ? 18 : 2, transition: "left 0.15s" }} />
+      </span>
+    </button>
+  );
+
+  const person = (p, role, onRemove) => (
+    <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
+      <Avatar username={p.username || "?"} avatarUrl={p.avatar_url} size={42} />
+      <span className="flex-1 min-w-0">
+        <span className="flex items-center gap-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
+          {p.full_name || p.username} {p.is_verified && <VerifiedBadge size={12} />}
+        </span>
+        <span className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>@{p.username}</span>
+      </span>
+      <span className="text-[12px] shrink-0" style={{ color: "var(--text-muted)" }}>{role}</span>
+      {onRemove && (
+        <button onClick={onRemove} aria-label="Remove admin" className="p-1.5 shrink-0">
+          <X size={16} color="var(--text-muted)" />
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="absolute inset-0 z-[84] flex flex-col" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Administrators" onBack={onClose} />
+      <div className="flex-1 overflow-y-auto pb-10">
+        <div className="mt-3 mx-4 rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
+          {adding ? (
+            <div className="p-3">
+              <div className="flex items-center gap-2 rounded-xl px-3 h-10" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+                <Search size={15} color="var(--text-muted)" />
+                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by username" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "var(--text)" }} />
+                <button onClick={() => { setAdding(false); setQ(""); }} aria-label="Cancel">
+                  <X size={15} color="var(--text-muted)" />
+                </button>
+              </div>
+              {found.map((p) => (
+                <button key={p.id} onClick={() => add(p)} className="w-full flex items-center gap-3 px-1 py-2 text-left">
+                  <Avatar username={p.username} avatarUrl={p.avatar_url} size={36} />
+                  <span className="flex-1 min-w-0 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
+                  <span className="text-[12px]" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>Add</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button onClick={() => setAdding(true)} className="w-full flex items-center gap-3 px-4 py-3.5 text-left" disabled={!!err && /step-14/.test(err)}>
+              <UserPlus size={20} color="var(--accent-solid)" />
+              <span className="text-sm" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>Add Admin</span>
+            </button>
+          )}
+          <div style={{ borderTop: "1px solid var(--border-subtle)" }}>
+            {owner && person(owner, "Owner")}
+            {(admins || []).map((p) => person(p, "Admin", () => remove(p)))}
+          </div>
+        </div>
+        <p className="px-5 pt-2 text-[11.5px]" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+          Admins can post, edit, pin and delete posts in this channel. Only you can change its settings or add admins.
+        </p>
+
+        <div className="mt-5 mx-4 rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
+          {toggle({
+            on: sign,
+            disabled: !ready,
+            label: "Sign Messages",
+            hint: "Add the name of the admin who wrote each post.",
+            onFlip: async () => {
+              const next = !sign;
+              setSign(next);
+              const patch = next ? { sign_messages: true } : { sign_messages: false, show_author_profiles: false };
+              if (!next) setShowAuthors(false);
+              if (!(await saveFlag(patch))) setSign(!next);
+            },
+          })}
+          {sign && (
+            <div style={{ borderTop: "1px solid var(--border-subtle)" }}>
+              {toggle({
+                on: showAuthors,
+                label: "Show Authors' Profiles",
+                hint: "Members see the author's photo and name on each post and can tap to open their profile.",
+                onFlip: async () => {
+                  const next = !showAuthors;
+                  setShowAuthors(next);
+                  if (!(await saveFlag({ show_author_profiles: next }))) setShowAuthors(!next);
+                },
+              })}
+            </div>
+          )}
+        </div>
+        {!ready && <p className="px-5 pt-2 text-xs" style={{ color: "var(--heart)" }}>Signing needs loop-step-14.sql — run it in Supabase first.</p>}
+        {err && <p className="px-5 pt-3 text-xs" style={{ color: "var(--heart)" }}>{err}</p>}
+      </div>
     </div>
   );
 }
@@ -637,7 +2320,7 @@ function RepostNoteBubble({ entry, onTap, avatarSize = 34 }) {
   if (!entry) return null;
   const empty = !entry.note;
   if (empty && !entry.mine) return null;
-  const bg = "rgba(22,22,26,0.84)";
+  const white = "#FFFFFF";
   return (
     <button
       onClick={(e) => {
@@ -646,27 +2329,33 @@ function RepostNoteBubble({ entry, onTap, avatarSize = 34 }) {
       }}
       onTouchStart={(e) => e.stopPropagation()}
       onTouchEnd={(e) => e.stopPropagation()}
-      className="flex flex-col items-start text-left"
-      style={{ maxWidth: 210 }}
+      className="flex flex-col items-start text-left transition-transform active:scale-95"
+      style={{ maxWidth: 220, animation: "loopPop 0.28s ease-out", transformOrigin: "bottom left" }}
     >
+      {/* the note, like an Instagram note: a white bubble with a thought trail */}
       <span
-        className="rounded-2xl px-3 py-1.5 text-[13px]"
+        className="rounded-[20px] px-3.5 py-2 text-[13.5px]"
         style={{
-          background: bg,
-          color: "#FFFFFF",
-          backdropFilter: "blur(8px)",
-          fontWeight: 500,
+          background: white,
+          color: empty ? "#8E8E93" : "#111111",
+          fontWeight: empty ? 500 : 600,
+          lineHeight: 1.3,
           wordBreak: "break-word",
-          fontStyle: empty ? "italic" : "normal",
-          opacity: empty ? 0.85 : 1,
-          boxShadow: "0 2px 10px rgba(0,0,0,0.25)",
+          minWidth: 48,
+          boxShadow: "0 6px 20px rgba(0,0,0,0.22), 0 1px 2px rgba(0,0,0,0.12)",
         }}
       >
-        {empty ? "Add a note…" : entry.note}
+        {empty ? (
+          <span className="flex items-center gap-1">
+            <Plus size={13} color="#8E8E93" strokeWidth={2.6} /> Add a note
+          </span>
+        ) : (
+          entry.note
+        )}
       </span>
-      <span className="rounded-full" style={{ width: 8, height: 8, background: bg, marginLeft: 16, marginTop: 2 }} />
-      <span className="rounded-full" style={{ width: 4, height: 4, background: bg, marginLeft: 12, marginTop: 1 }} />
-      <span className="relative" style={{ marginTop: 2 }}>
+      <span className="rounded-full" style={{ width: 10, height: 10, background: white, marginLeft: 20, marginTop: 3, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }} />
+      <span className="rounded-full" style={{ width: 5, height: 5, background: white, marginLeft: 16, marginTop: 2, boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+      <span className="relative rounded-full" style={{ marginTop: 3, padding: 2, background: white, boxShadow: "0 3px 10px rgba(0,0,0,0.28)" }}>
         <Avatar username={entry.username || "?"} avatarUrl={entry.avatarUrl} size={avatarSize} />
         <RepostBadge size={Math.max(14, Math.round(avatarSize * 0.48))} />
       </span>
@@ -1352,40 +3041,6 @@ function DevicePermissionsScreen({ onBack }) {
   );
 }
 
-// ---- Settings → App website permissions ----
-function AppsWebsitesScreen({ onBack }) {
-  const [tab, setTab] = useState("active");
-  return (
-    <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
-      <ScreenHeader title="Apps and websites" onBack={onBack} />
-      <div className="flex" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        {[
-          ["active", "Active"],
-          ["expired", "Expired"],
-          ["removed", "Removed"],
-        ].map(([k, label]) => (
-          <button
-            key={k}
-            onClick={() => setTab(k)}
-            className="flex-1 py-3 text-[13px]"
-            style={{ color: tab === k ? "var(--text)" : "var(--text-muted)", fontWeight: tab === k ? 700 : 500, borderBottom: tab === k ? "2px solid var(--text)" : "2px solid transparent" }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="flex flex-col items-center text-center px-8 pt-16 gap-2">
-        <MonitorSmartphone size={36} color="var(--toggle-off)" />
-        <p className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>
-          {tab === "active" ? "No active apps or websites" : tab === "expired" ? "Nothing expired" : "Nothing removed"}
-        </p>
-        <p className="text-xs" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
-          When you log in to another app or website with your Loop account, it shows here and you can remove its access.
-        </p>
-      </div>
-    </div>
-  );
-}
 
 // ---- Settings → Like and share counts ----
 function CountsSettingsScreen({ onBack }) {
@@ -1514,8 +3169,17 @@ function RepostNoteTile({ note }) {
 const CHANNEL_ALL_REACTIONS = [
   "\u{1F44D}", "❤️", "\u{1F525}", "\u{1F389}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}",
   "\u{1F44F}", "\u{1F60D}", "\u{1F914}", "\u{1F92F}", "\u{1F4AF}", "⚡", "\u{1F680}", "\u{1F44E}",
+  "\u{1F970}", "\u{1F601}", "\u{1F631}", "\u{1F929}",
 ];
 const CHANNEL_DEFAULT_REACTIONS = CHANNEL_ALL_REACTIONS.slice(0, 8);
+// Channels saved with "All reactions" before there were 20 still get all 20.
+function isAllChannelReactions(list) {
+  return Array.isArray(list) && list.length >= 16 && CHANNEL_ALL_REACTIONS.slice(0, 16).every((e) => list.includes(e));
+}
+function channelReactions(channel) {
+  const list = Array.isArray(channel?.reactions) ? channel.reactions : CHANNEL_ALL_REACTIONS;
+  return isAllChannelReactions(list) ? CHANNEL_ALL_REACTIONS : list;
+}
 
 // Open a channel from anywhere: a profile, Messages, a notification, a link.
 const openChannelGlobal = (id) => {
@@ -1625,12 +3289,22 @@ function CreateChannelSheet({ onClose, onCreated }) {
 }
 
 // The owner's settings: name, about, photo, and which reactions are allowed.
-function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
+function ChannelSettingsScreen({ channel, owner, onClose, onSaved, onChanged, onDeleted }) {
   const [name, setName] = useState(channel.name || "");
   const [about, setAbout] = useState(channel.description || "");
   const [avatar, setAvatar] = useState(channel.avatar_url || null);
-  const initial = Array.isArray(channel.reactions) ? channel.reactions : CHANNEL_DEFAULT_REACTIONS;
-  const [mode, setMode] = useState(initial.length === 0 ? "none" : initial.length >= CHANNEL_ALL_REACTIONS.length ? "all" : "some");
+  const initial = Array.isArray(channel.reactions) ? channel.reactions : CHANNEL_ALL_REACTIONS;
+  const [mode, setMode] = useState(initial.length === 0 ? "none" : isAllChannelReactions(initial) ? "all" : "some");
+  const [autoTr, setAutoTr] = useState(!!channel.auto_translate);
+  const [sub, setSub] = useState(null); // welcome | admins
+  const [adminCount, setAdminCount] = useState(null);
+  useEffect(() => {
+    supabase
+      .from("channel_admins")
+      .select("user_id", { count: "exact", head: true })
+      .eq("channel_id", channel.id)
+      .then(({ count, error }) => !error && setAdminCount(count || 0));
+  }, [channel.id, sub]);
   const [picked, setPicked] = useState(initial.length ? initial : CHANNEL_DEFAULT_REACTIONS);
   const [replies, setReplies] = useState(channel.replies_enabled !== false);
   const [busy, setBusy] = useState(false);
@@ -1668,6 +3342,7 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
       reactions,
       // Only sent once loop-step-12.sql has added the column.
       ...("replies_enabled" in channel ? { replies_enabled: replies } : {}),
+      ...("auto_translate" in channel ? { auto_translate: autoTr } : {}),
     };
     const { error } = await supabase.from("channels").update(patch).eq("id", channel.id);
     setBusy(false);
@@ -1752,7 +3427,7 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
 
         <p className="px-4 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Reactions</p>
         <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-          <Choice k="all" label="All reactions" hint="Members can use any of the 16" />
+          <Choice k="all" label="All reactions" hint="Members can use any of the 20" />
           <Choice k="some" label="Some reactions" hint="Only the ones you pick below" />
           <Choice k="none" label="No reactions" hint="Posts can be read, not reacted to" />
         </div>
@@ -1798,6 +3473,42 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
         )}
         {err && <p className="px-4 pt-3 text-xs" style={{ color: "var(--heart)" }}>{err}</p>}
 
+        <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>More</p>
+        <div style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}>
+          <button
+            onClick={() => ("auto_translate" in channel ? setAutoTr((v) => !v) : setErr("Auto-Translate needs loop-step-14.sql — run it in Supabase first."))}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+          >
+            <span className="flex items-center gap-3">
+              <Languages size={20} color="var(--text)" />
+              <span>
+                <span className="block text-sm" style={{ color: "var(--text)" }}>Auto-Translate Messages</span>
+                <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>Members see posts translated into their language</span>
+              </span>
+            </span>
+            <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: autoTr ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+              <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: autoTr ? 18 : 2, transition: "left 0.15s" }} />
+            </span>
+          </button>
+          <button onClick={() => setSub("welcome")} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+            <span className="flex items-center gap-3">
+              <MessageCircle size={20} color="var(--text)" />
+              <span className="text-sm" style={{ color: "var(--text)" }}>Welcome Message</span>
+            </span>
+            <span className="flex items-center gap-1 text-[13px]" style={{ color: "var(--text-muted)" }}>
+              {channel.welcome_message ? "On" : "Off"} <ChevronRight size={17} />
+            </span>
+          </button>
+          <button onClick={() => setSub("admins")} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+            <span className="flex items-center gap-3">
+              <Shield size={20} color="var(--text)" />
+              <span className="text-sm" style={{ color: "var(--text)" }}>Administrators</span>
+            </span>
+            <span className="flex items-center gap-1 text-[13px]" style={{ color: "var(--text-muted)" }}>
+              {adminCount === null ? "" : adminCount + 1} <ChevronRight size={17} />
+            </span>
+          </button>
+        </div>
         <div className="px-4 pt-8">
           <button
             onClick={remove}
@@ -1808,6 +3519,17 @@ function ChannelSettingsScreen({ channel, onClose, onSaved, onDeleted }) {
           </button>
         </div>
       </div>
+      {sub === "welcome" && (
+        <ChannelWelcomeScreen
+          channel={channel}
+          onClose={() => setSub(null)}
+          onSaved={(ch) => {
+            onChanged?.(ch);
+            setSub(null);
+          }}
+        />
+      )}
+      {sub === "admins" && <ChannelAdminsScreen channel={channel} owner={owner} onClose={() => setSub(null)} onSaved={(ch) => onChanged?.(ch)} />}
     </div>
   );
 }
@@ -2281,6 +4003,11 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   const [infoOpen, setInfoOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [flash, setFlash] = useState("");
+  const [ctx, setCtx] = useState(null); // { post, rect, withActions } — the long-press layer
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authors, setAuthors] = useState({}); // postId -> profile of who wrote it
+  const [translated, setTranslated] = useState({}); // postId -> true when you asked for a translation
+  const bubbleRefs = React.useRef({});
   const listRef = React.useRef(null);
   const fileRef = React.useRef(null);
   const postRefs = React.useRef({});
@@ -2288,7 +4015,10 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   const memberRef = React.useRef(false);
 
   const isOwner = !!(channel && me && channel.owner_id === me);
-  const allowed = Array.isArray(channel?.reactions) ? channel.reactions : CHANNEL_DEFAULT_REACTIONS;
+  const isStaff = isOwner || isAdmin; // owner or one of the channel's admins
+  const allowed = channelReactions(channel);
+  const signed = !!channel?.sign_messages;
+  const showAuthors = signed && !!channel?.show_author_profiles;
   const repliesOn = channel?.replies_enabled !== false;
   const theme = withPhoto(themeOf(channel?.theme), channel?.theme_image);
   const themed = !!theme.bg;
@@ -2322,6 +4052,21 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     const list = (rows || []).slice().reverse();
     setPosts(list);
     const ids = list.map((x) => x.id);
+    // Who wrote each post (loop-step-14.sql) — for Sign Messages.
+    if (ids.length) {
+      supabase
+        .from("channel_posts")
+        .select("id, author_id")
+        .in("id", ids)
+        .then(async ({ data, error }) => {
+          if (error || !data) return;
+          const uids = [...new Set(data.map((r) => r.author_id).filter(Boolean))];
+          if (!uids.length) return;
+          const { data: profs } = await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").in("id", uids);
+          const by = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+          setAuthors(Object.fromEntries(data.filter((r) => by[r.author_id]).map((r) => [r.id, by[r.author_id]])));
+        });
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -2369,6 +4114,20 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     setOwner(prof || null);
     setMembership(mem || null);
     memberRef.current = !!mem;
+    // When you joined (for the welcome message) and whether you're an admin.
+    if (mem && user?.id) {
+      supabase
+        .from("channel_members")
+        .select("joined_at")
+        .eq("channel_id", channelId)
+        .eq("user_id", user.id)
+        .maybeSingle()
+        .then(({ data, error }) => !error && data && setMembership((m) => (m ? { ...m, joined_at: data.joined_at } : m)));
+    }
+    supabase.rpc("is_channel_admin", { p_channel: channelId }).then(
+      ({ data, error }) => !error && setIsAdmin(!!data),
+      () => {}
+    );
     setMembers(Number((counts || [])[0]?.members || 0));
     await loadPosts(true);
   };
@@ -2383,7 +4142,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   const join = async () => {
     const { error: err } = await supabase.from("channel_members").insert({ channel_id: channelId, user_id: me });
     if (err && !/duplicate/i.test(err.message)) return say(err.message);
-    setMembership({ muted: false });
+    setMembership({ muted: false, joined_at: new Date().toISOString() });
     memberRef.current = true;
     setMembers((n) => n + 1);
     markSeen(me);
@@ -2421,6 +4180,12 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       if (!turningOff) c[emoji] = (c[emoji] || 0) + 1;
       return { ...all, [postId]: c };
     });
+    if (!turningOff) {
+      setTimeout(() => {
+        const c = centerOf(document.querySelector(`[data-chrx="${postId}-${emoji}"]`)) || centerOf(bubbleRefs.current[postId]);
+        if (c) playReactionBurst(emoji, c.x, c.y);
+      }, 80);
+    }
     const { error: err } = turningOff
       ? await supabase.from("channel_reactions").delete().eq("post_id", postId).eq("user_id", me)
       : await supabase.from("channel_reactions").upsert({ post_id: postId, user_id: me, emoji }, { onConflict: "post_id,user_id" });
@@ -2502,6 +4267,19 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   };
 
   const pinned = [...posts].reverse().find((x) => x.pinned);
+  const showWelcome = !isStaff && !!membership && !!channel?.welcome_message;
+  // Only for people who joined after the message existed — older members aren't new.
+  const welcomeIdx = !showWelcome || !membership.joined_at ? -2 : posts.findIndex((x) => new Date(x.created_at) > new Date(membership.joined_at));
+  const welcomeEl = welcomeIdx !== -2 ? (
+    <div className="mb-3" key="welcome">
+      <ChannelWelcomeBubble channel={channel} text={channel.welcome_message} />
+    </div>
+  ) : null;
+  const openPostCtx = (post, withActions) => {
+    const el = bubbleRefs.current[post.id];
+    if (!el) return;
+    setCtx({ post, rect: el.getBoundingClientRect(), withActions });
+  };
   const dayLabel = (iso) => {
     const d = new Date(iso);
     const today = new Date();
@@ -2610,8 +4388,11 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
           const big = !post.image_url ? emojiOnly(post.content) : null;
           const rc = replyCounts[post.id] || 0;
           const isLast = i === posts.length - 1;
+          const author = authors[post.id] || owner;
+          const authorName = author ? author.full_name || author.username : "";
           return (
             <React.Fragment key={post.id}>
+              {i === welcomeIdx && welcomeEl}
               {showDay && (
                 <>
                   <div className="flex justify-center my-3">
@@ -2622,7 +4403,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                       {dayLabel(post.created_at)}
                     </span>
                   </div>
-                  {owner && (
+                  {owner && !showAuthors && (
                     <p className="text-[12px] mb-1" style={{ color: "var(--text-muted)", marginLeft: 40 }}>
                       {owner.full_name || owner.username} · Admin
                     </p>
@@ -2631,33 +4412,80 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
               )}
               <div ref={(el) => (postRefs.current[post.id] = el)} className="mb-3">
                 <div className="flex items-end gap-2">
-                  <ChannelAvatar channel={channel} size={32} />
+                  {showAuthors && author ? (
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onOpenProfile?.(author.id);
+                      }}
+                      aria-label={`Open ${authorName}`}
+                      className="shrink-0"
+                    >
+                      <Avatar username={author.username || "?"} avatarUrl={author.avatar_url} size={32} />
+                    </button>
+                  ) : (
+                    <ChannelAvatar channel={channel} size={32} />
+                  )}
                   <div className="flex items-center gap-2 min-w-0" style={{ maxWidth: "84%" }}>
                     <div
+                      ref={(el) => {
+                        if (el) bubbleRefs.current[post.id] = el;
+                        else delete bubbleRefs.current[post.id];
+                      }}
                       className={big ? "select-none" : "rounded-2xl overflow-hidden select-none min-w-0"}
-                      style={big ? undefined : { background: bubbleBg, border: themed ? "none" : "1px solid var(--border)", borderBottomLeftRadius: 6 }}
+                      style={{
+                        ...(big ? {} : { background: bubbleBg, border: themed ? "none" : "1px solid var(--border)", borderBottomLeftRadius: 6 }),
+                        ...(ctx?.post?.id === post.id ? { position: "relative", zIndex: 86 } : {}),
+                      }}
                       onTouchStart={() => {
-                        pressRef.current = setTimeout(() => setPostMenu(post), 450);
+                        pressRef.current = setTimeout(() => openPostCtx(post, true), 450);
                       }}
                       onTouchEnd={() => clearTimeout(pressRef.current)}
                       onTouchMove={() => clearTimeout(pressRef.current)}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        setPostMenu(post);
+                        openPostCtx(post, true);
                       }}
                     >
                       {big ? (
-                        <BigEmojiMessage parts={big} />
+                        <BigEmojiMessage
+                          parts={big}
+                          onTap={(el) => {
+                            wobble(el);
+                            const c = centerOf(el);
+                            if (big.length === 1 && c) playEmojiShower(big[0], c.x, c.y, false);
+                          }}
+                        />
                       ) : (
                         <>
+                          {showAuthors && author && (
+                            <button
+                              onClick={() => {
+                                onClose();
+                                onOpenProfile?.(author.id);
+                              }}
+                              className={`flex items-center gap-1 px-3.5 text-[12.5px] ${post.image_url ? "py-1.5" : "pt-2"}`}
+                              style={{ color: "var(--accent-solid)", fontWeight: 700 }}
+                            >
+                              {authorName} {author.is_verified && <VerifiedBadge size={11} />}
+                            </button>
+                          )}
                           {post.image_url && <img src={post.image_url} alt="" loading="lazy" className="w-full object-cover" style={{ maxHeight: 420 }} />}
                           <div className="px-3.5 pt-2 pb-1.5">
-                            {post.content && (
-                              <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
-                                <LinkifiedText text={post.content} />
-                              </p>
-                            )}
+                            {post.content &&
+                              (channel?.auto_translate || translated[post.id] ? (
+                                <TranslatedText text={post.content} force={!!translated[post.id]}>
+                                  <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+                                    <LinkifiedText text={post.content} />
+                                  </p>
+                                </TranslatedText>
+                              ) : (
+                                <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+                                  <LinkifiedText text={post.content} />
+                                </p>
+                              ))}
                             <p className="text-[10px] mt-1 text-right" style={{ color: "var(--text-muted)" }}>
+                              {signed && !showAuthors && authorName && <span style={{ fontStyle: "italic" }}>{authorName} · </span>}
                               {post.pinned && "📌 "}
                               {post.edited_at ? "edited · " : ""}
                               {new Date(post.created_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
@@ -2694,6 +4522,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                           return (
                             <button
                               key={emo}
+                              data-chrx={`${post.id}-${emo}`}
                               onClick={() => allowed.includes(emo) && react(post.id, emo)}
                               className="flex items-center gap-1 rounded-full px-2.5 h-8 text-[13px] transition-transform active:scale-95"
                               style={{
@@ -2718,7 +4547,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                       )}
                       {allowed.length > 0 && (
                         <button
-                          onClick={() => setPickerFor(pickerFor === post.id ? null : post.id)}
+                          onClick={() => openPostCtx(post, false)}
                           aria-label="Add a reaction"
                           className="w-8 h-8 rounded-full flex items-center justify-center"
                           style={pill}
@@ -2726,23 +4555,6 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                           <SmilePlus size={15} color="var(--text-muted)" />
                         </button>
                       )}
-                    </div>
-                  )}
-                  {pickerFor === post.id && (
-                    <div
-                      className="flex flex-wrap gap-0.5 mt-1.5 p-1.5 rounded-3xl"
-                      style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)", animation: "loopPop 0.16s ease-out" }}
-                    >
-                      {allowed.map((emo) => (
-                        <button
-                          key={emo}
-                          onClick={() => react(post.id, emo)}
-                          className="w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-125"
-                          style={{ background: myReaction[post.id] === emo ? "var(--active-highlight)" : "transparent" }}
-                        >
-                          <AnimatedEmoji emoji={emo} size={30} />
-                        </button>
-                      ))}
                     </div>
                   )}
                 </div>
@@ -2755,6 +4567,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
             </React.Fragment>
           );
         })}
+        {welcomeIdx === -1 && welcomeEl}
       </div>
 
       {flash && (
@@ -2765,7 +4578,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
 
       {/* bottom bar */}
       <div className="shrink-0 px-3 py-2.5" style={{ borderTop: "1px solid var(--border-subtle)", background: "var(--bg)", paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))" }}>
-        {isOwner ? (
+        {isStaff ? (
           <>
             {image && (
               <div className="relative inline-block mb-2">
@@ -2875,47 +4688,55 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
         </StorySheetShell>
       )}
 
-      {postMenu && (
-        <StorySheetShell title="Post" onClose={() => setPostMenu(null)}>
-          <div className="pb-6">
-            {repliesOn && (
-              <StoryMenuRow
-                icon={<Reply size={17} color="var(--text)" />}
-                label="Replies"
-                onClick={() => {
-                  setRepliesFor(postMenu);
-                  setPostMenu(null);
-                }}
-              />
-            )}
-            {postMenu.content && (
-              <StoryMenuRow
-                icon={<Copy size={17} color="var(--text)" />}
-                label="Copy text"
-                onClick={() => {
-                  navigator.clipboard?.writeText(postMenu.content).catch(() => {});
-                  setPostMenu(null);
-                  say("Copied");
-                }}
-              />
-            )}
-            {isOwner && (
-              <>
-                <StoryMenuRow icon={<Pin size={17} color="var(--text)" />} label={postMenu.pinned ? "Unpin" : "Pin to the top"} onClick={() => togglePin(postMenu)} />
-                <StoryMenuRow
-                  icon={<Pencil size={17} color="var(--text)" />}
-                  label="Edit"
-                  onClick={() => {
-                    setEditing({ id: postMenu.id, text: postMenu.content || "" });
-                    setPostMenu(null);
-                  }}
-                />
-                <StoryMenuRow icon={<Trash2 size={17} color="var(--heart)" />} label="Delete" danger onClick={() => removePost(postMenu)} />
-              </>
-            )}
-          </div>
-        </StorySheetShell>
-      )}
+      {ctx &&
+        (() => {
+          const post = ctx.post;
+          const close = () => setCtx(null);
+          const actions = !ctx.withActions
+            ? []
+            : [
+                ...(repliesOn ? [{ label: "Reply", icon: <Reply size={17} />, onClick: () => { close(); setRepliesFor(post); } }] : []),
+                ...(post.content
+                  ? [
+                      {
+                        label: "Copy text",
+                        icon: <Copy size={17} />,
+                        onClick: () => {
+                          close();
+                          navigator.clipboard?.writeText(post.content).catch(() => {});
+                          say("Copied");
+                        },
+                      },
+                    ]
+                  : []),
+                ...(post.content && !channel?.auto_translate
+                  ? [{ label: translated[post.id] ? "Show original" : "Translate", icon: <Languages size={17} />, onClick: () => { close(); setTranslated((m) => ({ ...m, [post.id]: !m[post.id] })); } }]
+                  : []),
+                { label: "Share", icon: <ShareIcon size={16} color="var(--text)" />, onClick: () => { close(); setShareFor(post); } },
+                ...(isStaff
+                  ? [
+                      { label: post.pinned ? "Unpin" : "Pin", icon: <Pin size={17} />, onClick: () => { close(); togglePin(post); } },
+                      { label: "Edit", icon: <Pencil size={17} />, onClick: () => { close(); setEditing({ id: post.id, text: post.content || "" }); } },
+                      { label: "Delete", icon: <Trash2 size={17} />, danger: true, onClick: () => { close(); removePost(post); } },
+                    ]
+                  : []),
+              ];
+          return (
+            <ReactionContextOverlay
+              anchor={ctx.rect}
+              align="left"
+              quick={allowed.slice(0, 7)}
+              more={allowed}
+              current={myReaction[post.id]}
+              onReact={(e) => {
+                close();
+                react(post.id, e);
+              }}
+              actions={actions}
+              onClose={close}
+            />
+          );
+        })()}
 
       {editing && (
         <StorySheetShell title="Edit post" onClose={() => setEditing(null)}>
@@ -2940,8 +4761,8 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
           post={repliesFor}
           channel={channel}
           me={me}
-          isOwner={isOwner}
-          canReply={repliesOn && (isOwner || !!membership)}
+          isOwner={isStaff}
+          canReply={repliesOn && (isStaff || !!membership)}
           onClose={() => setRepliesFor(null)}
           onCountChange={(d) => setReplyCounts((prev) => ({ ...prev, [repliesFor.id]: Math.max(0, (prev[repliesFor.id] || 0) + d) }))}
         />
@@ -3005,6 +4826,8 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       {settingsOpen && channel && (
         <ChannelSettingsScreen
           channel={channel}
+          owner={owner}
+          onChanged={(ch) => setChannel(ch)}
           onClose={() => setSettingsOpen(false)}
           onSaved={(ch) => {
             setChannel(ch);
@@ -4203,10 +6026,11 @@ async function uploadCoverBlob(blob, userId) {
 
 // One square in any grid. A saved cover is just a picture, which always
 // shows; without one we fall back to the video wound to its first moment.
-function MediaThumb({ src, cover, isVideo, className = "w-full h-full object-cover", alt = "" }) {
-  if (!isVideo) return <img src={cover || src} alt={alt} loading="lazy" className={className} />;
-  if (cover) return <img src={cover} alt={alt} loading="lazy" className={className} />;
-  return <video src={videoThumb(src)} className={className} muted playsInline preload="metadata" />;
+function MediaThumb({ src, cover, isVideo, className = "w-full h-full object-cover", alt = "", pos }) {
+  const style = gridPosStyle(pos);
+  if (!isVideo) return <img src={cover || src} alt={alt} loading="lazy" className={className} style={style} />;
+  if (cover) return <img src={cover} alt={alt} loading="lazy" className={className} style={style} />;
+  return <video src={videoThumb(src)} className={className} style={style} muted playsInline preload="metadata" />;
 }
 
 // Covers Loop has already made in this browser session, so a grid never
@@ -4804,7 +6628,7 @@ function PollBlock({ postId, currentUserId }) {
 // Bottom sheet for the post owner to change per-post visibility settings
 // after publishing (opened from the Edit option in their own Profile grid)
 function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
-  const [view, setView] = useState("menu"); // "menu" | "edit" | "cover"
+  const [view, setView] = useState("menu"); // "menu" | "edit" | "cover" | "preview"
   const [busyField, setBusyField] = useState(null);
   const [menuError, setMenuError] = useState("");
   const [editCaption, setEditCaption] = useState(post.caption || "");
@@ -5011,12 +6835,21 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
             <MenuRow
               icon={<Crop size={16} color="var(--text)" />}
               label="Adjust preview"
-              onClick={() => alert("Adjust preview — coming soon. This app stores one image per post, so there's no second frame to pick from yet.")}
+              onClick={() => setView("preview")}
             />
 
             <div className="h-px my-1.5" style={{ background: "var(--border)" }} />
             <MenuRow icon={<Trash2 size={16} color="var(--accent-start)" />} label="Delete" onClick={handleDelete} danger />
           </div>
+        ) : view === "preview" ? (
+          <AdjustPreviewEditor
+            post={{ ...post, cover_url: localCover || post.cover_url }}
+            onBack={() => setView("menu")}
+            onSaved={(v) => {
+              onSaved?.({ grid_pos: v });
+              setView("menu");
+            }}
+          />
         ) : view === "cover" ? (
           <div className="px-4 pb-6">
             <p className="text-[12px] mb-3" style={{ color: "var(--text-muted)" }}>
@@ -8690,6 +10523,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   const [shareReel, setShareReel] = useState(null);
   const [noteFor, setNoteFor] = useState(null); // reel whose repost note is being written
   const [wideReels, setWideReels] = useState({}); // reelId -> true when the video is wider than a phone screen
+  const [quality, setQuality] = useState(getVideoQuality); // auto | high | saver
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [lowFailed, setLowFailed] = useState({}); // reelId -> true if the light copy wouldn't play
+  const resumeAtRef = React.useRef(null);
+  const lowJobs = useLowCopyJobs();
   const [repostNotes, setRepostNotes] = useRepostNotes(reels.map((r) => r.id), userId);
   const [collectionReel, setCollectionReel] = useState(null);
   const savePressRef = React.useRef(null);
@@ -8812,7 +10650,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       if (batch.length > 0) st.cursor = batch[batch.length - 1].created_at;
       if (batch.length < REELS_PAGE) st.done = true;
       const visible = batch.filter((r) => r.id !== st.skipId && !isHiddenFromFeed(rel, r.user_id));
-      const enriched = await attachSounds(await enrichReels(visible, st.me));
+      const enriched = await attachLowCopies(await attachSounds(await enrichReels(visible, st.me)));
       setReels((prev) => {
         const seen = new Set(prev.map((r) => r.id));
         return prev.concat(enriched.filter((r) => !seen.has(r.id)));
@@ -8844,7 +10682,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
     let first = [];
     if (startReelId) {
       const { data: one } = await supabase.from("posts").select(REEL_COLS).eq("id", startReelId).maybeSingle();
-      if (one) first = await attachSounds(await enrichReels([one], user?.id ?? null));
+      if (one) first = await attachLowCopies(await attachSounds(await enrichReels([one], user?.id ?? null)));
     }
     setReels(first);
     setIndex(0);
@@ -8858,6 +10696,13 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   }, [index, reels.length, loading]);
 
   const reel = reels[index];
+  const reelSrc = reel ? (lowFailed[reel.id] ? reel.media_url : pickReelSrc(reel, quality)) : "";
+  const onLight = !!reel && reelSrc !== reel.media_url;
+  const changeQuality = (q) => {
+    resumeAtRef.current = videoRef.current?.currentTime || 0;
+    setQuality(q);
+    saveVideoQuality(q);
+  };
 
   const handleTouchStart = (e) => {
     touchStartY.current = e.touches[0].clientY;
@@ -9110,7 +10955,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         <video
           key={reel.id}
           ref={videoRef}
-          src={reel.media_url}
+          src={reelSrc}
           poster={reel.cover_url || undefined}
           className={`w-full h-full ${wideReels[reel.id] ? "object-contain" : "object-cover"}`}
           playsInline
@@ -9127,6 +10972,32 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
               const id = reel.id;
               setWideReels((m) => (m[id] === wide ? m : { ...m, [id]: wide }));
             }
+            // Switched quality mid-way: carry on from the same moment.
+            const v = e.currentTarget;
+            const at = resumeAtRef.current;
+            resumeAtRef.current = null;
+            if (!isFinite(v.duration)) {
+              // Some phones save the light copy without its length written in;
+              // a jump to the end makes the browser work it out.
+              const back = () => {
+                v.removeEventListener("durationchange", back);
+                try {
+                  v.currentTime = at || 0;
+                } catch {}
+                if (isFinite(v.duration)) setDur(v.duration);
+              };
+              v.addEventListener("durationchange", back);
+              try {
+                v.currentTime = 1e9;
+              } catch {}
+            } else if (at) {
+              try {
+                v.currentTime = at;
+              } catch {}
+            }
+          }}
+          onError={() => {
+            if (reel && reelSrc !== reel.media_url) setLowFailed((m) => ({ ...m, [reel.id]: true }));
           }}
           onTimeUpdate={(e) => {
             if (!scrubbing) setCur(e.currentTarget.currentTime);
@@ -9347,13 +11218,52 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                 </button>
 
                 <button
-                  onClick={() => showToast("Quality: Auto (only one version is uploaded)")}
+                  onClick={() => setQualityOpen((v) => !v)}
                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
                   style={{ color: "var(--text)" }}
                 >
                   <span className="flex items-center gap-2"><Gauge size={15} /> Quality</span>
-                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>Auto</span>
+                  <span className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                    {quality === "auto" ? `Auto · ${onLight ? "Data saver" : "HD"}` : quality === "saver" ? (onLight ? "Data saver" : "HD") : "HD"}
+                    <ChevronDown size={13} style={{ transform: qualityOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                  </span>
                 </button>
+                {qualityOpen && (
+                  <div className="pb-1" style={{ background: "var(--bg-sunken)" }}>
+                    {[
+                      ["auto", "Auto", "Data saver on slow connections"],
+                      ["high", "HD", "Always the original video"],
+                      ["saver", "Data saver", reel.media_url_low ? "Lighter video, uses less data" : "Not ready for this reel yet"],
+                    ].map(([k, label, hint]) => (
+                      <button
+                        key={k}
+                        onClick={() => changeQuality(k)}
+                        className="w-full flex items-center justify-between gap-3 pl-10 pr-4 py-2 text-left"
+                      >
+                        <span>
+                          <span className="block text-[13px]" style={{ color: "var(--text)", fontWeight: quality === k ? 700 : 500 }}>{label}</span>
+                          <span className="block text-[10.5px]" style={{ color: "var(--text-muted)" }}>{hint}</span>
+                        </span>
+                        {quality === k && <Check size={15} color="var(--accent-solid)" strokeWidth={3} />}
+                      </button>
+                    ))}
+                    {reel.user_id === userId && !reel.media_url_low && canMakeLowCopy() && (
+                      lowJobs.get(reel.id)?.state === "working" ? (
+                        <p className="pl-10 pr-4 py-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
+                          Making the data-saver copy · {Math.round((lowJobs.get(reel.id).progress || 0) * 100)}%
+                        </p>
+                      ) : (
+                        <button
+                          onClick={() => startLowCopyJob({ postId: reel.id, url: reel.media_url, userId })}
+                          className="w-full text-left pl-10 pr-4 py-2 text-[12.5px]"
+                          style={{ color: "var(--accent-solid)", fontWeight: 700 }}
+                        >
+                          Make a data-saver copy of your reel
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
 
                 <div className="h-px my-1" style={{ background: "var(--border)" }} />
                 <div className="px-4 py-1.5 text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>My view: show counts</div>
@@ -11688,6 +13598,13 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
       return;
     }
 
+    // Videos get a lighter copy for slow connections. This phone makes it
+    // in the background, so posting isn't slowed down.
+    const lowSource = mode === "reel" ? file : items.length === 1 && items[0].type === "video" ? items[0].file : null;
+    if (lowSource && (lowSource.type || "").startsWith("video/")) {
+      startLowCopyJob({ postId: insertedPost.id, file: lowSource, userId: user.id });
+    }
+
     if (carouselUploads) {
       const { error: mediaError } = await supabase.from("post_media").insert(
         carouselUploads.map((u, i) => ({
@@ -12627,6 +14544,7 @@ function NotificationsSettings({ userId, onBack }) {
 function SettingsScreen({
   onBack,
   theme,
+  shownTheme,
   onThemeChange,
   accentStart,
   accentEnd,
@@ -12694,8 +14612,8 @@ function SettingsScreen({
     light: ["#38BDF8", "#0095F6"],
     bangladesh: ["#F42A41", "#DA291C"],
   };
-  const DEFAULT_ACCENT_START = (THEME_ACCENT_DEFAULTS[theme] || THEME_ACCENT_DEFAULTS.dark)[0];
-  const DEFAULT_ACCENT_END = (THEME_ACCENT_DEFAULTS[theme] || THEME_ACCENT_DEFAULTS.dark)[1];
+  const DEFAULT_ACCENT_START = (THEME_ACCENT_DEFAULTS[shownTheme || theme] || THEME_ACCENT_DEFAULTS.dark)[0];
+  const DEFAULT_ACCENT_END = (THEME_ACCENT_DEFAULTS[shownTheme || theme] || THEME_ACCENT_DEFAULTS.dark)[1];
   const [pickerStart, setPickerStart] = useState(accentStart || DEFAULT_ACCENT_START);
   const [pickerEnd, setPickerEnd] = useState(accentEnd || DEFAULT_ACCENT_END);
 
@@ -13148,7 +15066,8 @@ function SettingsScreen({
             <ThemeCard id="light" label="Light" swatch="#FFFFFF" ring="1px solid #DBDBDB" />
             <ThemeCard id="dark" label="Dark" swatch="#000000" ring="1px solid #363636" />
           </div>
-          <div className="flex mb-6">
+          <div className="flex gap-3 mb-2">
+            <ThemeCard id="auto" label="Auto" swatch="linear-gradient(135deg, #FFFFFF 0%, #FFFFFF 50%, #000000 50%, #000000 100%)" ring="1px solid var(--border)" />
             <ThemeCard
               id="bangladesh"
               label="Bangladesh"
@@ -13156,6 +15075,9 @@ function SettingsScreen({
               ring="1px solid var(--border)"
             />
           </div>
+          <p className="text-[11px] mb-6" style={{ color: "var(--text-muted)" }}>
+            Auto follows your phone: light in the day, dark when your phone switches to dark mode.
+          </p>
 
           <div className="text-[11px] mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Accent colour</div>
 
@@ -13339,8 +15261,9 @@ function SettingsScreen({
   if (view === "favourites") return <FavouritesScreen onBack={() => setView("menu")} />;
   if (view === "hiddenWords") return <HiddenWordsScreen onBack={() => setView("menu")} />;
   if (view === "permissions") return <DevicePermissionsScreen onBack={() => setView("menu")} />;
-  if (view === "apps") return <AppsWebsitesScreen onBack={() => setView("menu")} />;
   if (view === "counts") return <CountsSettingsScreen onBack={() => setView("menu")} />;
+  if (typeof view === "string" && view.startsWith("legal:")) return <LegalScreen doc={view.slice(6)} onBack={() => setView("about")} />;
+  if (view === "verify") return <VerificationRequestScreen onBack={() => setView("menu")} />;
 
   if (view === "about") {
     return (
@@ -13355,11 +15278,20 @@ function SettingsScreen({
           </p>
         </div>
         <div className="mx-4 rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          {["Terms of Use", "Privacy Policy", "Community Guidelines"].map((t, i) => (
-            <div key={t} className="flex items-center justify-between px-4 py-3.5 text-sm" style={{ color: "var(--text)", borderTop: i ? "1px solid var(--border)" : "none" }}>
+          {[
+            ["terms", "Terms of Use"],
+            ["privacy", "Privacy Policy"],
+            ["guidelines", "Community Guidelines"],
+          ].map(([k, t], i) => (
+            <button
+              key={k}
+              onClick={() => setView(`legal:${k}`)}
+              className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-left transition-colors active:bg-[var(--active-highlight)]"
+              style={{ color: "var(--text)", borderTop: i ? "1px solid var(--border)" : "none" }}
+            >
               {t}
-              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Coming soon</span>
-            </div>
+              <ChevronRight size={17} color="var(--text-muted)" />
+            </button>
           ))}
         </div>
         <p className="text-[11px] text-center px-8 pt-4 pb-8" style={{ color: "var(--text-muted)" }}>
@@ -13455,7 +15387,7 @@ function SettingsScreen({
     );
   }
 
-  const themeLabel = theme === "light" ? "Light" : theme === "bangladesh" ? "Bangladesh" : "Dark";
+  const themeLabel = theme === "light" ? "Light" : theme === "bangladesh" ? "Bangladesh" : theme === "auto" ? "Auto" : "Dark";
   const sections = [
     {
       title: "Your account",
@@ -13463,6 +15395,7 @@ function SettingsScreen({
         { icon: CircleUserRound, label: "Edit profile", onClick: () => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile")) },
         { icon: KeyRound, label: "Password and security", onClick: () => setView("security") },
         { icon: Shield, label: "Account status", onClick: () => setView("status") },
+        { icon: BadgeCheck, label: "Request verified badge", onClick: () => setView("verify") },
       ],
     },
     {
@@ -13517,7 +15450,6 @@ function SettingsScreen({
         { icon: Smartphone, label: "Device permissions", onClick: () => setView("permissions") },
         { icon: Palette, label: "Theme & colour", value: themeLabel, onClick: () => setView("appearance") },
         { icon: Globe, label: "Language", value: "English · বাংলা soon" },
-        { icon: MonitorSmartphone, label: "App website permissions", onClick: () => setView("apps") },
       ],
     },
     ...(staffRole
@@ -17881,6 +19813,14 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   const [followBusy, setFollowBusy] = useState(false);
   const [tagged, setTagged] = useState([]);
   const [followList, setFollowList] = useState(null); // "followers" | "following"
+  useEffect(() => {
+    const on = (e) => {
+      const d = e.detail || {};
+      setPosts((prev) => prev.map((pp) => (pp.id === d.id ? { ...pp, grid_pos: d.pos } : pp)));
+    };
+    window.addEventListener("loop:grid-pos", on);
+    return () => window.removeEventListener("loop:grid-pos", on);
+  }, []);
   const [sheet, setSheet] = useState(null); // note | newHighlight | avatar
   const [highlightsKey, setHighlightsKey] = useState(0);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -18012,6 +19952,18 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       return 0;
     });
     setPosts(sortedPosts);
+    // Adjust preview: how each post is framed on the grid (loop-step-14.sql).
+    if (sortedPosts.length) {
+      supabase
+        .from("posts")
+        .select("id, grid_pos")
+        .in("id", sortedPosts.map((pp) => pp.id))
+        .then(({ data, error }) => {
+          if (error || !data) return;
+          const by = Object.fromEntries(data.filter((r) => r.grid_pos).map((r) => [r.id, r.grid_pos]));
+          if (Object.keys(by).length) setPosts((prev) => prev.map((pp) => (by[pp.id] ? { ...pp, grid_pos: by[pp.id] } : pp)));
+        });
+    }
 
     // Give older videos the picture they never had.
     if (isViewingOwnPosts && user?.id) {
@@ -18820,7 +20772,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
               className="aspect-square flex items-center justify-center relative overflow-hidden"
               style={{ background: "var(--surface)" }}
             >
-              <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />
+              <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} pos={tab === "posts" ? p.grid_pos : undefined} />
               {tab === "reposts" && (
                 <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
               )}
@@ -19383,6 +21335,8 @@ function MessagesScreen({ onBack, startWith }) {
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [rowMenu, setRowMenu] = useState(null); // conversation object
   const [inboxTab, setInboxTab] = useState("chats"); // chats | channels
+  const [requests, setRequests] = useState([]); // chats from people you don't follow
+  const [showRequests, setShowRequests] = useState(false);
 
   useEffect(() => {
     init();
@@ -19519,11 +21473,14 @@ function MessagesScreen({ onBack, startWith }) {
       return 0;
     });
     const rel = await getRelations();
-    setConversations(
-      merged
-        .filter((c) => c.isGroup || !c.otherUser || !rel.blockedBy.has(c.otherUser.id))
-        .map((c) => ({ ...c, blockedByMe: !c.isGroup && c.otherUser ? rel.blocked.has(c.otherUser.id) : false }))
-    );
+    // Not accepted yet = a message request (loop-step-14.sql).
+    const { data: acc, error: accErr } = await supabase.from("conversation_members").select("conversation_id, accepted_at").eq("user_id", uid);
+    const pending = new Set(accErr ? [] : (acc || []).filter((r) => !r.accepted_at).map((r) => r.conversation_id));
+    const shown = merged
+      .filter((c) => c.isGroup || !c.otherUser || !rel.blockedBy.has(c.otherUser.id))
+      .map((c) => ({ ...c, blockedByMe: !c.isGroup && c.otherUser ? rel.blocked.has(c.otherUser.id) : false, isRequest: pending.has(c.conversationId) }));
+    setConversations(shown.filter((c) => !c.isRequest));
+    setRequests(shown.filter((c) => c.isRequest && c.lastMessageAt));
   };
 
   const setConvoFlag = async (convo, patch) => {
@@ -19612,7 +21569,49 @@ function MessagesScreen({ onBack, startWith }) {
         otherUser={openChat.otherUser}
         currentUserId={userId}
         onBack={backToList}
+        isRequest={!!openChat.isRequest}
+        onAccepted={() => setOpenChat((o) => (o ? { ...o, isRequest: false } : o))}
       />
+    );
+  }
+
+  if (showRequests) {
+    return (
+      <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
+        <ScreenHeader title="Message requests" onBack={() => setShowRequests(false)} />
+        <p className="px-4 py-3 text-[12px]" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+          Messages from people you don't follow wait here. They won't know you've seen them until you accept.
+        </p>
+        <div className="flex-1 overflow-y-auto">
+          {requests.length === 0 ? (
+            <div className="flex flex-col items-center py-16 gap-2">
+              <Inbox size={30} color="var(--toggle-off)" />
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>No message requests</p>
+            </div>
+          ) : (
+            requests.map((c) => (
+              <button
+                key={c.conversationId}
+                onClick={() => setOpenChat(c)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+              >
+                {c.isGroup ? (
+                  <div className="w-[52px] h-[52px] rounded-full shrink-0 flex items-center justify-center" style={{ background: "var(--surface)" }}>
+                    <Users size={21} color="var(--text)" />
+                  </div>
+                ) : (
+                  <Avatar username={c.displayName} avatarUrl={c.avatarUrl} size={52} />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{c.displayName}</p>
+                  <p className="text-[13px] truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{c.lastMessage}</p>
+                </div>
+                <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>{timeShort(c.lastMessageAt)}</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -19678,6 +21677,26 @@ function MessagesScreen({ onBack, startWith }) {
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {inboxTab === "chats" && !query.trim() && requests.length > 0 && (
+          <button
+            onClick={() => setShowRequests(true)}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+            style={{ borderBottom: "1px solid var(--border-subtle)" }}
+          >
+            <span className="w-[52px] h-[52px] rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)" }}>
+              <Inbox size={22} color="var(--text)" />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Message requests</span>
+              <span className="block text-[12.5px] truncate" style={{ color: "var(--text-muted)" }}>
+                {requests.length === 1 ? `${requests[0].displayName} wants to message you` : `${requests.length} people want to message you`}
+              </span>
+            </span>
+            <span className="rounded-full flex items-center justify-center text-[10px] shrink-0" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 20, height: 20, padding: "0 6px" }}>
+              {requests.length}
+            </span>
+          </button>
+        )}
         {inboxTab === "channels" ? (
           <ChannelsTab currentUserId={userId} />
         ) : showingSearch ? (
@@ -22542,7 +24561,7 @@ function ScheduleMessageSheet({ conversationId, currentUserId, presetText, onClo
   );
 }
 
-function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack }) {
+function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack, isRequest, onAccepted }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
@@ -22573,6 +24592,12 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const [convoMeta, setConvoMeta] = useState({ theme: "default", chat_font: "default", theme_image: null, invite_code: null, avatar_url: null });
   const [sharedInfo, setSharedInfo] = useState({}); // postId -> { post, author } | null
   const [sharedOpen, setSharedOpen] = useState(null); // a shared post opened from the chat
+  const vanishOn = !isGroup && !!convoMeta.vanish_mode;
+  const [ctxRect, setCtxRect] = useState(null); // where the long-pressed bubble sits on screen
+  const bubbleRefs = React.useRef({});
+  // A message request: read it without them knowing, until you accept.
+  const [request, setRequest] = useState(!!isRequest);
+  const requestRef = React.useRef(!!isRequest);
 
   // Posts and reels sent into this chat show as cards, not bare links.
   useEffect(() => {
@@ -22662,6 +24687,17 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => {
         loadReactions(messageIdsRef.current);
       })
+      // Someone tapped a big emoji: play the same shower here.
+      .on("broadcast", { event: "emoji_fx" }, ({ payload }) => {
+        const el = msgRefs.current[payload?.id]?.querySelector?.("[data-bigemoji]");
+        const c = centerOf(el);
+        if (!c || !payload?.emoji) return;
+        wobble(el);
+        playEmojiShower(payload.emoji, c.x, c.y, c.x > window.innerWidth / 2);
+      })
+      .on("broadcast", { event: "vanish" }, ({ payload }) => {
+        setConvoMeta((prev) => ({ ...prev, vanish_mode: !!payload?.on }));
+      })
       .on("broadcast", { event: "typing" }, ({ payload }) => {
         if (payload.userId === currentUserId) return;
         setTypingUsers((prev) => (prev.includes(payload.username) ? prev : [...prev, payload.username]));
@@ -22683,7 +24719,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   useEffect(() => {
     if (searchOpen) return; // don't yank the view while searching
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, typingUsers, searchOpen]);
+  }, [messages, typingUsers, searchOpen, vanishOn, sharedInfo]);
 
   useEffect(() => {
     const ids = messages.map((m) => m.id);
@@ -22693,11 +24729,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
 
   const loadMessages = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("messages")
-      .select(MSG_COLS)
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true });
+    const q = (cols) => supabase.from("messages").select(cols).eq("conversation_id", conversationId).order("created_at", { ascending: true });
+    // "vanish" exists once loop-step-14.sql has run.
+    let { data, error } = await q(`${MSG_COLS}, vanish`);
+    if (error) ({ data } = await q(MSG_COLS));
     setMessages(data || []);
     setLoading(false);
   };
@@ -22762,7 +24797,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   };
 
   const markRead = async () => {
-    if (!currentUserId) return;
+    if (!currentUserId || requestRef.current) return;
     await supabase
       .from("conversation_members")
       .update({ last_read_at: new Date().toISOString() })
@@ -22800,7 +24835,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const insertMessage = async (payload, summary) => {
     const { data: inserted, error } = await supabase
       .from("messages")
-      .insert({ conversation_id: conversationId, sender_id: currentUserId, reply_to_id: replyTo?.id || null, ...payload })
+      .insert({ conversation_id: conversationId, sender_id: currentUserId, reply_to_id: replyTo?.id || null, ...(vanishOn ? { vanish: true } : {}), ...payload })
       .select(MSG_COLS)
       .single();
     if (error) throw error;
@@ -22963,9 +24998,93 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       ...prev,
       [m.id]: [...(prev[m.id] || []).filter((r) => r.user_id !== currentUserId), { message_id: m.id, user_id: currentUserId, emoji }],
     }));
+    setTimeout(() => {
+      const c = centerOf(document.querySelector(`[data-rxchip="${m.id}"]`)) || centerOf(bubbleRefs.current[m.id]);
+      if (c) playReactionBurst(emoji, c.x, c.y);
+    }, 70);
     await supabase
       .from("message_reactions")
       .upsert({ message_id: m.id, user_id: currentUserId, emoji }, { onConflict: "message_id,user_id" });
+  };
+
+  const openCtx = (m) => {
+    const el = bubbleRefs.current[m.id];
+    if (!el || m.deleted) return;
+    openedAtRef.current = Date.now();
+    setCtxRect(el.getBoundingClientRect());
+    setMenuFor(m.id);
+    setPickerFor(m.id);
+  };
+  const closeCtx = () => {
+    setMenuFor(null);
+    setPickerFor(null);
+    setCtxRect(null);
+  };
+
+  // Tap a big emoji: it wobbles and, if it's a single one, showers across
+  // the screen — for the other person too, if they have the chat open.
+  const tapBigEmoji = (m, el) => {
+    if (Date.now() - openedAtRef.current < 700) return;
+    const parts = emojiOnly(m.content) || [];
+    wobble(el);
+    if (parts.length !== 1) return;
+    const c = centerOf(el);
+    if (c) playEmojiShower(parts[0], c.x, c.y, c.x > window.innerWidth / 2);
+    channelRef.current?.send({ type: "broadcast", event: "emoji_fx", payload: { id: m.id, emoji: parts[0] } });
+  };
+
+  const acceptRequest = async () => {
+    const { error } = await supabase
+      .from("conversation_members")
+      .update({ accepted_at: new Date().toISOString() })
+      .eq("conversation_id", conversationId)
+      .eq("user_id", currentUserId);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    requestRef.current = false;
+    setRequest(false);
+    markRead();
+    onAccepted?.();
+  };
+  const deleteRequest = async () => {
+    if (!window.confirm("Delete this request? They won't be told.")) return;
+    await supabase.from("conversation_members").update({ hidden: true }).eq("conversation_id", conversationId).eq("user_id", currentUserId);
+    onBack();
+  };
+  const blockFromRequest = async () => {
+    if (!otherUser?.id || !window.confirm(`Block ${title}? They won't be able to message you or find your profile. They won't be told.`)) return;
+    const { error } = await supabase.from("user_relations").insert({ user_id: currentUserId, target_id: otherUser.id, kind: "blocked" });
+    if (error && !/duplicate/i.test(error.message)) {
+      alert(error.message);
+      return;
+    }
+    invalidateRelations();
+    await supabase.from("conversation_members").update({ hidden: true }).eq("conversation_id", conversationId).eq("user_id", currentUserId);
+    onBack();
+  };
+
+  // Vanish mode: new messages disappear once seen and the chat is closed.
+  const toggleVanish = async () => {
+    setSheet(null);
+    const next = !vanishOn;
+    const { error } = await supabase.from("conversations").update({ vanish_mode: next }).eq("id", conversationId);
+    if (error) {
+      setChatToast(/vanish_mode/.test(error.message) ? "Vanish mode needs loop-step-14.sql" : error.message);
+      setTimeout(() => setChatToast(""), 2600);
+      return;
+    }
+    setConvoMeta((prev) => ({ ...prev, vanish_mode: next }));
+    channelRef.current?.send({ type: "broadcast", event: "vanish", payload: { on: next } });
+    if (!next) {
+      supabase.rpc("vanish_cleanup", { p_conversation: conversationId }).then(
+        () => loadMessages(),
+        () => {}
+      );
+    }
+    setChatToast(next ? "Vanish mode is on" : "Vanish mode is off");
+    setTimeout(() => setChatToast(""), 2200);
   };
 
   const deleteMessage = async (m) => {
@@ -23056,6 +25175,21 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     setMatchAt(0);
   }, [searchQuery]);
 
+  // Leaving the chat: seen vanish-mode messages are deleted for everyone.
+  const vanishRef = React.useRef(false);
+  vanishRef.current = messages.some((m) => m.vanish);
+  useEffect(
+    () => () => {
+      if (vanishRef.current) {
+        supabase.rpc("vanish_cleanup", { p_conversation: conversationId }).then(
+          () => {},
+          () => {}
+        );
+      }
+    },
+    [conversationId]
+  );
+
   useEffect(() => {
     if (!currentMatch) return;
     const el = msgRefs.current[currentMatch.id];
@@ -23093,11 +25227,13 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           <span className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
             {!isGroup && nicknames[otherUser?.id] ? nicknames[otherUser.id] : title}
           </span>
+          {vanishOn && <Ghost size={15} color="var(--text-muted)" className="shrink-0" />}
         </button>
         <button
           onClick={() => setScheduleOpen(true)}
           className="p-1 shrink-0 transition-transform active:scale-90"
           aria-label="Send later"
+          style={vanishOn || request ? { display: "none" } : undefined}
         >
           <Clock size={19} color="var(--text)" />
         </button>
@@ -23169,6 +25305,15 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           setPickerFor(null);
         }}
       >
+        {vanishOn && (
+          <div className="flex flex-col items-center text-center px-6 py-3 mb-2">
+            <Ghost size={26} color="var(--text-muted)" />
+            <p className="text-[13px] mt-1.5" style={{ color: "var(--text)", fontWeight: 700 }}>Vanish mode is on</p>
+            <p className="text-[11.5px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+              Seen messages disappear when the chat is closed. Text and emoji only. People can still take screenshots.
+            </p>
+          </div>
+        )}
         {loading ? (
           <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>Loading...</p>
         ) : visibleMessages.length === 0 ? (
@@ -23235,24 +25380,22 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                 )}
 
                 <div
+                  ref={(el) => {
+                    if (el) bubbleRefs.current[m.id] = el;
+                    else delete bubbleRefs.current[m.id];
+                  }}
                   onTouchStart={() => {
                     if (m.deleted) return;
-                    pressTimerRef.current = setTimeout(() => {
-                      openedAtRef.current = Date.now();
-                      setMenuFor(m.id);
-                      setPickerFor(m.id);
-                    }, 450);
+                    pressTimerRef.current = setTimeout(() => openCtx(m), 450);
                   }}
                   onTouchEnd={() => clearTimeout(pressTimerRef.current)}
                   onTouchMove={() => clearTimeout(pressTimerRef.current)}
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    if (m.deleted) return;
-                    openedAtRef.current = Date.now();
-                    setMenuFor(m.id);
-                    setPickerFor(m.id);
+                    openCtx(m);
                   }}
                   className="relative max-w-[78%]"
+                  style={menuFor === m.id ? { zIndex: 86 } : undefined}
                 >
                   {/* quoted parent */}
                   {parent && !m.deleted && (
@@ -23286,7 +25429,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                   ) : sharedPostIdOf(m.content) ? (
                     <SharedPostCard info={sharedInfo[sharedPostIdOf(m.content)]} onOpen={(p) => setSharedOpen(p)} />
                   ) : !m.image_url && emojiOnly(m.content) ? (
-                    <BigEmojiMessage parts={emojiOnly(m.content)} />
+                    <BigEmojiMessage parts={emojiOnly(m.content)} onTap={(el) => tapBigEmoji(m, el)} />
                   ) : (
                     <>
                       {m.image_url && (
@@ -23315,107 +25458,15 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     </>
                   )}
 
-                  {/* emoji row + action menu */}
-                  {menuFor === m.id && !m.deleted && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (Date.now() - openedAtRef.current < 400) return;
-                          setMenuFor(null);
-                          setPickerFor(null);
-                        }}
-                      />
-                      {pickerFor === m.id && (
-                        <div
-                          className={`absolute z-50 flex items-center gap-0.5 px-2 py-1.5 rounded-full ${mine ? "right-0" : "left-0"}`}
-                          style={{
-                            background: "var(--surface-raised)",
-                            border: "1px solid var(--border)",
-                            ...(flipDown
-                              ? { top: "100%", marginTop: 6 }
-                              : { bottom: "100%", marginBottom: 6 }),
-                            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-                          }}
-                        >
-                          {REACTION_EMOJIS.map((e) => (
-                            <button
-                              key={e}
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                react(m, e);
-                              }}
-                              className="leading-none px-0.5 transition-transform active:scale-125"
-                              style={{ opacity: myRx?.emoji === e ? 1 : 0.9 }}
-                            >
-                              <AnimatedEmoji emoji={e} size={28} />
-                            </button>
-                          ))}
-                          <button
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              setEmojiSheetFor(m);
-                            }}
-                            className="ml-0.5 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-110"
-                            style={{ width: 26, height: 26, background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
-                          >
-                            <Plus size={14} color="var(--text)" strokeWidth={2.5} />
-                          </button>
-                        </div>
-                      )}
-                      <div
-                        className={`absolute z-50 rounded-xl overflow-hidden py-1 ${mine ? "right-0" : "left-0"}`}
-                        style={{
-                          background: "var(--surface-raised)",
-                          border: "1px solid var(--border)",
-                          minWidth: 150,
-                          top: "100%",
-                          marginTop: flipDown && pickerFor === m.id ? 52 : 4,
-                          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-                        }}
-                      >
-                        <button onClick={() => startReply(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
-                          <CornerUpLeft size={13} /> Reply
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMenuFor(null);
-                            setForwardMsg(m);
-                          }}
-                          className="w-full flex items-center gap-2 px-4 py-2 text-xs"
-                          style={{ color: "var(--text)" }}
-                        >
-                          <Forward size={13} /> Forward
-                        </button>
-                        {m.content && (
-                          <button onClick={() => copyMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
-                            <Copy size={13} /> Copy
-                          </button>
-                        )}
-                        {mine && m.content && (
-                          <button onClick={() => startEdit(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--text)" }}>
-                            <Pencil size={13} /> Edit
-                          </button>
-                        )}
-                        {mine && (
-                          <button onClick={() => deleteMessage(m)} className="w-full flex items-center gap-2 px-4 py-2 text-xs" style={{ color: "var(--heart)" }}>
-                            <Trash2 size={13} /> Delete
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  )}
                 </div>
 
                 {/* reaction chips */}
                 {rx.length > 0 && !m.deleted && (
                   <button
+                    data-rxchip={m.id}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setMenuFor(m.id);
-                      setPickerFor(m.id);
-                      openedAtRef.current = Date.now();
+                      openCtx(m);
                     }}
                     className="flex items-center gap-0.5 px-2 py-0.5 rounded-full mx-1"
                     style={{
@@ -23489,6 +25540,25 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
               : "You can't message this account."}
           </p>
         </div>
+      ) : request ? (
+        <div className="px-4 pt-3" style={{ borderTop: "1px solid var(--border-subtle)", paddingBottom: "calc(14px + env(safe-area-inset-bottom, 0px))" }}>
+          <p className="text-[12.5px] text-center mb-3" style={{ color: "var(--text-secondary)", lineHeight: 1.45 }}>
+            {isGroup ? "You were added to this group by someone you don't follow." : `${title} wants to send you a message.`} They won't know you've seen it until you accept.
+          </p>
+          <div className="flex gap-2">
+            {!isGroup && otherUser?.id && (
+              <button onClick={blockFromRequest} className="flex-1 h-11 rounded-xl text-sm" style={{ background: "var(--surface)", color: "var(--heart)", fontWeight: 700 }}>
+                Block
+              </button>
+            )}
+            <button onClick={deleteRequest} className="flex-1 h-11 rounded-xl text-sm" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700 }}>
+              Delete
+            </button>
+            <button onClick={acceptRequest} className="flex-1 h-11 rounded-xl text-sm" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+              Accept
+            </button>
+          </div>
+        </div>
       ) : (
       <div className="flex items-end gap-2 px-3 py-3" style={{ borderTop: "1px solid var(--border-subtle)" }}>
         {recording ? (
@@ -23501,7 +25571,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </div>
         ) : (
           <>
-            <label className="pb-2 cursor-pointer shrink-0">
+            <label className="pb-2 cursor-pointer shrink-0" style={vanishOn ? { display: "none" } : undefined}>
               {imageUploading ? (
                 <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>...</span>
               ) : (
@@ -23521,7 +25591,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
               ref={inputRef}
               value={text}
               onChange={(e) => onChangeText(e.target.value)}
-              placeholder={replyTo ? "Write a reply..." : "Message..."}
+              placeholder={replyTo ? "Write a reply..." : vanishOn ? "Vanish mode message..." : "Message..."}
               rows={1}
               className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
               style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
@@ -23553,7 +25623,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
             onClick={startRecording}
             disabled={audioUploading}
             className="rounded-full w-10 h-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
-            style={{ background: "var(--surface)", border: "1px solid var(--border)", opacity: audioUploading ? 0.5 : 1 }}
+            style={{ background: "var(--surface)", border: "1px solid var(--border)", opacity: audioUploading ? 0.5 : 1, display: vanishOn ? "none" : undefined }}
           >
             <Mic size={18} color="var(--text-muted)" />
           </button>
@@ -23605,6 +25675,41 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         </div>
       )}
 
+      {menuFor &&
+        ctxRect &&
+        (() => {
+          const cm = messages.find((x) => x.id === menuFor);
+          if (!cm || cm.deleted) return null;
+          const mineC = cm.sender_id === currentUserId;
+          const myE = (reactions[cm.id] || []).find((r) => r.user_id === currentUserId)?.emoji;
+          const actions = [
+            { label: "Reply", icon: <CornerUpLeft size={17} />, onClick: () => { closeCtx(); startReply(cm); } },
+            ...(!cm.vanish ? [{ label: "Forward", icon: <Forward size={17} />, onClick: () => { closeCtx(); setForwardMsg(cm); } }] : []),
+            ...(cm.content ? [{ label: "Copy", icon: <Copy size={17} />, onClick: () => { closeCtx(); copyMessage(cm); } }] : []),
+            ...(mineC && cm.content && !cm.vanish ? [{ label: "Edit", icon: <Pencil size={17} />, onClick: () => { closeCtx(); startEdit(cm); } }] : []),
+            ...(mineC ? [{ label: "Delete", icon: <Trash2 size={17} />, danger: true, onClick: () => { closeCtx(); deleteMessage(cm); } }] : []),
+          ];
+          return (
+            <ReactionContextOverlay
+              anchor={ctxRect}
+              align={mineC ? "right" : "left"}
+              quick={request ? [] : CHAT_QUICK_REACTIONS}
+              more={CHAT_MORE_REACTIONS}
+              current={myE}
+              onReact={(e) => {
+                closeCtx();
+                react(cm, e);
+              }}
+              onMoreEmoji={() => {
+                closeCtx();
+                setEmojiSheetFor(cm);
+              }}
+              actions={request ? actions.filter((a) => a.label === "Copy") : actions}
+              onClose={closeCtx}
+            />
+          );
+        })()}
+
       {emojiSheetFor && (
         <EmojiPickerSheet
           onPick={(e) => {
@@ -23636,6 +25741,18 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
               label="Nicknames"
               onClick={() => setSheet("nicknames")}
             />
+            {!isGroup && (
+              <StoryMenuRow
+                icon={<Ghost size={17} color="var(--text)" />}
+                label="Vanish mode"
+                onClick={toggleVanish}
+                trailing={
+                  <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: vanishOn ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+                    <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: vanishOn ? 18 : 2, transition: "left 0.15s" }} />
+                  </span>
+                }
+              />
+            )}
             {isGroup && (
               <>
                 <StoryMenuRow
@@ -23771,13 +25888,29 @@ function NotificationsScreen({ onBack }) {
 
     const merged = notifData.map((n) => ({
       ...n,
-      username: (profilesData || []).find((p) => p.id === n.actor_id)?.username || "unknown",
-      avatarUrl: (profilesData || []).find((p) => p.id === n.actor_id)?.avatar_url || null,
+      username: n.type === "verification" ? "Loop" : (profilesData || []).find((p) => p.id === n.actor_id)?.username || "unknown",
+      avatarUrl: n.type === "verification" ? null : (profilesData || []).find((p) => p.id === n.actor_id)?.avatar_url || null,
       collabStatus: n.type === "collab" ? collabStatus[n.post_id] || "gone" : null,
     }));
 
+    // Badge decisions: what was decided.
+    if (merged.some((n) => n.type === "verification")) {
+      const { data: vr } = await supabase
+        .from("verification_requests")
+        .select("status, decided_at")
+        .eq("user_id", user.id)
+        .not("decided_at", "is", null)
+        .order("decided_at", { ascending: false });
+      merged.forEach((n) => {
+        if (n.type !== "verification") return;
+        const t = new Date(n.created_at).getTime();
+        const hit = (vr || []).find((r) => Math.abs(new Date(r.decided_at).getTime() - t) < 120000) || (vr || [])[0];
+        n.verifyStatus = hit?.status || null;
+      });
+    }
+
     const rel = await getRelations();
-    setNotifications(merged.filter((n) => !isBlockedEither(rel, n.actor_id)));
+    setNotifications(merged.filter((n) => n.type === "verification" || !isBlockedEither(rel, n.actor_id)));
     setLoading(false);
   };
 
@@ -23843,6 +25976,8 @@ function NotificationsScreen({ onBack }) {
       ? Clapperboard
       : type === "new_story"
       ? BellRing
+      : type === "verification"
+      ? BadgeCheck
       : type === "story_mention"
       ? AtSign
       : CircleUserRound;
@@ -23885,7 +26020,14 @@ function NotificationsScreen({ onBack }) {
                 <Avatar username={n.username} avatarUrl={n.avatarUrl} size={44} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm" style={{ color: "var(--text)" }}>
-                    <span style={{ fontWeight: 600 }}>{n.username}</span> {actionText(n.type)}
+                    <span style={{ fontWeight: 600 }}>{n.username}</span>{" "}
+                    {n.type === "verification"
+                      ? n.verifyStatus === "approved"
+                        ? "approved your request — your account is now verified"
+                        : n.verifyStatus === "rejected"
+                        ? "reviewed your verified badge request. It wasn't approved this time."
+                        : "reviewed your verified badge request"
+                      : actionText(n.type)}
                     <span className="text-xs" style={{ color: "var(--text-muted)" }}> · {timeAgo(n.created_at)}</span>
                   </p>
                   {n.type === "collab" && (
@@ -24898,6 +27040,10 @@ function ModerationScreen({ onBack }) {
   const load = async () => {
     setRows(null);
     setError("");
+    if (tab === "verify") {
+      setRows([]);
+      return;
+    }
     const call =
       tab === "reports"
         ? supabase.rpc("mod_list_reports", { p_status: status })
@@ -24935,6 +27081,7 @@ function ModerationScreen({ onBack }) {
   const tabs = [
     ["reports", "Reports"],
     ["bans", "Suspended"],
+    ...(role === "admin" ? [["verify", "Badges"]] : []),
     ["team", "Team"],
     ["log", "Log"],
   ];
@@ -25036,7 +27183,9 @@ function ModerationScreen({ onBack }) {
           </div>
         )}
 
-        {error ? (
+        {tab === "verify" ? (
+          <VerificationQueue flash={flash} />
+        ) : error ? (
           <div className="rounded-2xl p-4 text-center" style={{ background: "var(--surface)" }}>
             <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Couldn't load this</p>
             <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
@@ -25481,6 +27630,12 @@ export default function App() {
         if (data && (!data.until || new Date(data.until).getTime() > Date.now())) setMyBan(data);
         else setMyBan(null);
       });
+    // Scheduled posts whose time has come tell bell subscribers. pg_cron
+    // does this every minute; this is the backup if pg_cron is off.
+    supabase.rpc("bell_send_due").then(
+      () => {},
+      () => {}
+    );
   }, [meId]);
   const [theme, setThemeState] = useState(() => {
     try {
@@ -25507,6 +27662,37 @@ export default function App() {
       return "";
     }
   });
+
+  // "Auto" follows the phone's own light/dark setting, live.
+  const [systemDark, setSystemDark] = useState(() => {
+    try {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    let mq;
+    try {
+      mq = window.matchMedia("(prefers-color-scheme: dark)");
+    } catch {
+      return;
+    }
+    const on = (e) => setSystemDark(e.matches);
+    if (mq.addEventListener) mq.addEventListener("change", on);
+    else mq.addListener?.(on);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", on);
+      else mq.removeListener?.(on);
+    };
+  }, []);
+  const shownTheme = theme === "auto" ? (systemDark ? "dark" : "light") : theme;
+  useEffect(() => {
+    try {
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta && theme === "auto") meta.setAttribute("content", systemDark ? "#000000" : "#FFFFFF");
+    } catch {}
+  }, [theme, systemDark]);
 
   const setTheme = (next) => {
     setThemeState(next);
@@ -25675,7 +27861,7 @@ export default function App() {
 
   if (checkingSession) {
     return (
-      <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+      <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={shownTheme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
         <div className="flex-1 w-full flex flex-col items-center justify-center gap-4" style={{ minHeight: "100dvh" }}>
           <LoopLogo size={96} />
@@ -25687,7 +27873,7 @@ export default function App() {
 
   if (authScreen) {
     return (
-      <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+      <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={shownTheme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
         <style>{THEME_CSS}</style>
         <div
           className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
@@ -25717,8 +27903,10 @@ export default function App() {
   }
 
   return (
-    <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={theme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+    <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={shownTheme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
       <style>{THEME_CSS}</style>
+      <FxLayer />
+      <LowCopyChip />
       <div
         className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
@@ -25853,6 +28041,7 @@ export default function App() {
             <SettingsScreen
               onBack={() => setSettingsOpen(false)}
               theme={theme}
+              shownTheme={shownTheme}
               onThemeChange={setTheme}
               accentStart={accentStart}
               accentEnd={accentEnd}
