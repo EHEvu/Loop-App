@@ -1269,7 +1269,7 @@ const VERIFY_RULES = {
   no_suspension: "No suspension in the last 90 days",
   not_recently_declined: "No declined request in the last 30 days",
 };
-const VERIFY_CATEGORIES = ["Creator", "Public figure", "News / journalist", "Music / art", "Sports", "Business / brand", "Organisation", "Government", "Other"];
+const VERIFY_CATEGORIES = ["Creator", "Public figure", "News / journalist", "Music / art", "Sports", "Business / brand", "Organisation", "Government", "Politics", "Other"];
 
 function verifyErrorText(msg) {
   const m = msg || "";
@@ -1299,7 +1299,7 @@ function VerificationRequestScreen({ onBack }) {
     } = await supabase.auth.getUser();
     if (!user) return;
     const [{ data: prof }, req, chk] = await Promise.all([
-      supabase.from("profiles").select("full_name, is_verified").eq("id", user.id).maybeSingle(),
+      supabase.from("profiles").select("full_name, is_verified, badge_tier").eq("id", user.id).maybeSingle(),
       supabase.from("verification_requests").select("id, status, note, created_at, decided_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1),
       supabase.rpc("verification_checklist"),
     ]);
@@ -3922,7 +3922,6 @@ function ChannelInfoScreen({ channel, owner, me, isOwner, membership, members, p
               onClick={onTheme}
             />
           )}
-          {isOwner && <Row icon={<SlidersHorizontal size={22} color="var(--text)" />} title="Channel controls" sub="Reactions, replies, name and photo" onClick={onEdit} />}
         </div>
 
         <div className="flex mt-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
@@ -3999,6 +3998,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
   const [shareFor, setShareFor] = useState(null); // post
   const [editing, setEditing] = useState(null); // { id, text }
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuFromInfo, setMenuFromInfo] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
@@ -4645,16 +4645,18 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       </div>
 
       {menuOpen && channel && (
-        <StorySheetShell title={channel.name} onClose={() => setMenuOpen(false)}>
+        <StorySheetShell title={channel.name} onClose={() => { setMenuOpen(false); setMenuFromInfo(false); }}>
           <div className="pb-6">
-            <StoryMenuRow
-              icon={<Info size={17} color="var(--text)" />}
-              label="Channel info"
-              onClick={() => {
-                setMenuOpen(false);
-                setInfoOpen(true);
-              }}
-            />
+            {!menuFromInfo && (
+              <StoryMenuRow
+                icon={<Info size={17} color="var(--text)" />}
+                label="Channel info"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setInfoOpen(true);
+                }}
+              />
+            )}
             {isOwner && (
               <StoryMenuRow
                 icon={<Pencil size={17} color="var(--text)" />}
@@ -4795,6 +4797,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
           onJoin={join}
           onOptions={() => {
             setInfoOpen(false);
+            setMenuFromInfo(true);
             setMenuOpen(true);
           }}
           onEdit={() => setSettingsOpen(true)}
@@ -5928,12 +5931,12 @@ function InstallBanner() {
           <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Get the Loop app</p>
           <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Opens from your home screen, full screen. No store needed.</p>
         </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <button onClick={install} className="rounded-lg px-3.5 h-8 text-[13px]" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
-            Install
-          </button>
-          <button onClick={notNow} className="text-[11px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={notNow} className="rounded-lg px-3 h-8 text-[13px] whitespace-nowrap" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
             Not now
+          </button>
+          <button onClick={install} className="rounded-lg px-3.5 h-8 text-[13px] whitespace-nowrap" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+            Install
           </button>
         </div>
       </div>
@@ -9259,13 +9262,21 @@ async function hiddenCommenterSet(postOwnerId) {
 }
 
 // Blue verified tick (given by the admin).
-function VerifiedBadge({ size = 14 }) {
+const BADGE_TIERS = {
+  ocean: { fill: "#1B74E4", label: "Ocean" },
+  ruby: { fill: "#C81D3A", label: "Humanity" },
+  gold: { fill: "#E9A92A", label: "Gold" },
+};
+
+// Three badge designs: ocean (round seal, 1 month), ruby (starburst, 6 months),
+// gold (8-point star with crown, 12 months). Default is the ocean seal.
+function VerifiedBadge({ size = 14, tier = "ocean" }) {
+  const t = BADGE_TIERS[tier] || BADGE_TIERS.ocean;
+  const shape = tier === "ruby" ? "M12.00,0.60 L13.92,4.85 L17.70,2.13 L17.23,6.77 L21.87,6.30 L19.15,10.08 L23.40,12.00 L19.15,13.92 L21.87,17.70 L17.23,17.23 L17.70,21.87 L13.92,19.15 L12.00,23.40 L10.08,19.15 L6.30,21.87 L6.77,17.23 L2.13,17.70 L4.85,13.92 L0.60,12.00 L4.85,10.08 L2.13,6.30 L6.77,6.77 L6.30,2.13 L10.08,4.85 Z" : tier === "gold" ? "M12.00,1.80 L14.30,6.46 L19.21,4.79 L17.54,9.70 L22.20,12.00 L17.54,14.30 L19.21,19.21 L14.30,17.54 L12.00,22.20 L9.70,17.54 L4.79,19.21 L6.46,14.30 L1.80,12.00 L6.46,9.70 L4.79,4.79 L9.70,6.46 Z" : "M12.00,0.80 L13.87,2.58 L16.29,1.65 L17.33,4.02 L19.92,4.08 L19.98,6.67 L22.35,7.71 L21.42,10.13 L23.20,12.00 L21.42,13.87 L22.35,16.29 L19.98,17.33 L19.92,19.92 L17.33,19.98 L16.29,22.35 L13.87,21.42 L12.00,23.20 L10.13,21.42 L7.71,22.35 L6.67,19.98 L4.08,19.92 L4.02,17.33 L1.65,16.29 L2.58,13.87 L0.80,12.00 L2.58,10.13 L1.65,7.71 L4.02,6.67 L4.08,4.08 L6.67,4.02 L7.71,1.65 L10.13,2.58 Z";
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" className="shrink-0" aria-label="Verified">
-      <path
-        d="M12 1.8l2.4 1.9 3-.4 1.1 2.8 2.8 1.1-.4 3 1.9 2.4-1.9 2.4.4 3-2.8 1.1-1.1 2.8-3-.4L12 22.2l-2.4-1.9-3 .4-1.1-2.8-2.8-1.1.4-3L1.2 11.4l1.9-2.4-.4-3 2.8-1.1 1.1-2.8 3 .4z"
-        fill="#3897F0"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" className="shrink-0" aria-label={`Verified ${t.label}`}>
+      {tier === "gold" && <path d="M6.2 4.6l1.6 2.8 4.2-3.4 4.2 3.4 1.6-2.8 0.9 4.7H5.3z" fill="#E9A92A" stroke="#8A5A00" strokeWidth="0.5" strokeLinejoin="round" />}
+      <path d={shape} fill={t.fill} stroke={tier === "gold" ? "#8A5A00" : "none"} strokeWidth={tier === "gold" ? 0.4 : 0} strokeLinejoin="round" />
       <path d="M7.6 12.2l3 3 5.8-6" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -18132,7 +18143,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
 
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Category</label>
         <div className="flex flex-wrap gap-1.5 mb-1">
-          {["", "Artist", "Creator", "Musician", "Photographer", "Blogger", "Gamer", "Business", "Education", "Public figure"].map((c) => (
+          {["", "Artist", "Creator", "Musician", "Photographer", "Blogger", "Gamer", "Business", "Education", "Public figure", "Politics", "Sports", "Comedy", "Food", "Travel", "Fashion"].map((c) => (
             <button
               key={c || "none"}
               type="button"
