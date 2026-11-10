@@ -269,7 +269,7 @@ function createDemoClient(mode) {
 
   const db = {
     profiles: [
-      person(ME, "you.demo", "Demo You", { bio: "Trying Loop ✨ Everything here is pretend.", avatar_url: face("#7F5AF0", "#2CB67D", "Y"), created_at: ago(60 * 24 * 40) }),
+      person(ME, "you.demo", "Demo You", { bio: "Trying Loop ✨ Everything here is pretend.", avatar_url: face("#7F5AF0", "#2CB67D", "Y"), gender: "male", created_at: ago(60 * 24 * 40) }),
       person(NADIA, "nadia.art", "Nadia Rahman", { avatar_url: face("#ff758c", "#ff7eb3", "N"), bio: "Painting Dhaka one colour at a time 🎨", category: "Artist", is_verified: true, badge_tier: "ocean", badge_until: later(60 * 24 * 20) }),
       person(RAFI, "rafi.travels", "Rafi Ahmed", { avatar_url: face("#43cea2", "#185a9d", "R"), bio: "64 districts, one backpack 🎒", category: "Creator", is_verified: true, badge_tier: "ruby", badge_until: later(60 * 24 * 150) }),
       person(EATS, "dhaka.eats", "Dhaka Eats", { avatar_url: face("#f7971e", "#ffd200", "D"), bio: "Street food, honest reviews 🍢", category: "Food", is_verified: true, badge_tier: "gold", badge_until: later(60 * 24 * 300) }),
@@ -323,12 +323,17 @@ function createDemoClient(mode) {
     close_friends: [],
     post_subscriptions: [],
     stories: [
+      { id: "d4000000-0000-4000-8000-000000000001", user_id: ME, media_url: pic("#7F5AF0", "#2CB67D", "🌅", "My first story", 720, 1280), media_type: "photo", caption: "Good morning, Loop!", created_at: ago(180), expires_at: later(60 * 21), stickers: [], archived: false },
       { id: uuid(), user_id: NADIA, media_url: pic("#ff9a9e", "#fecfef", "🎨", "Studio day", 720, 1280), media_type: "photo", caption: "Studio day!", created_at: ago(40), expires_at: later(60 * 20), stickers: [] },
       { id: uuid(), user_id: RAFI, media_url: pic("#43cea2", "#185a9d", "🚌", "Off to Sylhet", 720, 1280), media_type: "photo", caption: null, created_at: ago(120), expires_at: later(60 * 18), stickers: [] },
       { id: uuid(), user_id: EATS, media_url: pic("#f7971e", "#ffd200", "🍔", "New spot tonight", 720, 1280), media_type: "photo", caption: "Guess where?", created_at: ago(200), expires_at: later(60 * 16), stickers: [] },
     ],
-    story_views: [],
-    story_likes: [],
+    story_views: [
+      { story_id: "d4000000-0000-4000-8000-000000000001", viewer_id: NADIA, created_at: ago(170), last_viewed_at: ago(25), view_count: 3 },
+      { story_id: "d4000000-0000-4000-8000-000000000001", viewer_id: RAFI, created_at: ago(140), last_viewed_at: ago(140), view_count: 1 },
+      { story_id: "d4000000-0000-4000-8000-000000000001", viewer_id: TANIA, created_at: ago(60), last_viewed_at: ago(48), view_count: 2 },
+    ],
+    story_likes: [{ story_id: "d4000000-0000-4000-8000-000000000001", user_id: NADIA, created_at: ago(160) }],
     story_replies: [],
     story_poll_votes: [],
     story_question_answers: [],
@@ -676,6 +681,15 @@ function createDemoClient(mode) {
     channel_seen_count: () => 980,
     is_channel_admin: ({ p_channel }) => db.channels.some((c) => c.id === p_channel && c.owner_id === ME),
     story_poll_counts: () => [],
+    record_story_view: ({ p_story }) => {
+      const s = db.stories.find((x) => x.id === p_story);
+      if (!s || s.user_id === ME) return null;
+      const now = new Date().toISOString();
+      const row = db.story_views.find((v) => v.story_id === p_story && v.viewer_id === ME);
+      if (row) Object.assign(row, { view_count: (row.view_count || 1) + 1, last_viewed_at: now });
+      else db.story_views.push({ story_id: p_story, viewer_id: ME, created_at: now, last_viewed_at: now, view_count: 1 });
+      return null;
+    },
     public_birthday: () => [],
     about_account: ({ p_user }) => {
       const p = relationOf(p_user);
@@ -2296,22 +2310,32 @@ const BADGE_PLANS = [
   { key: "ruby", name: "Elite", months: 6, line: "6 months", boost: "more" },
   { key: "gold", name: "Supreme", months: 12, line: "12 months", boost: "the most" },
 ];
+// Prime = 1, Elite = 2, Supreme = 3. Older free badges count as Prime.
+const TIER_RANK = { ocean: 1, ruby: 2, gold: 3 };
+const tierRank = (t) => TIER_RANK[t] || 1;
 // Only perks that already work are listed here.
-const badgePerks = (p) => [
-  `The ${p.name} badge next to your name, everywhere on Loop`,
-  `Your posts and reels are shown ${p.boost} in Suggested posts and Reels`,
-  "Pin up to 6 posts on your profile — everyone else can pin 3",
-  "Watch stories privately — you won't appear on the viewer list",
-];
+const badgePerks = (p) => {
+  const r = tierRank(p.key);
+  return [
+    `The ${p.name} badge next to your name, everywhere on Loop`,
+    `Your posts and reels are shown ${p.boost} in Suggested posts and Reels`,
+    "Pin up to 6 posts on your profile — everyone else can pin 3",
+    "Watch stories privately — you won't appear on the viewer list",
+    "See when each person watched your story",
+    ...(r >= 2 ? ["Your stories stay up for 48 hours instead of 24", "Write your bio in a special font"] : []),
+    ...(r >= 3 ? ["See how many times each person rewatched your story", "Your story shows first in your followers' story row"] : []),
+  ];
+};
 
 // ---- Your own badge, kept handy for perks ----
 let myBadgeCache = null;
+let myBadgeAt = 0;
 let myBadgePromise = null;
 function badgeIsActive(p) {
   return !!p?.is_verified && (!p.badge_until || new Date(p.badge_until).getTime() > Date.now());
 }
 function loadMyBadge(force) {
-  if (myBadgeCache && !force) return Promise.resolve(myBadgeCache);
+  if (myBadgeCache && !force && Date.now() - myBadgeAt < 5 * 60 * 1000) return Promise.resolve(myBadgeCache);
   if (myBadgePromise && !force) return myBadgePromise;
   myBadgePromise = (async () => {
     try {
@@ -2321,6 +2345,7 @@ function loadMyBadge(force) {
       if (!user) return { active: false, tier: null };
       const { data } = await supabase.from("profiles").select("is_verified, badge_tier, badge_until").eq("id", user.id).maybeSingle();
       myBadgeCache = { active: badgeIsActive(data), tier: data?.badge_tier || null };
+      myBadgeAt = Date.now();
     } catch {
       myBadgeCache = { active: false, tier: null };
     }
@@ -2434,6 +2459,7 @@ function VerificationRequestScreen({ onBack }) {
       supabase.from("verification_requests").select("id, status, note, created_at, decided_at, plan, trx_id, amount").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1),
       supabase.rpc("verification_checklist"),
     ]);
+    loadMyBadge(true);
     const payRes = await supabase.rpc("badge_pay_info");
     setPayInfo(payRes.error || !payRes.data ? null : payRes.data);
     const prof = profRes.data;
@@ -2850,6 +2876,7 @@ function VerificationQueue({ flash }) {
       return;
     }
     flash(approve ? "Badge given" : "Request declined");
+    loadMyBadge(true);
     load();
   };
 
@@ -9438,7 +9465,7 @@ function StorySettingsSheet({ onClose }) {
 }
 
 // Who replied to your story.
-function StoryRepliesSheet({ story, onClose }) {
+function StoryRepliesList({ story }) {
   const [replies, setReplies] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -9473,7 +9500,6 @@ function StoryRepliesSheet({ story, onClose }) {
   }, [story.id]);
 
   return (
-    <StorySheetShell title="Replies" onClose={onClose}>
       <div className="pb-6">
         {loading ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
@@ -9494,6 +9520,96 @@ function StoryRepliesSheet({ story, onClose }) {
           ))
         )}
       </div>
+  );
+}
+
+// Who watched your story. Everyone sees the names; badge holders also see
+// when each person watched, and Supreme shows how many times.
+function StoryActivitySheet({ story, onClose }) {
+  const [tab, setTab] = useState("viewers");
+  const [viewers, setViewers] = useState(null);
+  const [mine, setMine] = useState({ active: false, tier: null });
+  useEffect(() => {
+    loadMyBadge().then(setMine);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [viewsRes, likesRes] = await Promise.all([
+        supabase.from("story_views").select("*").eq("story_id", story.id),
+        supabase.from("story_likes").select("user_id").eq("story_id", story.id),
+      ]);
+      const rows = (viewsRes.data || []).filter((r) => r.viewer_id && r.viewer_id !== story.user_id);
+      const ids = [...new Set(rows.map((r) => r.viewer_id))];
+      let profiles = [];
+      if (ids.length) {
+        const { data } = await supabase.from("profiles").select("id, username, full_name, avatar_url").in("id", ids);
+        profiles = data || [];
+      }
+      const liked = new Set((likesRes.data || []).map((l) => l.user_id));
+      const when = (r) => r.last_viewed_at || r.created_at || null;
+      const list = rows
+        .map((r) => {
+          const p = profiles.find((x) => x.id === r.viewer_id);
+          return { id: r.viewer_id, username: p?.username || "unknown", fullName: p?.full_name || "", avatarUrl: p?.avatar_url || null, at: when(r), times: Number(r.view_count || 1), liked: liked.has(r.viewer_id) };
+        })
+        .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+      if (!cancelled) setViewers(list);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [story.id]);
+  const rank = mine.active ? tierRank(mine.tier) : 0;
+  const tabBtn = (key, label) => (
+    <button
+      onClick={() => setTab(key)}
+      className="flex-1 h-10 text-[13px]"
+      style={{ fontWeight: 700, color: tab === key ? "var(--text)" : "var(--text-muted)", borderBottom: tab === key ? "2px solid var(--text)" : "2px solid transparent" }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <StorySheetShell title="Activity" onClose={onClose}>
+      <div className="flex px-2 mb-1" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+        {tabBtn("viewers", viewers ? `Viewers · ${viewers.length}` : "Viewers")}
+        {tabBtn("replies", "Replies")}
+      </div>
+      {tab === "replies" ? (
+        <StoryRepliesList story={story} />
+      ) : (
+        <div className="pb-6">
+          {viewers === null ? (
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          ) : viewers.length === 0 ? (
+            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No one has watched yet</p>
+          ) : (
+            viewers.map((v) => (
+              <div key={v.id} className="flex items-center gap-3 px-4 py-2.5">
+                <Avatar username={v.username} avatarUrl={v.avatarUrl} size={40} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13.5px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{v.username}</p>
+                  {(v.fullName || (rank >= 1 && v.at)) && (
+                    <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
+                      {rank >= 1 && v.at ? `Watched ${timeAgo(v.at)} ago` : v.fullName}
+                      {rank >= 3 && v.times > 1 ? ` · ${v.times} times` : ""}
+                    </p>
+                  )}
+                </div>
+                {v.liked && <Heart size={16} fill="var(--heart)" color="var(--heart)" />}
+              </div>
+            ))
+          )}
+          {viewers && viewers.length > 0 && rank < 3 && (
+            <p className="text-[11.5px] text-center px-6 pt-3" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+              {rank === 0
+                ? "A verified badge shows when each person watched. Settings → Verified badge."
+                : "Supreme also shows how many times each person rewatched."}
+            </p>
+          )}
+        </div>
+      )}
     </StorySheetShell>
   );
 }
@@ -9576,10 +9692,14 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
       if (rawStory.user_id !== currentUserId) {
         // Badge perk: watching privately leaves no name on the viewer list.
         const hidden = storyPrivateOn() && (await loadMyBadge()).active;
-        if (!hidden)
-          await supabase
-            .from("story_views")
-            .upsert({ story_id: rawStory.id, viewer_id: currentUserId }, { onConflict: "story_id,viewer_id" });
+        if (!hidden) {
+          const { error: viewErr } = await supabase.rpc("record_story_view", { p_story: rawStory.id });
+          // Before loop-step-17.sql there's no counter yet — just mark it seen.
+          if (viewErr)
+            await supabase
+              .from("story_views")
+              .upsert({ story_id: rawStory.id, viewer_id: currentUserId }, { onConflict: "story_id,viewer_id" });
+        }
       } else {
         // Your own views aren't counted, but your ring still turns grey.
         markOwnStorySeen(rawStory.id);
@@ -10120,7 +10240,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
       {sheet === "settings" && <StorySettingsSheet onClose={() => setSheet(null)} />}
 
       {sheet === "replies" && isOwner && (
-        <StoryRepliesSheet story={story} onClose={() => setSheet(null)} />
+        <StoryActivitySheet story={story} onClose={() => setSheet(null)} />
       )}
     </div>
   );
@@ -10259,7 +10379,7 @@ function StoriesBar({ onOpenProfile }) {
     const userIds = [...new Set(rows.map((r) => r.user_id))];
     let profiles = [];
     if (userIds.length > 0) {
-      const { data } = await supabase.from("profiles").select("id, username, avatar_url").in("id", userIds);
+      const { data } = await supabase.from("profiles").select("id, username, avatar_url, is_verified, badge_tier, badge_until").in("id", userIds);
       profiles = data || [];
     }
 
@@ -10282,6 +10402,8 @@ function StoriesBar({ onOpenProfile }) {
         items,
         allSeen: items.every((st) => seen.has(st.id)),
         isSelf: uid === user.id,
+        // Supreme perk: shown first among people you haven't caught up with.
+        first: badgeIsActive(p) && p?.badge_tier === "gold",
       };
     });
 
@@ -10289,6 +10411,7 @@ function StoriesBar({ onOpenProfile }) {
     list.sort((a, b) => {
       if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
       if (a.allSeen !== b.allSeen) return a.allSeen ? 1 : -1;
+      if (a.first !== b.first) return a.first ? -1 : 1;
       return 0;
     });
 
@@ -19113,6 +19236,9 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   const [username, setUsername] = useState("");
   const [originalUsername, setOriginalUsername] = useState("");
   const [bio, setBio] = useState("");
+  const [bioFont, setBioFont] = useState("default");
+  const [savedBioFont, setSavedBioFont] = useState("default");
+  const [fontRank, setFontRank] = useState(0);
   const [links, setLinks] = useState([]);
   const [gender, setGender] = useState(null);
 
@@ -19162,6 +19288,19 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         setGender(data.gender || null);
         setLinks(Array.isArray(data.links) ? data.links : []);
       }
+      // Bio font lives in its own request so this screen still opens before
+      // loop-step-17.sql has been run.
+      supabase
+        .from("profiles")
+        .select("bio_font")
+        .eq("id", currentUserId)
+        .maybeSingle()
+        .then(({ data: f, error: fErr }) => {
+          if (fErr) return;
+          setBioFont(f?.bio_font || "default");
+          setSavedBioFont(f?.bio_font || "default");
+        });
+      loadMyBadge(true).then((b) => setFontRank(b.active ? tierRank(b.tier) : 0));
       setLoading(false);
     })();
   }, [currentUserId]);
@@ -19309,6 +19448,24 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         { user_id: currentUserId, birthday: birthday || null, birthday_public: birthday ? birthdayPublic : false },
         { onConflict: "user_id" }
       );
+    if (fontRank >= 2 && bioFont !== savedBioFont) {
+      const { error: fontErr } = await supabase
+        .from("profiles")
+        .update({ bio_font: bioFont === "default" ? null : bioFont })
+        .eq("id", currentUserId);
+      if (fontErr) {
+        setSaving(false);
+        setError(
+          /bio_font_needs_badge/.test(fontErr.message)
+            ? "Saved — but bio fonts need an active Elite or Supreme badge."
+            : /bio_font/.test(fontErr.message)
+            ? "Saved — bio fonts start working once loop-step-17.sql has been run."
+            : `Saved, but the bio font didn't: ${fontErr.message}`
+        );
+        return;
+      }
+      setSavedBioFont(bioFont);
+    }
     setSaving(false);
     if (privErr) {
       setError(`Saved, but the birthday didn't: ${privErr.message}`);
@@ -19496,9 +19653,40 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
           onChange={(e) => setBio(e.target.value.slice(0, 150))}
           rows={3}
           placeholder="Tell people about yourself"
-          className="w-full rounded-2xl px-4 py-3 text-sm outline-none resize-none mb-4"
-          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
+          className="w-full rounded-2xl px-4 py-3 text-sm outline-none resize-none mb-3"
+          style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", ...(fontRank >= 2 && bioFont !== "default" ? { fontFamily: fontOf(bioFont).stack } : {}) }}
         />
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Bio font</label>
+            <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
+              <VerifiedBadge size={13} tier="ruby" /> Elite & Supreme
+            </span>
+          </div>
+          {fontRank >= 2 ? (
+            <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+              {CHAT_FONTS.map((ft) => (
+                <button
+                  key={ft.key}
+                  onClick={() => setBioFont(ft.key)}
+                  className="shrink-0 rounded-xl px-3.5 h-9 text-[13px]"
+                  style={{
+                    fontFamily: ft.stack,
+                    background: bioFont === ft.key ? "var(--text)" : "var(--bg-sunken)",
+                    color: bioFont === ft.key ? "var(--bg)" : "var(--text)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {ft.name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[12px] rounded-xl px-3.5 py-2.5" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)", lineHeight: 1.45 }}>
+              Write your bio in a special font with an Elite or Supreme badge — Settings → Verified badge.
+            </p>
+          )}
+        </div>
 
         <div className="flex items-center justify-between mb-1.5">
           <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Links</label>
@@ -21214,6 +21402,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [bioFont, setBioFont] = useState(null);
   const [posts, setPosts] = useState([]);
   const [reposts, setReposts] = useState([]);
   const [followerCount, setFollowerCount] = useState(0);
@@ -21305,6 +21494,14 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       .eq("id", targetId)
       .single();
     setProfile(profileData);
+    // Bio font (Elite and Supreme). Asked for on its own so the profile still
+    // opens before loop-step-17.sql has been run.
+    supabase
+      .from("profiles")
+      .select("bio_font, is_verified, badge_tier, badge_until")
+      .eq("id", targetId)
+      .maybeSingle()
+      .then(({ data: f, error: fErr }) => setBioFont(!fErr && f?.bio_font && badgeIsActive(f) && tierRank(f.badge_tier) >= 2 ? f.bio_font : null));
 
     // The birthday lives in its own owner-only table. This function hands
     // it back only when its owner chose Public (or when it's yours).
@@ -21918,7 +22115,12 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
           </div>
         )}
         {profile.bio && (
-          <p className="text-[13px] mt-0.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{profile.bio}</p>
+          <p
+            className="text-[13px] mt-0.5"
+            style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4, ...(bioFont && bioFont !== "default" ? { fontFamily: fontOf(bioFont).stack, fontSize: 14.5 } : {}) }}
+          >
+            {profile.bio}
+          </p>
         )}
         {ownChannel && (
           <button
