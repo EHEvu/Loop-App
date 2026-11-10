@@ -2,6 +2,11 @@ import React, { useState, useEffect } from "react";
 import { supabase } from "./lib/supabaseClient";
 import {
   Home,
+  Wifi,
+  Rocket,
+  ChefHat,
+  Trophy,
+  HeartHandshake,
   Clapperboard,
   Search,
   PlusSquare,
@@ -264,21 +269,50 @@ const THEME_CSS = `
   @keyframes loopFade { from { opacity: 0; } to { opacity: 1; } }
   @keyframes loopSpin { to { transform: rotate(360deg); } }
   @keyframes loopFxPop {
-    0% { transform: translate(0, 0) scale(0.3); opacity: 0; }
-    30% { transform: translate(0, var(--dy)) scale(1.4); opacity: 1; }
-    65% { transform: translate(0, var(--dy)) scale(1.12); opacity: 1; }
-    100% { transform: translate(0, var(--dy)) scale(0.55); opacity: 0; }
+    0% { transform: translate(0, 0) scale(0.25); opacity: 0; }
+    10% { opacity: 1; }
+    24% { transform: translate(0, var(--dy)) scale(1.28) rotate(-8deg); opacity: 1; }
+    38% { transform: translate(0, var(--dy)) scale(0.94) rotate(5deg); }
+    50% { transform: translate(0, var(--dy)) scale(1.06) rotate(-2deg); }
+    62% { transform: translate(0, var(--dy)) scale(1) rotate(0deg); }
+    80% { transform: translate(0, var(--dy)) scale(1); opacity: 1; }
+    100% { transform: translate(0, 0) scale(0.26); opacity: 0; }
+  }
+  @keyframes loopFxRing {
+    0% { transform: scale(0.25); opacity: 0.95; border-width: 10px; }
+    100% { transform: scale(1); opacity: 0; border-width: 1px; }
   }
   @keyframes loopFxBurst {
     0% { transform: translate(0, 0) scale(0.2); opacity: 0; }
-    20% { opacity: 1; }
+    15% { opacity: 1; }
+    70% { opacity: 1; }
     100% { transform: translate(var(--dx), var(--dy)) scale(var(--s)) rotate(var(--r)); opacity: 0; }
   }
-  @keyframes loopFxShower {
-    0% { transform: translate(0, 0) scale(0.3) rotate(0deg); opacity: 0; }
+  @keyframes loopFxX {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(var(--dx)); }
+  }
+  @keyframes loopFxArc {
+    0% { transform: translateY(0) scale(0.15) rotate(0deg); opacity: 0; }
     10% { opacity: 1; }
-    55% { transform: translate(calc(var(--dx) * 0.55), var(--dy)) scale(var(--s)) rotate(calc(var(--r) * 0.5)); opacity: 1; }
-    100% { transform: translate(var(--dx), calc(var(--dy) * 0.4 + 140px)) scale(calc(var(--s) * 0.8)) rotate(var(--r)); opacity: 0; }
+    55% { transform: translateY(var(--dy)) scale(var(--s)) rotate(var(--r)); opacity: 1; }
+    82% { opacity: 1; }
+    100% { transform: translateY(calc(var(--dy) * 0.45)) scale(calc(var(--s) * 1.12)) rotate(calc(var(--r) * -0.6)); opacity: 0; }
+  }
+  @keyframes loopBellRing {
+    0%, 100% { transform: rotate(0deg); }
+    15% { transform: rotate(18deg); }
+    30% { transform: rotate(-15deg); }
+    45% { transform: rotate(11deg); }
+    60% { transform: rotate(-7deg); }
+    80% { transform: rotate(3deg); }
+  }
+  .loop-bell-on { animation: loopBellRing 0.85s ease-in-out 1; transform-origin: 50% 12%; }
+  .loop-frame button > svg, .loop-frame button > span > svg { transition: transform 0.24s cubic-bezier(.3, 1.8, .5, 1); }
+  .loop-frame button:active > svg, .loop-frame button:active > span > svg { transform: scale(0.78); transition-duration: 0.06s; }
+  @media (prefers-reduced-motion: reduce) {
+    .loop-frame button > svg, .loop-frame button > span > svg { transition: none; }
+    .loop-bell-on { animation: none; }
   }
   .loop-heart-burst {
     position: absolute; left: 50%; top: 50%;
@@ -397,10 +431,15 @@ function formatCount(n) {
 // 1080 pixels. Resizing first (like Instagram does) makes uploads faster and
 // saves everyone's data. GIFs (animation) and already-small files are left
 // alone; if anything goes wrong the original file is used.
-const MAX_UPLOAD_VIDEO_BYTES = 50 * 1024 * 1024;
 
-async function compressImage(file, maxSide = 1440, quality = 0.82) {
+async function compressImage(file, maxSide, quality) {
   try {
+    if (!maxSide) {
+      const spec = uploadPhotoSpec();
+      maxSide = spec.side;
+      quality = quality || spec.quality;
+    }
+    quality = quality || 0.82;
     if (!file || !(file.type || "").startsWith("image/") || file.type === "image/gif") return file;
     const url = URL.createObjectURL(file);
     const img = await new Promise((resolve, reject) => {
@@ -647,6 +686,7 @@ function wobble(el) {
   } catch {}
 }
 
+const FX_SPARK_COLORS = ["#FF5A5F", "#FFC83D", "#4FC3F7", "#B388FF", "#69F0AE", "#FF8A65"];
 function FxLayer() {
   const [items, setItems] = useState([]);
   useEffect(() => {
@@ -658,37 +698,64 @@ function FxLayer() {
       const vh = window.innerHeight;
       const parts = [];
       if (d.kind === "burst") {
-        parts.push({ main: true, dx: 0, dy: -22, s: 1, r: 0, size: 62, delay: 0, dur: 950 });
-        const n = 11;
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * Math.PI * 2 + Math.random() * 0.45;
-          const dist = 44 + Math.random() * 46;
+        // Telegram-style: the reaction grows big over the message, a ring
+        // and coloured sparks fly out, a few small copies follow, then it
+        // shrinks back into its chip.
+        const lift = Math.min(34, Math.max(0, d.y - 70));
+        parts.push({ type: "ring", size: 150, delay: 120, dur: 560, dy: -lift });
+        const dots = 16;
+        for (let i = 0; i < dots; i++) {
+          const a = (i / dots) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+          const dist = (i % 2 ? 58 : 84) + Math.random() * 14;
           parts.push({
+            type: "dot",
+            color: FX_SPARK_COLORS[i % FX_SPARK_COLORS.length],
             dx: Math.cos(a) * dist,
-            dy: Math.sin(a) * dist - 14,
-            s: 0.45 + Math.random() * 0.45,
-            r: (Math.random() - 0.5) * 140,
-            size: 24,
-            delay: 70 + Math.random() * 90,
-            dur: 620 + Math.random() * 280,
+            dy: Math.sin(a) * dist - lift,
+            s: 0.3,
+            r: 0,
+            size: i % 2 ? 7 : 10,
+            delay: 150 + Math.random() * 60,
+            dur: 520 + Math.random() * 160,
           });
         }
-      } else {
-        const dir = d.fromRight ? -1 : 1;
-        const n = 24;
-        for (let i = 0; i < n; i++) {
+        const minis = 7;
+        for (let i = 0; i < minis; i++) {
+          const a = -Math.PI / 2 + ((i - (minis - 1) / 2) / minis) * Math.PI * 1.5 + (Math.random() - 0.5) * 0.3;
+          const dist = 70 + Math.random() * 44;
           parts.push({
-            dx: dir * vw * (0.3 + Math.random() * 0.8),
-            dy: -vh * (0.12 + Math.random() * 0.5),
-            s: 0.7 + Math.random() * 0.8,
-            r: dir * (90 + Math.random() * 300),
-            size: 32 + Math.random() * 24,
-            delay: Math.random() * 480,
-            dur: 1300 + Math.random() * 800,
+            type: "mini",
+            dx: Math.cos(a) * dist,
+            dy: Math.sin(a) * dist - lift,
+            s: 0.5 + Math.random() * 0.5,
+            r: (Math.random() - 0.5) * 70,
+            size: 26,
+            delay: 190 + Math.random() * 120,
+            dur: 700 + Math.random() * 260,
+          });
+        }
+        parts.push({ type: "main", dx: 0, dy: -lift, size: 84, delay: 0, dur: 1250 });
+      } else {
+        // Tap a big emoji: copies of it drift out of the message and across
+        // the chat in an arc, small ones and a few very big ones.
+        const dir = d.fromRight ? -1 : 1;
+        const n = 15;
+        const room = dir > 0 ? vw - d.x : d.x;
+        for (let i = 0; i < n; i++) {
+          const big = i % 5 === 0;
+          parts.push({
+            type: "fly",
+            dx: dir * (40 + Math.random() * Math.max(120, room * 0.95)),
+            dy: -(50 + Math.random() * Math.min(vh * 0.42, Math.max(80, d.y - 90))),
+            s: 1,
+            r: (Math.random() - 0.5) * 44,
+            size: big ? 92 + Math.random() * 40 : 30 + Math.random() * 34,
+            delay: Math.random() * 520,
+            dur: 1500 + Math.random() * 800,
           });
         }
       }
-      setItems((prev) => [...prev.slice(-4), { id, x: d.x, y: d.y, emoji: d.emoji, kind: d.kind, parts }]);
+      setItems((prev) => [...prev.slice(-3), { id, x: d.x, y: d.y, emoji: d.emoji, parts }]);
       const longest = Math.max(...parts.map((p) => p.delay + p.dur));
       setTimeout(() => setItems((prev) => prev.filter((it) => it.id !== id)), longest + 150);
     };
@@ -699,26 +766,44 @@ function FxLayer() {
   return (
     <div className="fixed inset-0 pointer-events-none" style={{ zIndex: 300, overflow: "hidden" }} aria-hidden="true">
       {items.map((it) =>
-        it.parts.map((p, i) => (
-          <span
-            key={`${it.id}-${i}`}
-            className="absolute"
-            style={{
-              left: it.x - p.size / 2,
-              top: it.y - p.size / 2,
-              width: p.size,
-              height: p.size,
-              "--dx": `${p.dx}px`,
-              "--dy": `${p.dy}px`,
-              "--s": p.s,
-              "--r": `${p.r}deg`,
-              animation: `${p.main ? "loopFxPop" : it.kind === "burst" ? "loopFxBurst" : "loopFxShower"} ${p.dur}ms cubic-bezier(.2,.75,.3,1) ${p.delay}ms both`,
-              filter: p.main ? "drop-shadow(0 6px 14px rgba(0,0,0,0.35))" : undefined,
-            }}
-          >
-            <AnimatedEmoji emoji={it.emoji} size={Math.round(p.size)} />
-          </span>
-        ))
+        it.parts.map((p, i) => {
+          const key = `${it.id}-${i}`;
+          const at = { left: it.x - p.size / 2, top: it.y - p.size / 2, width: p.size, height: p.size };
+          const vars = { "--dx": `${p.dx || 0}px`, "--dy": `${p.dy || 0}px`, "--s": p.s || 1, "--r": `${p.r || 0}deg` };
+          if (p.type === "ring")
+            return (
+              <span key={key} className="absolute" style={{ ...at, top: at.top + p.dy }}>
+                <span
+                  className="block rounded-full"
+                  style={{ width: "100%", height: "100%", border: "4px solid rgba(255, 200, 61, 0.95)", boxSizing: "border-box", animation: `loopFxRing ${p.dur}ms cubic-bezier(.2,.7,.3,1) ${p.delay}ms both` }}
+                />
+              </span>
+            );
+          if (p.type === "dot")
+            return <span key={key} className="absolute rounded-full" style={{ ...at, ...vars, background: p.color, animation: `loopFxBurst ${p.dur}ms cubic-bezier(.15,.8,.3,1) ${p.delay}ms both` }} />;
+          if (p.type === "fly")
+            return (
+              <span key={key} className="absolute" style={{ ...at, ...vars, animation: `loopFxX ${p.dur}ms cubic-bezier(.25,.6,.4,1) ${p.delay}ms both` }}>
+                <span className="block" style={{ animation: `loopFxArc ${p.dur}ms cubic-bezier(.3,.7,.4,1) ${p.delay}ms both` }}>
+                  <AnimatedEmoji emoji={it.emoji} size={Math.round(p.size)} />
+                </span>
+              </span>
+            );
+          return (
+            <span
+              key={key}
+              className="absolute"
+              style={{
+                ...at,
+                ...vars,
+                animation: `${p.type === "main" ? "loopFxPop" : "loopFxBurst"} ${p.dur}ms cubic-bezier(.2,.75,.3,1) ${p.delay}ms both`,
+                filter: p.type === "main" ? "drop-shadow(0 8px 18px rgba(0,0,0,0.35))" : undefined,
+              }}
+            >
+              <AnimatedEmoji emoji={it.emoji} size={Math.round(p.size)} />
+            </span>
+          );
+        })
       )}
     </div>
   );
@@ -1116,7 +1201,7 @@ const LEGAL_DOCS = {
       ]],
       ["Verified badge", [
         "A badge means we confirmed the account is the real presence of the person, brand or organisation it represents. It is not an endorsement.",
-        "Badges are free and given only through Settings → Request verified badge. We can remove a badge if the account breaks the rules, changes its name to mislead, or is sold.",
+        "Badges are bought only inside Loop, through Settings → Verified badge, for 1, 6 or 12 months. Nobody else can sell you one. We can remove a badge without a refund if the account breaks the rules, changes its name to mislead, or is sold.",
       ]],
       ["Messages, vanish mode and channels", [
         "Messages are private between the people in the chat, but anyone in a chat can screenshot it. Vanish mode removes seen messages from Loop when the chat is closed; it can't stop screenshots.",
@@ -1271,26 +1356,234 @@ const VERIFY_RULES = {
 };
 const VERIFY_CATEGORIES = ["Creator", "Public figure", "News / journalist", "Music / art", "Sports", "Business / brand", "Organisation", "Government", "Politics", "Other"];
 
+// ---- App settings an admin can change without a new App.jsx ----
+// They live in the app_config table (loop-step-15a.sql). Every phone reads
+// them once when Loop opens and keeps the last copy for the next start.
+const APP_CONFIG_DEFAULTS = {
+  upload: { max_video_mb: 50, photo_side: 1440, photo_side_hq: 2160 },
+  badge_pay: { bkash: "", nagad: "" },
+  badge_prices: { ocean: 99, ruby: 499, gold: 899 },
+};
+const APP_CONFIG_EVENT = "loop:config";
+const APP_CONFIG_KEY = "loop_app_config";
+let appConfigCache = null;
+let appConfigPromise = null;
+function mergeAppConfig(rows) {
+  const out = {};
+  for (const k of Object.keys(APP_CONFIG_DEFAULTS)) out[k] = { ...APP_CONFIG_DEFAULTS[k], ...((rows && rows[k]) || {}) };
+  return out;
+}
+function appConfig() {
+  if (appConfigCache) return appConfigCache;
+  try {
+    const saved = JSON.parse(localStorage.getItem(APP_CONFIG_KEY) || "null");
+    if (saved) appConfigCache = mergeAppConfig(saved);
+  } catch {}
+  return appConfigCache || APP_CONFIG_DEFAULTS;
+}
+function loadAppConfig(force) {
+  if (appConfigPromise && !force) return appConfigPromise;
+  appConfigPromise = supabase
+    .from("app_config")
+    .select("key, value")
+    .then(
+      ({ data, error }) => {
+        if (error || !data) return appConfig();
+        const rows = Object.fromEntries(data.map((r) => [r.key, r.value]));
+        appConfigCache = mergeAppConfig(rows);
+        try {
+          localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(rows));
+        } catch {}
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(APP_CONFIG_EVENT));
+        return appConfigCache;
+      },
+      () => appConfig()
+    );
+  return appConfigPromise;
+}
+function useAppConfig() {
+  const [cfg, setCfg] = useState(appConfig());
+  useEffect(() => {
+    const on = () => setCfg(appConfig());
+    window.addEventListener(APP_CONFIG_EVENT, on);
+    loadAppConfig().then(on);
+    return () => window.removeEventListener(APP_CONFIG_EVENT, on);
+  }, []);
+  return cfg;
+}
+
+// ---- Upload quality: your own choice, on this phone ----
+const UPLOAD_HQ_KEY = "loop_upload_hq";
+const UPLOAD_HQ_WIFI_KEY = "loop_upload_hq_wifi";
+function getUploadPrefs() {
+  try {
+    return { hq: localStorage.getItem(UPLOAD_HQ_KEY) === "1", wifiOnly: localStorage.getItem(UPLOAD_HQ_WIFI_KEY) !== "0" };
+  } catch {
+    return { hq: false, wifiOnly: true };
+  }
+}
+function saveUploadPrefs(p) {
+  try {
+    localStorage.setItem(UPLOAD_HQ_KEY, p.hq ? "1" : "0");
+    localStorage.setItem(UPLOAD_HQ_WIFI_KEY, p.wifiOnly ? "1" : "0");
+  } catch {}
+}
+// "wifi" | "mobile" | "unknown" — iPhones don't tell a website which it is.
+function connectionKind() {
+  const c = typeof navigator !== "undefined" ? navigator.connection || navigator.mozConnection || navigator.webkitConnection : null;
+  if (!c || !c.type) return "unknown";
+  if (c.type === "wifi" || c.type === "ethernet") return "wifi";
+  if (c.type === "cellular") return "mobile";
+  return "unknown";
+}
+function uploadHighQualityNow() {
+  const p = getUploadPrefs();
+  if (!p.hq) return false;
+  if (!p.wifiOnly) return true;
+  const kind = connectionKind();
+  if (kind === "wifi") return true;
+  if (kind === "mobile") return false;
+  // Can't tell: use high quality unless the phone's own data saver is on.
+  const c = typeof navigator !== "undefined" ? navigator.connection : null;
+  return !(c && c.saveData);
+}
+function uploadPhotoSpec() {
+  const up = appConfig().upload || {};
+  const clamp = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
+  return uploadHighQualityNow()
+    ? { side: clamp(up.photo_side_hq, 1080, 4096, 2160), quality: 0.92 }
+    : { side: clamp(up.photo_side, 720, 2160, 1440), quality: 0.82 };
+}
+function maxVideoMb() {
+  const v = Number((appConfig().upload || {}).max_video_mb);
+  return Number.isFinite(v) ? Math.min(500, Math.max(5, Math.round(v))) : 50;
+}
+function maxVideoBytes() {
+  return maxVideoMb() * 1024 * 1024;
+}
+
+function MediaQualityScreen({ onBack }) {
+  const [prefs, setPrefs] = useState(getUploadPrefs());
+  const [quality, setQuality] = useState(getVideoQuality());
+  useAppConfig();
+  const change = (patch) => {
+    const next = { ...prefs, ...patch };
+    setPrefs(next);
+    saveUploadPrefs(next);
+  };
+  const kind = connectionKind();
+  const row = (label, hint, on, onTap, disabled) => (
+    <button onClick={onTap} disabled={disabled} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ opacity: disabled ? 0.45 : 1 }}>
+      <span>
+        <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
+        <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{hint}</span>
+      </span>
+      <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: on ? ACCENT : "var(--toggle-off)", position: "relative", transition: "background 0.15s" }}>
+        <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: on ? 18 : 2, transition: "left 0.15s" }} />
+      </span>
+    </button>
+  );
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="Media quality" onBack={onBack} />
+      <div className="px-4 pt-4 pb-10">
+        <p className="text-[13px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Uploading</p>
+        <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
+          {row(
+            "Upload at highest quality",
+            "Photos keep more detail. Uploads take longer and use more data. Videos always upload as they are, up to " + maxVideoMb() + " MB.",
+            prefs.hq,
+            () => change({ hq: !prefs.hq })
+          )}
+          <div className="h-px mx-4" style={{ background: "var(--border-subtle)" }} />
+          {row(
+            "Only on Wi-Fi",
+            kind === "unknown"
+              ? "This phone doesn't tell Loop whether it is on Wi-Fi, so highest quality is used unless the phone's data saver is on."
+              : `On mobile data, photos upload at standard quality. You're on ${kind === "wifi" ? "Wi-Fi" : "mobile data"} now.`,
+            prefs.wifiOnly,
+            () => change({ wifiOnly: !prefs.wifiOnly }),
+            !prefs.hq
+          )}
+        </div>
+
+        <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Watching reels</p>
+        <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
+          {[
+            ["auto", "Auto", "Lighter video on slow connections"],
+            ["high", "HD", "Always the full video"],
+            ["saver", "Data saver", "Lighter video whenever a reel has one"],
+          ].map(([k, label, hint], i) => (
+            <button
+              key={k}
+              onClick={() => {
+                setQuality(k);
+                saveVideoQuality(k);
+              }}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+              style={{ borderTop: i ? "1px solid var(--border-subtle)" : "none" }}
+            >
+              <span>
+                <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
+                <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{hint}</span>
+              </span>
+              <span
+                className="rounded-full flex items-center justify-center shrink-0"
+                style={{ width: 20, height: 20, border: quality === k ? "none" : "1.5px solid var(--toggle-off)", background: quality === k ? ACCENT : "transparent" }}
+              >
+                {quality === k && <Check size={12} color="var(--on-accent)" strokeWidth={3} />}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Verified badges: three plans ----
+const BADGE_PLANS = [
+  { key: "ocean", name: "Ocean", months: 1, line: "1 month", blurb: "The classic blue seal." },
+  { key: "ruby", name: "Humanity Star", months: 6, line: "6 months", blurb: "The ruby star." },
+  { key: "gold", name: "Golden Crown", months: 12, line: "12 months", blurb: "The gold star with a crown." },
+];
+const badgePlanOf = (key) => BADGE_PLANS.find((p) => p.key === key) || BADGE_PLANS[0];
+const PAY_METHODS = [
+  ["bkash", "bKash"],
+  ["nagad", "Nagad"],
+];
+
 function verifyErrorText(msg) {
   const m = msg || "";
-  if (/verification_requests|request_verification|verification_checklist/.test(m) && /does not exist|not find|schema cache/i.test(m)) return "This needs loop-step-14.sql — run it in Supabase first.";
+  if (/request_badge|mod_list_badges|admin_grant_badge|admin_revoke_badge|app_config|badge_tier/.test(m) && /does not exist|not find|schema cache/i.test(m))
+    return "This needs loop-step-15a.sql and loop-step-15b.sql — run them in Supabase first.";
+  if (/verification_requests|verification_checklist/.test(m) && /does not exist|not find|schema cache/i.test(m)) return "This needs loop-step-14b.sql — run it in Supabase first.";
   if (/rules_not_met/.test(m)) return "Some of the checklist above isn't done yet.";
   if (/already_pending/.test(m)) return "You already have a request waiting.";
-  if (/already_verified/.test(m)) return "Your account is already verified.";
-  if (/bad_links/.test(m)) return "Links must start with https:// (up to 3).";
-  if (/check constraint/.test(m)) return "Please fill in every box — the reason needs at least 20 letters.";
+  if (/already_verified/.test(m)) return "Your account already has a badge with no end date.";
+  if (/payments_closed/.test(m)) return "Payments aren't open for that method yet.";
+  if (/trx_used/.test(m)) return "That transaction ID was already used for another request.";
+  if (/bad_trx/.test(m)) return "Check the transaction ID — 6 to 30 letters and numbers, as shown in your payment message.";
+  if (/bad_payer/.test(m)) return "Enter the number you paid from, digits only.";
+  if (/bad_plan|bad_method|bad_tier/.test(m)) return "Pick a badge and a payment method.";
+  if (/admins_only/.test(m)) return "Only admins can do that.";
+  if (/check constraint/.test(m)) return "Please fill in every box.";
   return m;
 }
 
 function VerificationRequestScreen({ onBack }) {
-  const [state, setState] = useState(null); // { verified, request, checklist }
+  const cfg = useAppConfig();
+  const [state, setState] = useState(null); // { verified, tier, until, request, checklist }
   const [err, setErr] = useState("");
+  const [plan, setPlan] = useState("ocean");
   const [fullName, setFullName] = useState("");
   const [category, setCategory] = useState("Creator");
-  const [country, setCountry] = useState("Bangladesh");
-  const [links, setLinks] = useState(["", "", ""]);
-  const [reason, setReason] = useState("");
+  const [method, setMethod] = useState("bkash");
+  const [payer, setPayer] = useState("");
+  const [trx, setTrx] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const load = async () => {
     setErr("");
@@ -1298,37 +1591,50 @@ function VerificationRequestScreen({ onBack }) {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
-    const [{ data: prof }, req, chk] = await Promise.all([
-      supabase.from("profiles").select("full_name, is_verified, badge_tier").eq("id", user.id).maybeSingle(),
-      supabase.from("verification_requests").select("id, status, note, created_at, decided_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1),
+    const [profRes, req, chk] = await Promise.all([
+      supabase.from("profiles").select("full_name, is_verified, badge_tier, badge_until").eq("id", user.id).maybeSingle(),
+      supabase.from("verification_requests").select("id, status, note, created_at, decided_at, plan, trx_id, amount").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1),
       supabase.rpc("verification_checklist"),
     ]);
-    if (req.error || chk.error) {
-      setErr(verifyErrorText((req.error || chk.error).message));
-      setState({ verified: !!prof?.is_verified, request: null, checklist: [] });
-      return;
-    }
+    const prof = profRes.data;
+    const firstErr = profRes.error || req.error || chk.error;
+    if (firstErr) setErr(verifyErrorText(firstErr.message));
     setFullName((v) => v || prof?.full_name || "");
-    setState({ verified: !!prof?.is_verified, request: (req.data || [])[0] || null, checklist: chk.data || [] });
+    setState({
+      verified: !!prof?.is_verified,
+      tier: prof?.badge_tier || "ocean",
+      until: prof?.badge_until || null,
+      request: req.error ? null : (req.data || [])[0] || null,
+      checklist: chk.error ? [] : chk.data || [],
+    });
   };
   useEffect(() => {
     load();
   }, []);
 
+  const pay = cfg.badge_pay || {};
+  const prices = cfg.badge_prices || {};
+  const openMethods = PAY_METHODS.filter(([k]) => (pay[k] || "").trim());
+  const useMethod = openMethods.some(([k]) => k === method) ? method : openMethods[0]?.[0] || "";
+  const payNumber = useMethod ? String(pay[useMethod]).trim() : "";
+  const price = Number(prices[plan]) || APP_CONFIG_DEFAULTS.badge_prices[plan];
+  const cleanTrx = trx.replace(/\s/g, "").toUpperCase();
+  const cleanPayer = payer.replace(/[^0-9+]/g, "");
   const allOk = state && state.checklist.length > 0 && state.checklist.every((r) => r.ok);
-  const cleanLinks = links.map((l) => l.trim()).filter(Boolean);
-  const canSend = allOk && fullName.trim() && category && cleanLinks.length > 0 && reason.trim().length >= 20 && !busy;
+  const canSend = !!(allOk && useMethod && fullName.trim() && /^[A-Z0-9]{6,30}$/.test(cleanTrx) && /^\+?[0-9]{10,14}$/.test(cleanPayer) && !busy);
 
   const submit = async () => {
     if (!canSend) return;
     setBusy(true);
     setErr("");
-    const { error } = await supabase.rpc("request_verification", {
+    const { error } = await supabase.rpc("request_badge", {
+      p_plan: plan,
       p_full_name: fullName.trim(),
       p_category: category,
-      p_country: country.trim(),
-      p_links: cleanLinks.map((l) => (/^https?:\/\//i.test(l) ? l : `https://${l}`)),
-      p_reason: reason.trim(),
+      p_method: useMethod,
+      p_payer: cleanPayer,
+      p_trx: cleanTrx,
+      p_note: note.trim() || null,
     });
     setBusy(false);
     if (error) {
@@ -1340,35 +1646,50 @@ function VerificationRequestScreen({ onBack }) {
 
   const req = state?.request;
   const pending = req?.status === "pending";
+  const lifetime = state?.verified && !state.until;
   const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
+  const untilText = state?.until ? new Date(state.until).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : "";
 
   return (
     <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
       <ScreenHeader title="Verified badge" onBack={onBack} />
       <div className="px-5 pt-5 pb-10">
         <div className="flex flex-col items-center text-center">
-          <VerifiedBadge size={54} />
+          {state?.verified ? (
+            <VerifiedBadge size={64} tier={state.tier} />
+          ) : (
+            <div className="flex items-end gap-4">
+              <VerifiedBadge size={44} tier="ocean" />
+              <VerifiedBadge size={58} tier="gold" />
+              <VerifiedBadge size={44} tier="ruby" />
+            </div>
+          )}
           <p className="text-[17px] mt-3" style={{ color: "var(--text)", fontWeight: 800 }}>
-            {state?.verified ? "Your account is verified" : "Request a verified badge"}
+            {state?.verified ? `You have the ${badgePlanOf(state.tier).name} badge` : "Get a verified badge"}
           </p>
           <p className="text-[13px] mt-1.5" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-            The badge shows that Loop has confirmed this is the real account of a notable person, creator, brand or organisation. It's free. A person on the Loop team reviews every request.
+            {state?.verified
+              ? untilText
+                ? `It stays on your profile until ${untilText}.`
+                : "It has no end date."
+              : "A badge shows next to your name everywhere on Loop. A person on the Loop team checks every request and payment by hand."}
           </p>
         </div>
 
         {!state ? (
           <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
-        ) : state.verified ? (
-          <div className="rounded-2xl p-4 mt-6 text-center" style={{ background: "var(--surface)" }}>
-            <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              Keep your account public and follow the Community Guidelines. A badge can be removed if the account changes its name to mislead people, breaks the rules, or is sold.
-            </p>
-          </div>
         ) : pending ? (
           <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
-            <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>We're reviewing your request</p>
+            <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>We're checking your payment</p>
             <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              Sent {timeAgo(req.created_at)} ago. You'll get a notification when it's decided. Loop will never ask for your password or money for a badge.
+              {req.plan ? `${badgePlanOf(req.plan).name} · ৳${req.amount || ""} · TrxID ${req.trx_id || ""}. ` : ""}
+              Sent {timeAgo(req.created_at)} ago. You'll get a notification when it's decided. Loop will never ask for your password or PIN.
+            </p>
+          </div>
+        ) : lifetime ? (
+          <div className="rounded-2xl p-4 mt-6 text-center" style={{ background: "var(--surface)" }}>
+            <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              Follow the Community Guidelines. A badge can be removed if the account changes its name to mislead people, breaks the rules, or is sold.
             </p>
           </div>
         ) : (
@@ -1377,9 +1698,30 @@ function VerificationRequestScreen({ onBack }) {
               <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
                 <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Your last request wasn't approved</p>
                 {req.note && <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{req.note}</p>}
-                <p className="text-[12px] mt-1.5" style={{ color: "var(--text-muted)" }}>You can ask again 30 days after the decision.</p>
               </div>
             )}
+
+            <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>{state.verified ? "Renew or change your badge" : "Choose a badge"}</p>
+            <div className="flex flex-col gap-2">
+              {BADGE_PLANS.map((p) => {
+                const on = plan === p.key;
+                return (
+                  <button
+                    key={p.key}
+                    onClick={() => setPlan(p.key)}
+                    className="flex items-center gap-3 rounded-2xl px-3.5 py-3 text-left transition-transform active:scale-[0.99]"
+                    style={{ background: "var(--surface)", border: on ? `2px solid ${BADGE_TIERS[p.key].fill}` : "2px solid transparent" }}
+                  >
+                    <VerifiedBadge size={40} tier={p.key} />
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>{p.name}</span>
+                      <span className="block text-[12px]" style={{ color: "var(--text-muted)" }}>{p.line} · {p.blurb}</span>
+                    </span>
+                    <span className="text-[15px] shrink-0" style={{ color: "var(--text)", fontWeight: 800 }}>৳{Number(prices[p.key]) || APP_CONFIG_DEFAULTS.badge_prices[p.key]}</span>
+                  </button>
+                );
+              })}
+            </div>
 
             <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Checklist</p>
             <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
@@ -1396,71 +1738,80 @@ function VerificationRequestScreen({ onBack }) {
               ))}
             </div>
 
-            <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>What the team looks for</p>
-            <div className="flex flex-col gap-2">
-              {[
-                ["Authentic", "A real person, registered business or organisation."],
-                ["Unique", "The only account for that person or business."],
-                ["Notable", "Known and searched for — for example in news articles. Paid posts and press releases don't count."],
-                ["Complete", "A public account with a photo, bio and recent posts."],
-              ].map(([h, t]) => (
-                <p key={h} className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                  <span style={{ color: "var(--text)", fontWeight: 700 }}>{h}.</span> {t}
+            <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Pay</p>
+            {openMethods.length === 0 ? (
+              <div className="rounded-2xl p-4" style={{ background: "var(--surface)" }}>
+                <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Payments open soon</p>
+                <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                  Badges can't be bought yet. Don't send money to anyone who says they can sell you a Loop badge.
                 </p>
-              ))}
-            </div>
-
-            <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Your request</p>
-            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Name you're known by</label>
-            <input value={fullName} onChange={(e) => setFullName(e.target.value.slice(0, 80))} className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
-            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Category</label>
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {VERIFY_CATEGORIES.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setCategory(c)}
-                  className="rounded-full px-3 h-8 text-[12.5px]"
-                  style={{
-                    fontWeight: 600,
-                    background: category === c ? "var(--text)" : "var(--surface)",
-                    color: category === c ? "var(--bg)" : "var(--text)",
-                    border: "1px solid var(--border)",
-                  }}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Country or region</label>
-            <input value={country} onChange={(e) => setCountry(e.target.value.slice(0, 60))} className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
-            <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Links that show you're notable (news articles, official site) — at least one</label>
-            {links.map((l, i) => (
-              <input
-                key={i}
-                value={l}
-                onChange={(e) => setLinks((prev) => prev.map((x, j) => (j === i ? e.target.value.slice(0, 300) : x)))}
-                placeholder="https://"
-                inputMode="url"
-                className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-2"
-                style={box}
-              />
-            ))}
-            <label className="text-[11px] block mt-1 mb-1.5" style={{ color: "var(--text-muted)" }}>Why should this account be verified?</label>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value.slice(0, 1000))}
-              rows={4}
-              placeholder="Who you are and why people look for your account"
-              className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none"
-              style={box}
-            />
-            <p className="text-[11px] text-right mt-1" style={{ color: "var(--text-muted)" }}>{reason.trim().length}/1000 · at least 20</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2 mb-3">
+                  {openMethods.map(([k, label]) => (
+                    <button
+                      key={k}
+                      onClick={() => setMethod(k)}
+                      className="rounded-full px-4 h-9 text-[13px]"
+                      style={{ fontWeight: 700, background: useMethod === k ? "var(--text)" : "var(--surface)", color: useMethod === k ? "var(--bg)" : "var(--text)", border: "1px solid var(--border)" }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded-2xl p-4 mb-3" style={{ background: "var(--surface)" }}>
+                  <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                    Use <span style={{ color: "var(--text)", fontWeight: 700 }}>Send Money</span> in your {useMethod === "bkash" ? "bKash" : "Nagad"} app to send exactly
+                  </p>
+                  <p className="text-[22px] mt-1" style={{ color: "var(--text)", fontWeight: 800 }}>৳{price}</p>
+                  <div className="flex items-center justify-between gap-3 mt-1">
+                    <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700, letterSpacing: 0.5 }}>{payNumber}</p>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(payNumber);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 1500);
+                        } catch {}
+                      }}
+                      className="rounded-lg px-3 h-8 text-[12px]"
+                      style={{ border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700 }}
+                    >
+                      {copied ? "Copied" : "Copy number"}
+                    </button>
+                  </div>
+                  <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>Then type the Transaction ID (TrxID) from the confirmation message below.</p>
+                </div>
+                <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Number you paid from</label>
+                <input value={payer} onChange={(e) => setPayer(e.target.value.slice(0, 15))} inputMode="tel" placeholder="01XXXXXXXXX" className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
+                <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Transaction ID (TrxID)</label>
+                <input value={trx} onChange={(e) => setTrx(e.target.value.slice(0, 30))} autoCapitalize="characters" placeholder="e.g. BGK7A1X2YZ" className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
+                <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Name you're known by</label>
+                <input value={fullName} onChange={(e) => setFullName(e.target.value.slice(0, 80))} className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
+                <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Category</label>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {VERIFY_CATEGORIES.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setCategory(c)}
+                      className="rounded-full px-3 h-8 text-[12.5px]"
+                      style={{ fontWeight: 600, background: category === c ? "var(--text)" : "var(--surface)", color: category === c ? "var(--bg)" : "var(--text)", border: "1px solid var(--border)" }}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+                <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Anything the team should know (optional)</label>
+                <textarea value={note} onChange={(e) => setNote(e.target.value.slice(0, 500))} rows={2} className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none" style={box} />
+              </>
+            )}
           </>
         )}
 
         {err && <p className="text-xs mt-3" style={{ color: "var(--heart)" }}>{err}</p>}
 
-        {state && !state.verified && !pending && (
+        {state && !lifetime && !pending && openMethods.length > 0 && (
           <>
             <button
               onClick={submit}
@@ -1468,14 +1819,97 @@ function VerificationRequestScreen({ onBack }) {
               className="w-full rounded-xl h-12 text-sm mt-4"
               style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: canSend ? 1 : 0.45 }}
             >
-              {busy ? "Sending…" : "Send request"}
+              {busy ? "Sending…" : `I've paid ৳${price} — send request`}
             </button>
             <p className="text-[11px] text-center mt-2" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
-              We don't ask for ID cards. Loop will never ask for your password or money for a badge.
+              If the payment can't be matched, the request is declined and you can send it again. Loop never asks for your password, PIN or OTP.
             </p>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// Moderation → Badges (admins only): payment numbers, prices and upload limits.
+function AdminAppSettings({ flash }) {
+  const cfg = useAppConfig();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open)
+      setForm({
+        bkash: cfg.badge_pay.bkash || "",
+        nagad: cfg.badge_pay.nagad || "",
+        ocean: String(cfg.badge_prices.ocean),
+        ruby: String(cfg.badge_prices.ruby),
+        gold: String(cfg.badge_prices.gold),
+        max_video_mb: String(cfg.upload.max_video_mb),
+        photo_side: String(cfg.upload.photo_side),
+        photo_side_hq: String(cfg.upload.photo_side_hq),
+      });
+  }, [open]);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : d);
+  const save = async () => {
+    setBusy(true);
+    const jobs = [
+      ["badge_pay", { bkash: form.bkash.replace(/[^0-9+]/g, ""), nagad: form.nagad.replace(/[^0-9+]/g, "") }],
+      ["badge_prices", { ocean: num(form.ocean, 99), ruby: num(form.ruby, 499), gold: num(form.gold, 899) }],
+      ["upload", { ...cfg.upload, max_video_mb: num(form.max_video_mb, 50), photo_side: num(form.photo_side, 1440), photo_side_hq: num(form.photo_side_hq, 2160) }],
+    ];
+    for (const [key, value] of jobs) {
+      const { error } = await supabase.rpc("admin_set_config", { p_key: key, p_value: value });
+      if (error) {
+        setBusy(false);
+        flash(verifyErrorText(error.message));
+        return;
+      }
+    }
+    await loadAppConfig(true);
+    setBusy(false);
+    flash("Settings saved");
+    setOpen(false);
+  };
+  const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
+  const field = (k, label, mode) => (
+    <label className="block mb-2.5">
+      <span className="text-[11px] block mb-1" style={{ color: "var(--text-muted)" }}>{label}</span>
+      <input value={form[k]} onChange={(e) => set(k, e.target.value.slice(0, 20))} inputMode={mode} className="w-full rounded-xl px-3.5 h-10 text-sm outline-none" style={box} />
+    </label>
+  );
+  return (
+    <div className="rounded-2xl mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-3.5 py-3 text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>
+        <span className="flex items-center gap-2">
+          <Settings size={15} color="var(--text-muted)" /> App settings
+        </span>
+        <ChevronRight size={16} color="var(--text-muted)" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+      </button>
+      {open && form && (
+        <div className="px-3.5 pb-3.5">
+          <p className="text-[12px] mb-2" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+            Badge sales stay closed until at least one payment number is filled in. Leave a number empty to close that method.
+          </p>
+          {field("bkash", "bKash number that receives badge payments", "tel")}
+          {field("nagad", "Nagad number that receives badge payments", "tel")}
+          <div className="grid grid-cols-3 gap-2">
+            {field("ocean", "Ocean ৳", "numeric")}
+            {field("ruby", "Ruby ৳", "numeric")}
+            {field("gold", "Gold ৳", "numeric")}
+          </div>
+          <div className="h-px my-2" style={{ background: "var(--border)" }} />
+          {field("max_video_mb", "Largest video, in MB (Supabase free plan stops at 50)", "numeric")}
+          <div className="grid grid-cols-2 gap-2">
+            {field("photo_side", "Photo size, standard (px)", "numeric")}
+            {field("photo_side_hq", "Photo size, highest (px)", "numeric")}
+          </div>
+          <button onClick={save} disabled={busy} className="w-full rounded-xl h-10 text-sm mt-1" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1489,7 +1923,7 @@ function VerificationQueue({ flash }) {
   const load = async () => {
     setRows(null);
     setErr("");
-    const { data, error } = await supabase.rpc("mod_list_verification", { p_status: status });
+    const { data, error } = await supabase.rpc("mod_list_badges", { p_status: status });
     if (error) {
       setErr(/admins_only/.test(error.message) ? "Only admins review badge requests." : verifyErrorText(error.message));
       setRows([]);
@@ -1503,17 +1937,21 @@ function VerificationQueue({ flash }) {
 
   const decide = async (r, approve) => {
     let note = null;
+    const p = badgePlanOf(r.plan);
     if (approve) {
-      if (!window.confirm(`Give @${r.username} the verified badge?`)) return;
+      const ask = r.plan
+        ? `Did ৳${r.amount} arrive by ${r.pay_method === "nagad" ? "Nagad" : "bKash"} with TrxID ${r.trx_id}?\n\nGive @${r.username} the ${p.name} badge for ${p.line}?`
+        : `Give @${r.username} the Ocean badge with no end date?`;
+      if (!window.confirm(ask)) return;
     } else {
-      note = window.prompt("Why isn't it approved? They will see this.", "We couldn't confirm the account is notable yet.");
+      note = window.prompt("Why isn't it approved? They will see this.", r.plan ? "We couldn't find a payment with that transaction ID." : "We couldn't confirm the account yet.");
       if (note === null) return;
     }
     setBusy(r.id);
     const { error } = await supabase.rpc("mod_decide_verification", { p_id: r.id, p_approve: approve, p_note: note });
     setBusy(null);
     if (error) {
-      flash(error.message);
+      flash(verifyErrorText(error.message));
       return;
     }
     flash(approve ? "Badge given" : "Request declined");
@@ -1522,6 +1960,7 @@ function VerificationQueue({ flash }) {
 
   return (
     <div>
+      <AdminAppSettings flash={flash} />
       <div className="flex gap-2 mb-3">
         {[
           ["pending", "Waiting"],
@@ -1556,7 +1995,6 @@ function VerificationQueue({ flash }) {
                 <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>@{r.username}</span>
                 <span className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
                   {r.full_name} · {r.category}
-                  {r.country ? ` · ${r.country}` : ""}
                 </span>
               </span>
               <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>{timeAgo(r.created_at)}</span>
@@ -1564,16 +2002,20 @@ function VerificationQueue({ flash }) {
             <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>
               {formatCount(Number(r.followers || 0))} followers · {formatCount(Number(r.posts || 0))} posts
             </p>
-            <p className="text-[13px] mt-2" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{r.reason}</p>
-            {(r.links || []).length > 0 && (
-              <div className="flex flex-col gap-1 mt-2">
-                {r.links.map((l) => (
-                  <a key={l} href={l} target="_blank" rel="noopener noreferrer nofollow" className="text-[12.5px] truncate" style={{ color: "var(--accent-solid)" }}>
-                    {l}
-                  </a>
-                ))}
+            {r.plan ? (
+              <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 mt-2" style={{ background: "var(--bg-sunken)" }}>
+                <VerifiedBadge size={30} tier={r.plan} />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>
+                    {badgePlanOf(r.plan).name} · ৳{r.amount} · {r.pay_method === "nagad" ? "Nagad" : "bKash"}
+                  </span>
+                  <span className="block text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>From {r.payer} · TrxID {r.trx_id}</span>
+                </span>
               </div>
+            ) : (
+              <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>Older request, sent before badge plans — no payment attached.</p>
             )}
+            <p className="text-[13px] mt-2" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{r.reason}</p>
             {r.note && <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>Note: {r.note}</p>}
             {r.status === "pending" && (
               <div className="flex gap-2 mt-3">
@@ -1583,7 +2025,7 @@ function VerificationQueue({ flash }) {
                   className="rounded-lg px-4 h-9 text-xs"
                   style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy === r.id ? 0.6 : 1 }}
                 >
-                  Give badge
+                  Payment found — give badge
                 </button>
                 <button
                   onClick={() => decide(r, false)}
@@ -2098,7 +2540,7 @@ function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
       return;
     }
     const ids = (data || []).map((a) => a.user_id);
-    const { data: profs } = ids.length ? await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").in("id", ids) : { data: [] };
+    const { data: profs } = ids.length ? await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified, badge_tier").in("id", ids) : { data: [] };
     const by = Object.fromEntries((profs || []).map((p) => [p.id, p]));
     setAdmins(ids.map((id) => by[id] || { id, username: "unknown" }));
   };
@@ -2114,7 +2556,7 @@ function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
     }
     let cancelled = false;
     const t = setTimeout(async () => {
-      const { data } = await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").ilike("username", `%${term}%`).limit(15);
+      const { data } = await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified, badge_tier").ilike("username", `%${term}%`).limit(15);
       if (!cancelled) setFound((data || []).filter((p) => p.id !== channel.owner_id));
     }, 250);
     return () => {
@@ -2163,7 +2605,7 @@ function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
       <Avatar username={p.username || "?"} avatarUrl={p.avatar_url} size={42} />
       <span className="flex-1 min-w-0">
         <span className="flex items-center gap-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
-          {p.full_name || p.username} {p.is_verified && <VerifiedBadge size={12} />}
+          {p.full_name || p.username} {p.is_verified && <VerifiedBadge size={12} tier={p.badge_tier} />}
         </span>
         <span className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>@{p.username}</span>
       </span>
@@ -2329,35 +2771,31 @@ function RepostNoteBubble({ entry, onTap, avatarSize = 34 }) {
       }}
       onTouchStart={(e) => e.stopPropagation()}
       onTouchEnd={(e) => e.stopPropagation()}
-      className="flex flex-col items-start text-left transition-transform active:scale-95"
-      style={{ maxWidth: 220, animation: "loopPop 0.28s ease-out", transformOrigin: "bottom left" }}
+      className="flex items-end text-left transition-transform active:scale-95"
+      style={{ maxWidth: 250, animation: "loopPop 0.28s ease-out", transformOrigin: "bottom left" }}
     >
-      {/* the note, like an Instagram note: a white bubble with a thought trail */}
-      <span
-        className="rounded-[20px] px-3.5 py-2 text-[13.5px]"
-        style={{
-          background: white,
-          color: empty ? "#8E8E93" : "#111111",
-          fontWeight: empty ? 500 : 600,
-          lineHeight: 1.3,
-          wordBreak: "break-word",
-          minWidth: 48,
-          boxShadow: "0 6px 20px rgba(0,0,0,0.22), 0 1px 2px rgba(0,0,0,0.12)",
-        }}
-      >
-        {empty ? (
-          <span className="flex items-center gap-1">
-            <Plus size={13} color="#8E8E93" strokeWidth={2.6} /> Add a note
-          </span>
-        ) : (
-          entry.note
-        )}
-      </span>
-      <span className="rounded-full" style={{ width: 10, height: 10, background: white, marginLeft: 20, marginTop: 3, boxShadow: "0 2px 6px rgba(0,0,0,0.2)" }} />
-      <span className="rounded-full" style={{ width: 5, height: 5, background: white, marginLeft: 16, marginTop: 2, boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
-      <span className="relative rounded-full" style={{ marginTop: 3, padding: 2, background: white, boxShadow: "0 3px 10px rgba(0,0,0,0.28)" }}>
+      <span className="relative rounded-full shrink-0" style={{ padding: 1.5, background: white, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
         <Avatar username={entry.username || "?"} avatarUrl={entry.avatarUrl} size={avatarSize} />
         <RepostBadge size={Math.max(14, Math.round(avatarSize * 0.48))} />
+      </span>
+      {/* the note sits up and to the right of the photo, with a two-dot tail back to it */}
+      <span className="relative" style={{ marginLeft: 7, marginBottom: Math.round(avatarSize * 0.55) }}>
+        <span className="absolute rounded-full" style={{ width: 9, height: 9, left: -3, bottom: -6, background: white, boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+        <span className="absolute rounded-full" style={{ width: 4.5, height: 4.5, left: -8, bottom: -11, background: white, boxShadow: "0 1px 2px rgba(0,0,0,0.2)" }} />
+        <span
+          className="relative block rounded-[18px] px-3 py-[7px] text-[13px]"
+          style={{
+            background: white,
+            color: empty ? "#737373" : "#111111",
+            fontWeight: empty ? 400 : 500,
+            lineHeight: 1.3,
+            wordBreak: "break-word",
+            minWidth: 44,
+            boxShadow: "0 4px 14px rgba(0,0,0,0.22), 0 1px 2px rgba(0,0,0,0.12)",
+          }}
+        >
+          {empty ? "Add a note…" : entry.note}
+        </span>
       </span>
     </button>
   );
@@ -2461,6 +2899,10 @@ const BANNER_KINDS = [
   { key: "thinking", label: "Thinking about", icon: Lightbulb },
   { key: "going", label: "Going to", icon: Plane },
   { key: "training", label: "Training for", icon: Dumbbell },
+  { key: "building", label: "Building", icon: Rocket },
+  { key: "cooking", label: "Cooking", icon: ChefHat },
+  { key: "supporting", label: "Supporting", icon: Trophy },
+  { key: "grateful", label: "Grateful for", icon: HeartHandshake },
 ];
 const bannerKindOf = (key) => BANNER_KINDS.find((b) => b.key === key) || BANNER_KINDS[0];
 
@@ -3558,7 +4000,7 @@ function ChannelRepliesSheet({ post, channel, me, isOwner, canReply, onClose, on
     const list = data || [];
     const ids = [...new Set(list.map((r) => r.user_id))];
     if (ids.length) {
-      const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url, is_verified").in("id", ids);
+      const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url, is_verified, badge_tier").in("id", ids);
       setPeople(Object.fromEntries((profs || []).map((pp) => [pp.id, pp])));
     }
     setRows(list);
@@ -3614,7 +4056,7 @@ function ChannelRepliesSheet({ post, channel, me, isOwner, canReply, onClose, on
                 <Avatar username={pp?.username || "?"} avatarUrl={pp?.avatar_url} size={32} />
                 <div className="flex-1 min-w-0">
                   <p className="text-[12px] flex items-center gap-1" style={{ color: "var(--text)", fontWeight: 700 }}>
-                    {pp?.username || "…"} {pp?.is_verified && <VerifiedBadge size={11} />}
+                    {pp?.username || "…"} {pp?.is_verified && <VerifiedBadge size={11} tier={pp?.badge_tier} />}
                     {r.user_id === channel?.owner_id && (
                       <span className="text-[10px] px-1.5 rounded-full" style={{ background: "var(--surface)", color: "var(--text-muted)", fontWeight: 600 }}>Admin</span>
                     )}
@@ -3733,10 +4175,10 @@ function ChannelPeopleScreen({ channel, owner, me, onClose }) {
       const ids = [...new Set(list.map((c) => c.owner_id))];
       let by = {};
       if (ids.length) {
-        const { data: profs } = await supabase.from("profiles").select("id, username, is_verified").in("id", ids);
+        const { data: profs } = await supabase.from("profiles").select("id, username, is_verified, badge_tier").in("id", ids);
         by = Object.fromEntries((profs || []).map((pp) => [pp.id, pp]));
       }
-      setOthers(list.map((c) => ({ ...c, ownerName: by[c.owner_id]?.username || "", ownerVerified: !!by[c.owner_id]?.is_verified })));
+      setOthers(list.map((c) => ({ ...c, ownerName: by[c.owner_id]?.username || "", ownerVerified: !!by[c.owner_id]?.is_verified, ownerTier: by[c.owner_id]?.badge_tier })));
     })();
   }, [channel.id]);
   const Section = ({ children }) => (
@@ -3753,7 +4195,7 @@ function ChannelPeopleScreen({ channel, owner, me, onClose }) {
               <Avatar username={owner.username} avatarUrl={owner.avatar_url} size={52} />
               <span className="min-w-0">
                 <span className="flex items-center gap-1 text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
-                  {owner.full_name || owner.username} {owner.is_verified && <VerifiedBadge size={13} />}
+                  {owner.full_name || owner.username} {owner.is_verified && <VerifiedBadge size={13} tier={owner.badge_tier} />}
                 </span>
                 <span className="block text-[13px] truncate" style={{ color: "var(--text-muted)" }}>Admin · {owner.username}</span>
               </span>
@@ -3781,7 +4223,7 @@ function ChannelPeopleScreen({ channel, owner, me, onClose }) {
               <span className="flex-1 min-w-0">
                 <span className="block text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{c.name}</span>
                 <span className="flex items-center gap-1 text-[13px] truncate" style={{ color: "var(--text-muted)" }}>
-                  {c.ownerName} {c.ownerVerified && <VerifiedBadge size={11} />}
+                  {c.ownerName} {c.ownerVerified && <VerifiedBadge size={11} tier={c.ownerTier} />}
                 </span>
               </span>
               <button
@@ -3841,7 +4283,7 @@ function ChannelInfoScreen({ channel, owner, me, isOwner, membership, members, p
           <p className="text-[22px] mt-3" style={{ color: "var(--text)", fontWeight: 800 }}>{channel.name}</p>
           {owner && (
             <p className="flex items-center gap-1 text-[14px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-              {owner.username} {owner.is_verified && <VerifiedBadge size={13} />} · {formatCount(members)} {members === 1 ? "member" : "members"}
+              {owner.username} {owner.is_verified && <VerifiedBadge size={13} tier={owner.badge_tier} />} · {formatCount(members)} {members === 1 ? "member" : "members"}
             </p>
           )}
           {channel.description && (
@@ -4062,7 +4504,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
           if (error || !data) return;
           const uids = [...new Set(data.map((r) => r.author_id).filter(Boolean))];
           if (!uids.length) return;
-          const { data: profs } = await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").in("id", uids);
+          const { data: profs } = await supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified, badge_tier").in("id", uids);
           const by = Object.fromEntries((profs || []).map((p) => [p.id, p]));
           setAuthors(Object.fromEntries(data.filter((r) => by[r.author_id]).map((r) => [r.id, by[r.author_id]])));
         });
@@ -4107,7 +4549,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     }
     setChannel(ch);
     const [{ data: prof }, { data: mem }, { data: counts }] = await Promise.all([
-      supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").eq("id", ch.owner_id).maybeSingle(),
+      supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified, badge_tier").eq("id", ch.owner_id).maybeSingle(),
       supabase.from("channel_members").select("muted").eq("channel_id", channelId).eq("user_id", user?.id || "").maybeSingle(),
       supabase.rpc("channel_member_counts", { p_ids: [channelId] }),
     ]);
@@ -4318,7 +4760,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
             <span className="flex items-center gap-1 text-[11.5px] truncate" style={{ color: "var(--text-muted)" }}>
               {owner && (
                 <>
-                  {owner.username} {owner.is_verified && <VerifiedBadge size={11} />} ·
+                  {owner.username} {owner.is_verified && <VerifiedBadge size={11} tier={owner.badge_tier} />} ·
                 </>
               )}{" "}
               {formatCount(members)} {members === 1 ? "member" : "members"}
@@ -4365,7 +4807,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                 className="text-[12px] mt-0.5 flex items-center gap-1"
                 style={{ color: "var(--text-muted)" }}
               >
-                by @{owner.username} {owner.is_verified && <VerifiedBadge size={11} />}
+                by @{owner.username} {owner.is_verified && <VerifiedBadge size={11} tier={owner.badge_tier} />}
               </button>
             )}
             {channel.description && (
@@ -4467,7 +4909,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                               className={`flex items-center gap-1 px-3.5 text-[12.5px] ${post.image_url ? "py-1.5" : "pt-2"}`}
                               style={{ color: "var(--accent-solid)", fontWeight: 700 }}
                             >
-                              {authorName} {author.is_verified && <VerifiedBadge size={11} />}
+                              {authorName} {author.is_verified && <VerifiedBadge size={11} tier={author.badge_tier} />}
                             </button>
                           )}
                           {post.image_url && <img src={post.image_url} alt="" loading="lazy" className="w-full object-cover" style={{ maxHeight: 420 }} />}
@@ -5120,7 +5562,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
         row.source_post_id
           ? supabase.from("posts").select("id, media_url, cover_url").eq("id", row.source_post_id).maybeSingle()
           : Promise.resolve({ data: null }),
-        supabase.from("profiles").select("id, username, avatar_url, is_verified").eq("id", row.owner_id).maybeSingle(),
+        supabase.from("profiles").select("id, username, avatar_url, is_verified, badge_tier").eq("id", row.owner_id).maybeSingle(),
         supabase
           .from("posts")
           .select("id, media_url, media_type, media_count, cover_url, user_id, views_count, created_at")
@@ -5139,6 +5581,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
         ownerId: row.owner_id,
         ownerName: ownerRes.data?.username || "",
         ownerVerified: !!ownerRes.data?.is_verified,
+        ownerTier: ownerRes.data?.badge_tier,
         ownerAvatar: ownerRes.data?.avatar_url || null,
         sourceUrl: srcRes.data?.media_url || null,
         sourcePostId: row.source_post_id || null,
@@ -5297,7 +5740,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
               </p>
               {snd.ownerName && (
                 <button onClick={() => openProfileGlobal(snd.ownerId)} className="flex items-center gap-1 text-[15px] mt-0.5 max-w-full" style={{ color: "var(--text)", fontWeight: 600 }}>
-                  <span className="truncate">{snd.ownerName}</span> {snd.ownerVerified && <VerifiedBadge size={13} />}
+                  <span className="truncate">{snd.ownerName}</span> {snd.ownerVerified && <VerifiedBadge size={13} tier={snd.ownerTier} />}
                 </button>
               )}
             </div>
@@ -6460,7 +6903,7 @@ function InThisPostSheet({ tags, isVideo, onClose, onOpenProfile }) {
       const ids = [...new Set((tags || []).map((t) => t.tagged_user_id))];
       const [{ data: { user } }, { data: profs }] = await Promise.all([
         supabase.auth.getUser(),
-        ids.length ? supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified").in("id", ids) : Promise.resolve({ data: [] }),
+        ids.length ? supabase.from("profiles").select("id, username, full_name, avatar_url, is_verified, badge_tier").in("id", ids) : Promise.resolve({ data: [] }),
       ]);
       if (cancelled) return;
       setMe(user?.id || null);
@@ -6512,7 +6955,7 @@ function InThisPostSheet({ tags, isVideo, onClose, onOpenProfile }) {
                 <div className="min-w-0">
                   <p className="text-sm truncate flex items-center gap-1" style={{ color: "var(--text)", fontWeight: 700 }}>
                     {pp.username}
-                    {pp.is_verified && <VerifiedBadge size={13} />}
+                    {pp.is_verified && <VerifiedBadge size={13} tier={pp.badge_tier} />}
                   </p>
                   {pp.full_name && <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
                 </div>
@@ -6642,6 +7085,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
   // Read straight from the post, so the switch is right wherever this
   // sheet was opened from.
   const [matureNow, setMatureNow] = useState(!!post.is_mature);
+  const [advOpen, setAdvOpen] = useState(false);
   useEffect(() => {
     supabase
       .from("posts")
@@ -6776,6 +7220,21 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
             {menuError && (
               <p className="text-xs px-4 pb-2" style={{ color: "var(--accent-start)" }}>{menuError}</p>
             )}
+            <button
+              onClick={() => setAdvOpen((o) => !o)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm"
+              style={{ color: "var(--text)", textAlign: "left" }}
+            >
+              <span className="flex items-center gap-3">
+                <Settings size={16} color="var(--text)" /> Advanced settings
+              </span>
+              <span className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {[post.hide_likes, post.hide_comments, post.hide_reposts, post.comments_disabled, matureNow].filter(Boolean).length || ""}
+                <ChevronRight size={16} color="var(--text-muted)" style={{ transform: advOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+              </span>
+            </button>
+            {advOpen && (
+              <div className="mx-3 mb-1 rounded-xl" style={{ background: "var(--bg-sunken)" }}>
             <Toggle label="Hide Like Count For This Post" field="hide_likes" value={!!post.hide_likes} />
             <Toggle label="Hide Comment Count For This Post" field="hide_comments" value={!!post.hide_comments} />
             <Toggle
@@ -6811,6 +7270,8 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
                 <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: matureNow ? 17 : 2, transition: "left 0.15s" }} />
               </span>
             </button>
+              </div>
+            )}
 
             <div className="h-px my-1.5" style={{ background: "var(--border)" }} />
 
@@ -6999,9 +7460,9 @@ function StoryComposer({ file, onCancel, onPublished }) {
       setError("Not logged in");
       return;
     }
-    if ((file.type || "").startsWith("video") && file.size > MAX_UPLOAD_VIDEO_BYTES) {
+    if ((file.type || "").startsWith("video") && file.size > maxVideoBytes()) {
       setBusy(false);
-      setError("That video is over 50 MB — pick a shorter one.");
+      setError(`That video is over ${maxVideoMb()} MB — pick a shorter one.`);
       return;
     }
     const upFile = await compressImage(file, 1920);
@@ -9263,21 +9724,37 @@ async function hiddenCommenterSet(postOwnerId) {
 
 // Blue verified tick (given by the admin).
 const BADGE_TIERS = {
-  ocean: { fill: "#1B74E4", label: "Ocean" },
-  ruby: { fill: "#C81D3A", label: "Humanity" },
-  gold: { fill: "#E9A92A", label: "Gold" },
+  ocean: { fill: "#1B74E4", from: "#3BA4FF", to: "#0B57D0", label: "Ocean" },
+  ruby: { fill: "#C81D3A", from: "#FF5470", to: "#A30F2A", label: "Humanity Star" },
+  gold: { fill: "#E9A92A", from: "#FFD970", to: "#D48806", label: "Golden Crown" },
+};
+const BADGE_SHAPES = {
+  ocean: "M12.00,0.80 L13.87,2.58 L16.29,1.65 L17.33,4.02 L19.92,4.08 L19.98,6.67 L22.35,7.71 L21.42,10.13 L23.20,12.00 L21.42,13.87 L22.35,16.29 L19.98,17.33 L19.92,19.92 L17.33,19.98 L16.29,22.35 L13.87,21.42 L12.00,23.20 L10.13,21.42 L7.71,22.35 L6.67,19.98 L4.08,19.92 L4.02,17.33 L1.65,16.29 L2.58,13.87 L0.80,12.00 L2.58,10.13 L1.65,7.71 L4.02,6.67 L4.08,4.08 L6.67,4.02 L7.71,1.65 L10.13,2.58 Z",
+  ruby: "M12.00,0.60 L13.92,4.85 L17.70,2.13 L17.23,6.77 L21.87,6.30 L19.15,10.08 L23.40,12.00 L19.15,13.92 L21.87,17.70 L17.23,17.23 L17.70,21.87 L13.92,19.15 L12.00,23.40 L10.08,19.15 L6.30,21.87 L6.77,17.23 L2.13,17.70 L4.85,13.92 L0.60,12.00 L4.85,10.08 L2.13,6.30 L6.77,6.77 L6.30,2.13 L10.08,4.85 Z",
+  gold: "M12.00,4.40 L14.41,8.18 L18.79,7.21 L17.82,11.59 L21.60,14.00 L17.82,16.41 L18.79,20.79 L14.41,19.82 L12.00,23.60 L9.59,19.82 L5.21,20.79 L6.18,16.41 L2.40,14.00 L6.18,11.59 L5.21,7.21 L9.59,8.18 Z",
 };
 
-// Three badge designs: ocean (round seal, 1 month), ruby (starburst, 6 months),
-// gold (8-point star with crown, 12 months). Default is the ocean seal.
+// Three badge designs: ocean (round blue seal, 1 month), ruby (red
+// starburst, 6 months), gold (8-point star wearing a crown, 12 months).
 function VerifiedBadge({ size = 14, tier = "ocean" }) {
-  const t = BADGE_TIERS[tier] || BADGE_TIERS.ocean;
-  const shape = tier === "ruby" ? "M12.00,0.60 L13.92,4.85 L17.70,2.13 L17.23,6.77 L21.87,6.30 L19.15,10.08 L23.40,12.00 L19.15,13.92 L21.87,17.70 L17.23,17.23 L17.70,21.87 L13.92,19.15 L12.00,23.40 L10.08,19.15 L6.30,21.87 L6.77,17.23 L2.13,17.70 L4.85,13.92 L0.60,12.00 L4.85,10.08 L2.13,6.30 L6.77,6.77 L6.30,2.13 L10.08,4.85 Z" : tier === "gold" ? "M12.00,1.80 L14.30,6.46 L19.21,4.79 L17.54,9.70 L22.20,12.00 L17.54,14.30 L19.21,19.21 L14.30,17.54 L12.00,22.20 L9.70,17.54 L4.79,19.21 L6.46,14.30 L1.80,12.00 L6.46,9.70 L4.79,4.79 L9.70,6.46 Z" : "M12.00,0.80 L13.87,2.58 L16.29,1.65 L17.33,4.02 L19.92,4.08 L19.98,6.67 L22.35,7.71 L21.42,10.13 L23.20,12.00 L21.42,13.87 L22.35,16.29 L19.98,17.33 L19.92,19.92 L17.33,19.98 L16.29,22.35 L13.87,21.42 L12.00,23.20 L10.13,21.42 L7.71,22.35 L6.67,19.98 L4.08,19.92 L4.02,17.33 L1.65,16.29 L2.58,13.87 L0.80,12.00 L2.58,10.13 L1.65,7.71 L4.02,6.67 L4.08,4.08 L6.67,4.02 L7.71,1.65 L10.13,2.58 Z";
+  const key = BADGE_TIERS[tier] ? tier : "ocean";
+  const t = BADGE_TIERS[key];
+  const gold = key === "gold";
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" className="shrink-0" aria-label={`Verified ${t.label}`}>
-      {tier === "gold" && <path d="M6.2 4.6l1.6 2.8 4.2-3.4 4.2 3.4 1.6-2.8 0.9 4.7H5.3z" fill="#E9A92A" stroke="#8A5A00" strokeWidth="0.5" strokeLinejoin="round" />}
-      <path d={shape} fill={t.fill} stroke={tier === "gold" ? "#8A5A00" : "none"} strokeWidth={tier === "gold" ? 0.4 : 0} strokeLinejoin="round" />
-      <path d="M7.6 12.2l3 3 5.8-6" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width={size} height={size} viewBox="0 0 24 24" className="shrink-0" aria-label={`Verified · ${t.label}`}>
+      <defs>
+        <linearGradient id={`loop-badge-${key}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={t.from} />
+          <stop offset="1" stopColor={t.to} />
+        </linearGradient>
+      </defs>
+      <path d={BADGE_SHAPES[key]} fill={`url(#loop-badge-${key})`} />
+      {gold && <path d="M7.1 6.9L6 1.5l3.4 2.6L12 .7l2.6 3.4L18 1.5l-1.1 5.4z" fill="#F4B41A" stroke="#9A6400" strokeWidth="0.55" strokeLinejoin="round" />}
+      {gold ? (
+        <path d="M8.4 14.2l2.5 2.5 4.8-5" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      ) : (
+        <path d="M7.6 12.2l3 3 5.8-6" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      )}
     </svg>
   );
 }
@@ -9303,7 +9780,7 @@ function PostAuthorLine({ post, onOpenProfile, light = false, className = "text-
   return (
     <span className={`flex items-center gap-1 min-w-0 ${className}`} style={{ color, fontWeight: 600 }}>
       <button onClick={() => onOpenProfile?.(post.user_id)} className="truncate text-left">{post.username}</button>
-      {post.verified && <VerifiedBadge size={13} />}
+      {post.verified && <VerifiedBadge size={13} tier={post.tier} />}
       {post.isFavorite && <Star size={12} color="#F5B800" fill="#F5B800" className="shrink-0" />}
       {collabs.length > 0 && (
         <>
@@ -9379,7 +9856,7 @@ function AboutAccountSheet({ userId, onClose, onOpenProfile }) {
               <Avatar username={info.username} avatarUrl={info.avatar_url} size={76} />
               <span className="flex items-center gap-1 mt-2 text-[16px]" style={{ color: "var(--text)", fontWeight: 700 }}>
                 {info.username}
-                {info.is_verified && <VerifiedBadge size={15} />}
+                {info.is_verified && <VerifiedBadge size={15} tier={info.badge_tier} />}
               </span>
               {info.full_name && <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{info.full_name}</span>}
               {info.category && <span className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{info.category}</span>}
@@ -9666,7 +10143,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     });
     const peopleIds = [...new Set([...rows.map((p) => p.user_id), ...(tagsData || []).map((t) => t.tagged_user_id), ...Object.values(likerFor)])];
     const [{ data: profilesData }, collabMap, favs] = await Promise.all([
-      supabase.from("profiles").select("id, username, avatar_url, is_verified").in("id", peopleIds),
+      supabase.from("profiles").select("id, username, avatar_url, is_verified, badge_tier").in("id", peopleIds),
       fetchCollabMap(ids),
       getFavorites(),
     ]);
@@ -9690,6 +10167,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         tags: count(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
         media: mediaMap[p.id] || null,
         verified: !!prof[p.user_id]?.is_verified,
+        tier: prof[p.user_id]?.badge_tier,
         collabs: collabMap[p.id] || [],
         isFavorite: favs.has(p.user_id),
         iFollow: followSet.has(p.user_id),
@@ -10610,7 +11088,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
     ]);
     const peopleIds = [...new Set([...rows.map((p) => p.user_id), ...(tagsData || []).map((t) => t.tagged_user_id)])];
     const [{ data: profilesData }, collabMap] = await Promise.all([
-      supabase.from("profiles").select("id, username, avatar_url, is_verified").in("id", peopleIds),
+      supabase.from("profiles").select("id, username, avatar_url, is_verified, badge_tier").in("id", peopleIds),
       fetchCollabMap(ids),
     ]);
     const prof = Object.fromEntries((profilesData || []).map((p) => [p.id, p]));
@@ -10632,6 +11110,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         commentCount: of(commentsData, p.id).length,
         tags: of(tagsData, p.id).map((t) => ({ tagged_user_id: t.tagged_user_id, username: prof[t.tagged_user_id]?.username || "unknown" })),
         verified: !!prof[p.user_id]?.is_verified,
+        tier: prof[p.user_id]?.badge_tier,
         collabs: collabMap[p.id] || [],
       };
     }).map((p) => applyCounts(p, counts[p.id]));
@@ -13355,8 +13834,8 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
     if (!selected) return;
-    if (selected.size > MAX_UPLOAD_VIDEO_BYTES) {
-      setError("That video is over 50 MB — pick a shorter one.");
+    if (selected.size > maxVideoBytes()) {
+      setError(`That video is over ${maxVideoMb()} MB — pick a shorter one.`);
       e.target.value = "";
       return;
     }
@@ -13373,9 +13852,9 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
     e.target.value = "";
     if (picked.length === 0) return;
     setError("");
-    const tooBig = picked.filter((f) => (f.type || "").startsWith("video") && f.size > MAX_UPLOAD_VIDEO_BYTES);
+    const tooBig = picked.filter((f) => (f.type || "").startsWith("video") && f.size > maxVideoBytes());
     if (tooBig.length) {
-      setLimitNotice("Videos over 50 MB were skipped — pick shorter ones.");
+      setLimitNotice(`Videos over ${maxVideoMb()} MB were skipped — pick shorter ones.`);
       picked.splice(0, picked.length, ...picked.filter((f) => !tooBig.includes(f)));
       if (picked.length === 0) return;
     }
@@ -15275,6 +15754,7 @@ function SettingsScreen({
   if (view === "counts") return <CountsSettingsScreen onBack={() => setView("menu")} />;
   if (typeof view === "string" && view.startsWith("legal:")) return <LegalScreen doc={view.slice(6)} onBack={() => setView("about")} />;
   if (view === "verify") return <VerificationRequestScreen onBack={() => setView("menu")} />;
+  if (view === "media") return <MediaQualityScreen onBack={() => setView("menu")} />;
 
   if (view === "about") {
     return (
@@ -15406,7 +15886,8 @@ function SettingsScreen({
         { icon: CircleUserRound, label: "Edit profile", onClick: () => (onOpenEditProfile ? onOpenEditProfile() : setView("editProfile")) },
         { icon: KeyRound, label: "Password and security", onClick: () => setView("security") },
         { icon: Shield, label: "Account status", onClick: () => setView("status") },
-        { icon: BadgeCheck, label: "Request verified badge", onClick: () => setView("verify") },
+        { icon: BadgeCheck, label: "Verified badge", onClick: () => setView("verify") },
+        { icon: Wifi, label: "Media quality", onClick: () => setView("media") },
       ],
     },
     {
@@ -19903,7 +20384,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
 
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("id, username, full_name, bio, avatar_url, avatar_video_url, avatar_video_plays, note, note_created_at, links, gender, is_private, contact_email, contact_phone, contact_email_public, contact_phone_public, is_verified, category")
+      .select("id, username, full_name, bio, avatar_url, avatar_video_url, avatar_video_plays, note, note_created_at, links, gender, is_private, contact_email, contact_phone, contact_email_public, contact_phone_public, is_verified, badge_tier, category")
       .eq("id", targetId)
       .single();
     setProfile(profileData);
@@ -20375,7 +20856,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
             <span className="text-base truncate" style={{ color: "var(--text)", fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>
               {profile.username}
             </span>
-            {profile.is_verified && <VerifiedBadge size={15} />}
+            {profile.is_verified && <VerifiedBadge size={15} tier={profile.badge_tier} />}
             {isOwnProfile && <ChevronLeft size={16} color="var(--text-muted)" style={{ transform: "rotate(-90deg)" }} />}
           </button>
           {profile.is_private && (
@@ -20567,10 +21048,19 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
                 opacity: followBusy ? 0.6 : 1,
               }}
             >
-              {isFollowing && bellOn && <BellRing size={13} />}
               {isFollowing ? "Following" : "Follow"}
               {isFollowing && <ChevronDown size={14} />}
             </button>
+            {isFollowing && (
+              <button
+                onClick={() => setSheet("notifyPrefs")}
+                aria-label={bellOn ? "Notifications are on" : "Turn on notifications"}
+                className="rounded-lg h-9 w-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: bellOn ? "var(--accent-solid)" : "var(--text)" }}
+              >
+                {bellOn ? <BellRing key="on" size={17} className="loop-bell-on" /> : <Bell size={17} />}
+              </button>
+            )}
             {!myRel.blockedBy && (
               <button
                 onClick={() => onMessage?.(profile)}
@@ -20938,18 +21428,35 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
                   <StoryMenuRow icon={<Shield size={17} color="var(--heart)" />} label="Ban permanently" danger onClick={() => modBanProfile(null)} />
                 )}
                 <StoryMenuRow icon={<Shield size={17} color="var(--text)" />} label="Lift suspension" onClick={modUnbanProfile} />
-                {staffRole === "admin" && (
+                {staffRole === "admin" &&
+                  BADGE_PLANS.map((bp) => (
+                    <StoryMenuRow
+                      key={bp.key}
+                      icon={<VerifiedBadge size={17} tier={bp.key} />}
+                      label={`Give ${bp.name} badge · ${bp.line}`}
+                      onClick={async () => {
+                        setSheet(null);
+                        const { error } = await supabase.rpc("admin_grant_badge", { p_user: profile.id, p_tier: bp.key, p_months: bp.months });
+                        if (error) flashNote(verifyErrorText(error.message));
+                        else {
+                          setProfile((prev) => ({ ...prev, is_verified: true, badge_tier: bp.key }));
+                          flashNote(`${bp.name} badge given`);
+                        }
+                      }}
+                    />
+                  ))}
+                {staffRole === "admin" && profile.is_verified && (
                   <StoryMenuRow
-                    icon={<VerifiedBadge size={17} />}
-                    label={profile.is_verified ? "Remove verified badge" : "Give verified badge"}
+                    icon={<BadgeCheck size={17} color="var(--heart)" />}
+                    label="Remove badge"
+                    danger
                     onClick={async () => {
                       setSheet(null);
-                      const on = !profile.is_verified;
-                      const { error } = await supabase.rpc("admin_set_verified", { p_user: profile.id, p_on: on });
-                      if (error) flashNote(error.message);
+                      const { error } = await supabase.rpc("admin_revoke_badge", { p_user: profile.id });
+                      if (error) flashNote(verifyErrorText(error.message));
                       else {
-                        setProfile((prev) => ({ ...prev, is_verified: on }));
-                        flashNote(on ? "Verified badge given" : "Badge removed");
+                        setProfile((prev) => ({ ...prev, is_verified: false, badge_tier: null }));
+                        flashNote("Badge removed");
                       }
                     }}
                   />
@@ -27643,6 +28150,7 @@ export default function App() {
       });
     // Scheduled posts whose time has come tell bell subscribers. pg_cron
     // does this every minute; this is the backup if pg_cron is off.
+    loadAppConfig();
     supabase.rpc("bell_send_due").then(
       () => {},
       () => {}
