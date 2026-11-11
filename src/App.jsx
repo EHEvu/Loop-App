@@ -381,7 +381,9 @@ function createDemoClient(mode) {
       { key: "upload", value: { max_video_mb: 50, video_height: 720 } },
       { key: "badge_prices", value: { ocean: 99, ruby: 499, gold: 899 } },
       { key: "badge_pay", value: { bkash: "01000000000", nagad: "" } },
+      { key: "support_pay", value: { bkash: "01000000000", nagad: "01000000001" } },
     ],
+    support_gifts: [],
     saved_sounds: [],
     watch_history: [],
     post_feedback: [],
@@ -706,6 +708,21 @@ function createDemoClient(mode) {
     verification_checklist: () =>
       ["account_30_days", "profile_photo", "full_name", "bio", "public_account", "five_posts", "no_suspension", "not_recently_declined"].map((rule) => ({ rule, ok: true })),
     badge_pay_info: () => ({ bkash: "01000000000", nagad: "", bkash_open: true, nagad_open: false, eligible: true }),
+    support_pay_info: () => ({ bkash: "01000000000", nagad: "01000000001", bkash_open: true, nagad_open: true }),
+    submit_support: (a) => {
+      if (db.support_gifts.some((g) => g.trx_id.toLowerCase() === String(a.p_trx).toLowerCase())) throw new Error("trx_used");
+      const id = uuid();
+      db.support_gifts.push({ id, user_id: ME, amount: a.p_amount, method: a.p_method, payer: a.p_payer, trx_id: a.p_trx, note: a.p_note, status: "pending", created_at: new Date().toISOString() });
+      return id;
+    },
+    mod_list_support: ({ p_status = "pending" }) =>
+      db.support_gifts.filter((g) => g.status === p_status).map((g) => ({ ...g, username: usernameOf(g.user_id), avatar_url: relationOf(g.user_id)?.avatar_url })),
+    mod_decide_support: ({ p_id, p_ok }) => {
+      const g = db.support_gifts.find((x) => x.id === p_id);
+      if (!g) throw new Error("not_pending");
+      g.status = p_ok ? "confirmed" : "rejected";
+      return null;
+    },
     request_badge: (a) => {
       if (db.verification_requests.some((r) => r.user_id === ME && r.status === "pending")) throw new Error("already_pending");
       const id = uuid();
@@ -840,6 +857,11 @@ function createDemoClient(mode) {
 }
 
 const supabase = DEMO_MODE ? createDemoClient(DEMO_MODE) : liveSupabase;
+
+function IconMotions() {
+  useIconMotions();
+  return null;
+}
 
 // A thin strip across the top while the demo is open; the app moves down
 // to make room for it.
@@ -1039,6 +1061,55 @@ const THEME_CSS = `
     55% { transform: translateY(var(--dy)) scale(var(--s)) rotate(var(--r)); opacity: 1; }
     82% { opacity: 1; }
     100% { transform: translateY(calc(var(--dy) * 0.45)) scale(calc(var(--s) * 1.12)) rotate(calc(var(--r) * -0.6)); opacity: 0; }
+  }
+  @keyframes loopFxToss {
+    0% { transform: translateY(0) scale(0.3) rotate(0deg); opacity: 0; animation-timing-function: cubic-bezier(.2,.75,.4,1); }
+    8% { opacity: 1; }
+    42% { transform: translateY(var(--up)) scale(var(--s)) rotate(calc(var(--r) * 0.5)); animation-timing-function: cubic-bezier(.55,0,.85,.45); }
+    86% { opacity: 1; }
+    100% { transform: translateY(var(--down)) scale(var(--s)) rotate(var(--r)); opacity: 0; }
+  }
+  @keyframes loopFxFloat {
+    0% { transform: translateY(0) scale(0.35); opacity: 0; }
+    12% { transform: translateY(calc(var(--dy) * 0.08)) scale(var(--s)); opacity: 1; }
+    80% { opacity: 0.95; }
+    100% { transform: translateY(var(--dy)) scale(calc(var(--s) * 0.85)); opacity: 0; }
+  }
+  @keyframes loopFxSway {
+    0% { transform: translateX(0); }
+    25% { transform: translateX(var(--sx)); }
+    75% { transform: translateX(calc(var(--sx) * -1)); }
+    100% { transform: translateX(0); }
+  }
+  @keyframes loopFxFall {
+    0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+    8% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translateY(var(--dy)) rotate(var(--r)); opacity: 0; }
+  }
+  @keyframes loopFxOrbit {
+    0% { transform: rotate(var(--a0)); }
+    100% { transform: rotate(calc(var(--a0) + var(--rot))); }
+  }
+  @keyframes loopFxRadius {
+    0% { transform: translateX(0) scale(0.2); opacity: 0; }
+    15% { opacity: 1; }
+    80% { opacity: 1; }
+    100% { transform: translateX(var(--rad)) scale(var(--s)); opacity: 0; }
+  }
+  @keyframes loopFxStamp {
+    0% { transform: scale(3.2); opacity: 0; }
+    22% { transform: scale(0.88); opacity: 1; }
+    34% { transform: scale(1.1); }
+    46% { transform: scale(1); }
+    82% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(0.5); opacity: 0; }
+  }
+  @keyframes loopFxFlame {
+    0% { transform: translateY(0) scale(0.4); opacity: 0; }
+    15% { transform: translateY(calc(var(--dy) * 0.12)) scale(var(--s)); opacity: 1; }
+    45% { transform: translateY(calc(var(--dy) * 0.5)) scale(calc(var(--s) * 1.15)) rotate(calc(var(--r) * 0.4)); }
+    100% { transform: translateY(var(--dy)) scale(0.35) rotate(var(--r)); opacity: 0; }
   }
   @keyframes loopBellRing {
     0%, 100% { transform: rotate(0deg); }
@@ -1414,9 +1485,27 @@ function fxEmit(detail) {
 function playReactionBurst(emoji, x, y) {
   fxEmit({ kind: "burst", emoji, x, y });
 }
-// Tapping a big emoji in a chat sends a shower of it across the screen.
-function playEmojiShower(emoji, x, y, fromRight) {
-  fxEmit({ kind: "shower", emoji, x, y, fromRight });
+// Tapping a big emoji in a chat sends it flying. Each kind of emoji moves
+// its own way — hearts float up, tears rain down, a party bursts like
+// confetti, fire rises — and anything else takes turns between motions so
+// tapping again never looks the same.
+const SHOWER_STYLES = [
+  [/❤|💖|💕|💗|💘|💞|💓|💝|😍|🥰|😘|😻|🫶|♥/u, "float"],
+  [/🎉|🥳|🎊|🎈|🎁|🪅/u, "confetti"],
+  [/😂|🤣|😆|😹|😄|😁|😜|🤪/u, "fountain"],
+  [/😢|😭|💧|🌧|☔|💦|😿|🥲|😥/u, "rain"],
+  [/⭐|🌟|✨|💫|🌠|🪄|🌙|🌈|🦄/u, "spiral"],
+  [/👍|👏|💯|👌|✅|🙌|💪|🏆|🥇|👑/u, "stamp"],
+  [/🔥|🌋|☄|💥|🚀/u, "flames"],
+];
+const SHOWER_TURNS = ["arc", "fountain", "spiral", "confetti", "float", "stamp"];
+let showerTurn = 0;
+function showerStyleFor(emoji) {
+  for (const [re, style] of SHOWER_STYLES) if (re.test(emoji)) return style;
+  return SHOWER_TURNS[showerTurn++ % SHOWER_TURNS.length];
+}
+function playEmojiShower(emoji, x, y, fromRight, style) {
+  fxEmit({ kind: "shower", emoji, x, y, fromRight, style: style || showerStyleFor(emoji) });
 }
 function centerOf(el) {
   const r = el?.getBoundingClientRect?.();
@@ -1430,6 +1519,135 @@ function prefersLessMotion() {
   }
 }
 // The bubble itself gives a little wobble when tapped.
+// People you follow come first, then people who follow you — the way
+// Instagram fills its people pickers before you type anything.
+async function suggestedPeople(meId, limit = 60) {
+  if (!meId) return [];
+  const [outs, ins] = await Promise.all([
+    supabase.from("follows").select("following_id, created_at").eq("follower_id", meId).order("created_at", { ascending: false }).limit(limit),
+    supabase.from("follows").select("follower_id, created_at").eq("following_id", meId).order("created_at", { ascending: false }).limit(limit),
+  ]);
+  const ids = [...new Set([...(outs.data || []).map((r) => r.following_id), ...(ins.data || []).map((r) => r.follower_id)])].filter((id) => id && id !== meId).slice(0, limit);
+  if (!ids.length) return [];
+  const { data } = await supabase.from("profiles").select("id, username, full_name, avatar_url").in("id", ids);
+  const byId = new Map((data || []).map((p) => [p.id, p]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+// Typing searches everyone on Loop by username or name.
+function usePeopleSearch(query, meId) {
+  const [results, setResults] = useState([]);
+  useEffect(() => {
+    const q = String(query || "").trim().replace(/[%,()*\\]/g, "");
+    if (!q) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, full_name, avatar_url")
+        .or(`username.ilike.%${q}%,full_name.ilike.%${q}%`)
+        .neq("id", meId || "")
+        .limit(30);
+      if (!cancelled) setResults(data || []);
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [query, meId]);
+  return results;
+}
+const personMatches = (p, q) => {
+  const s = String(q || "").trim().toLowerCase();
+  return !s || String(p.username || "").toLowerCase().includes(s) || String(p.full_name || "").toLowerCase().includes(s);
+};
+
+// ---- Icon animations ----
+// Every Lucide icon carries its name as a class (lucide-heart, lucide-bookmark…),
+// so one listener gives each kind of icon its own little motion when tapped,
+// the way Telegram's icons come alive.
+const ICON_MOTIONS = {
+  pop: [[1, 0], [1.32, -8], [0.9, 5], [1.06, -2], [1, 0]],
+  drop: "drop",
+  fly: "fly",
+  wiggle: [[1, 0], [1.08, -14], [1.08, 12], [1.04, -8], [1, 4], [1, 0]],
+  spin: "spin",
+  spin90: "spin90",
+  ring: [[1, 0], [1.06, 18], [1.06, -16], [1.04, 11], [1, -7], [1, 3], [1, 0]],
+  bounce: "bounce",
+  clap: [[1, 0], [1.1, -16], [0.96, 6], [1, 0]],
+  nudge: "nudge",
+  shake: "shake",
+  tap: [[1, 0], [0.86, 0], [1.08, 0], [1, 0]],
+};
+const ICON_KIND = {
+  heart: "pop", "heart-handshake": "pop", star: "spin", sparkles: "spin",
+  bookmark: "drop", pin: "drop", "map-pin": "drop", download: "drop",
+  send: "fly", "send-horizontal": "fly", share: "fly", "share-2": "pop",
+  "message-circle": "wiggle", "messages-square": "wiggle", search: "wiggle", smile: "wiggle", sticker: "wiggle",
+  "volume-2": "wiggle", "volume-x": "wiggle", volume: "wiggle", music: "wiggle", "music-2": "wiggle",
+  "repeat-2": "spin", repeat: "spin", "refresh-cw": "spin", "rotate-cw": "spin", settings: "spin", "settings-2": "spin",
+  "sliders-horizontal": "wiggle", menu: "wiggle",
+  plus: "spin90", "plus-square": "spin90", "square-plus": "spin90", "circle-plus": "spin90", "plus-circle": "spin90", x: "spin90",
+  bell: "ring", "bell-ring": "ring", "bell-off": "ring",
+  home: "bounce", house: "bounce", user: "pop", "circle-user": "pop", "user-round": "pop", "user-circle": "pop", users: "pop",
+  clapperboard: "clap", film: "clap", camera: "pop", image: "pop", "image-plus": "pop", mic: "pop", video: "pop",
+  "chevron-left": "nudge", "arrow-left": "nudge",
+  trash: "shake", "trash-2": "shake", flag: "shake", ban: "shake",
+  copy: "pop", link: "pop", "link-2": "pop", check: "pop", "badge-check": "pop", gift: "bounce", "hand-heart": "pop",
+};
+function iconKindOf(svg) {
+  const cls = String(svg.getAttribute("class") || "");
+  const names = cls.split(/\s+/).filter((c) => c.startsWith("lucide-")).map((c) => c.slice(7));
+  for (const n of names) if (ICON_KIND[n]) return ICON_KIND[n];
+  return svg.dataset.motion || "tap";
+}
+function playIconMotion(svg, kind) {
+  if (!svg?.animate || prefersLessMotion()) return;
+  const k = kind || iconKindOf(svg);
+  let frames;
+  let opts = { duration: 560, easing: "cubic-bezier(.3,1.4,.5,1)" };
+  if (Array.isArray(ICON_MOTIONS[k])) frames = ICON_MOTIONS[k].map(([s, r]) => ({ transform: `scale(${s}) rotate(${r}deg)` }));
+  else if (k === "drop") frames = [{ transform: "translateY(0)" }, { transform: "translateY(-8px) scale(1.06)" }, { transform: "translateY(2px) scale(1.04,0.92)" }, { transform: "translateY(0)" }];
+  else if (k === "fly") {
+    frames = [
+      { transform: "translate(0,0) rotate(0)", opacity: 1 },
+      { transform: "translate(10px,-10px) rotate(-12deg) scale(0.8)", opacity: 0, offset: 0.4 },
+      { transform: "translate(-10px,10px) scale(0.8)", opacity: 0, offset: 0.41 },
+      { transform: "translate(0,0) scale(1)", opacity: 1 },
+    ];
+    opts = { duration: 620, easing: "ease-out" };
+  } else if (k === "spin") {
+    frames = [{ transform: "rotate(0) scale(1)" }, { transform: "rotate(200deg) scale(1.1)" }, { transform: "rotate(180deg) scale(1)" }];
+    opts = { duration: 600, easing: "cubic-bezier(.3,1.2,.5,1)" };
+  } else if (k === "spin90") frames = [{ transform: "rotate(0) scale(1)" }, { transform: "rotate(100deg) scale(1.15)" }, { transform: "rotate(90deg) scale(1)" }];
+  else if (k === "bounce") frames = [{ transform: "translateY(0) scale(1,1)" }, { transform: "translateY(-6px) scale(0.92,1.1)" }, { transform: "translateY(1px) scale(1.12,0.88)" }, { transform: "translateY(0) scale(0.97,1.03)" }, { transform: "translateY(0) scale(1,1)" }];
+  else if (k === "nudge") frames = [{ transform: "translateX(0)" }, { transform: "translateX(-5px)" }, { transform: "translateX(1px)" }, { transform: "translateX(0)" }];
+  else if (k === "shake") frames = [{ transform: "translateX(0)" }, { transform: "translateX(-3px) rotate(-6deg)" }, { transform: "translateX(3px) rotate(6deg)" }, { transform: "translateX(-2px) rotate(-3deg)" }, { transform: "translateX(0)" }];
+  else frames = ICON_MOTIONS.tap.map(([s, r]) => ({ transform: `scale(${s}) rotate(${r}deg)` }));
+  try {
+    svg.style.transformOrigin = "50% 50%";
+    svg.style.transformBox = "fill-box";
+    svg.animate(frames, opts);
+  } catch {}
+}
+function useIconMotions() {
+  useEffect(() => {
+    const onClick = (e) => {
+      const btn = e.target?.closest?.("button, [role=button], a");
+      if (!btn || btn.dataset.noMotion !== undefined || !btn.closest(".loop-frame")) return;
+      const svg = btn.querySelector("svg");
+      // Only small icons: big pictures inside buttons stay still.
+      if (!svg || svg.getBoundingClientRect().width > 44) return;
+      playIconMotion(svg);
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
+}
+
 function wobble(el) {
   try {
     el?.animate?.(
@@ -1495,23 +1713,106 @@ function FxLayer() {
         }
         parts.push({ type: "main", dx: 0, dy: -lift, size: 84, delay: 0, dur: 1250 });
       } else {
-        // Tap a big emoji: copies of it drift out of the message and across
-        // the chat in an arc, small ones and a few very big ones.
-        const dir = d.fromRight ? -1 : 1;
-        const n = 15;
-        const room = dir > 0 ? vw - d.x : d.x;
-        for (let i = 0; i < n; i++) {
-          const big = i % 5 === 0;
-          parts.push({
-            type: "fly",
-            dx: dir * (40 + Math.random() * Math.max(120, room * 0.95)),
-            dy: -(50 + Math.random() * Math.min(vh * 0.42, Math.max(80, d.y - 90))),
-            s: 1,
-            r: (Math.random() - 0.5) * 44,
-            size: big ? 92 + Math.random() * 40 : 30 + Math.random() * 34,
-            delay: Math.random() * 520,
-            dur: 1500 + Math.random() * 800,
-          });
+        const style = d.style || "arc";
+        const R = Math.random;
+        const anim = (o) => parts.push({ type: "anim", ...o });
+        if (style === "float") {
+          for (let i = 0; i < 16; i++)
+            anim({
+              x: d.x + (R() - 0.5) * 90,
+              size: i % 6 === 0 ? 74 + R() * 24 : 26 + R() * 30,
+              vars: { "--dy": `${-(Math.max(160, d.y - 60) * (0.55 + R() * 0.45))}px`, "--s": 1, "--sx": `${(R() < 0.5 ? -1 : 1) * (14 + R() * 26)}px` },
+              outer: (dur, delay) => `loopFxSway ${dur / 2}ms ease-in-out ${delay}ms 2 both`,
+              inner: "loopFxFloat",
+              ease: "cubic-bezier(.25,.6,.45,1)",
+              delay: R() * 700,
+              dur: 1900 + R() * 900,
+            });
+        } else if (style === "rain") {
+          for (let i = 0; i < 20; i++)
+            anim({
+              x: R() * vw,
+              y: -40,
+              size: i % 7 === 0 ? 64 : 24 + R() * 30,
+              vars: { "--dy": `${vh + 90}px`, "--r": `${(R() - 0.5) * 50}deg` },
+              inner: "loopFxFall",
+              ease: "cubic-bezier(.45,0,.75,.6)",
+              delay: R() * 1000,
+              dur: 1500 + R() * 900,
+            });
+        } else if (style === "flames") {
+          for (let i = 0; i < 18; i++)
+            anim({
+              x: d.x + (R() - 0.5) * 180,
+              y: vh + 30,
+              size: i % 5 === 0 ? 80 : 30 + R() * 36,
+              vars: { "--dy": `${-(vh * (0.4 + R() * 0.4))}px`, "--s": 1, "--r": `${(R() - 0.5) * 30}deg` },
+              inner: "loopFxFlame",
+              ease: "cubic-bezier(.3,.5,.5,1)",
+              delay: R() * 700,
+              dur: 1300 + R() * 700,
+            });
+        } else if (style === "spiral") {
+          for (let i = 0; i < 14; i++)
+            anim({
+              size: i % 5 === 0 ? 66 : 26 + R() * 24,
+              vars: { "--a0": `${i * (360 / 14)}deg`, "--rot": `${300 + R() * 200}deg`, "--rad": `${90 + R() * 120}px`, "--s": 1 },
+              outer: (dur, delay) => `loopFxOrbit ${dur}ms cubic-bezier(.3,.6,.4,1) ${delay}ms both`,
+              inner: "loopFxRadius",
+              ease: "cubic-bezier(.25,.7,.4,1)",
+              delay: i * 35,
+              dur: 1500 + R() * 500,
+            });
+        } else if (style === "stamp") {
+          parts.push({ type: "ring", size: 170, delay: 220, dur: 600, dy: 0 });
+          for (let i = 0; i < 10; i++) {
+            const a = (i / 10) * Math.PI * 2;
+            parts.push({ type: "mini", dx: Math.cos(a) * (90 + R() * 30), dy: Math.sin(a) * (90 + R() * 30), s: 0.55, r: (R() - 0.5) * 60, size: 30, delay: 260, dur: 800 });
+          }
+          anim({ x: Math.min(vw - 70, Math.max(70, d.x)), y: Math.min(vh - 120, Math.max(120, d.y)), size: 140, inner: "loopFxStamp", ease: "linear", delay: 0, dur: 1400, vars: {} });
+        } else if (style === "fountain" || style === "confetti") {
+          const confetti = style === "confetti";
+          const n = confetti ? 22 : 16;
+          for (let i = 0; i < n; i++) {
+            const spread = confetti ? Math.min(vw, 420) : Math.min(vw, 340) * 0.8;
+            anim({
+              size: i % 6 === 0 ? 70 + R() * 20 : (confetti ? 22 : 28) + R() * 28,
+              vars: {
+                "--dx": `${(R() - 0.5) * spread}px`,
+                "--up": `${-((confetti ? 140 : 180) + R() * (confetti ? 220 : 240))}px`,
+                "--down": `${120 + R() * 260}px`,
+                "--s": 1,
+                "--r": `${(R() - 0.5) * (confetti ? 720 : 160)}deg`,
+              },
+              outer: (dur, delay) => `loopFxX ${dur}ms linear ${delay}ms both`,
+              inner: "loopFxToss",
+              ease: "linear",
+              delay: R() * (confetti ? 250 : 500),
+              dur: 1500 + R() * 700,
+            });
+          }
+          if (confetti)
+            for (let i = 0; i < 16; i++) {
+              const a = R() * Math.PI * 2;
+              parts.push({ type: "dot", color: FX_SPARK_COLORS[i % FX_SPARK_COLORS.length], dx: Math.cos(a) * (80 + R() * 120), dy: Math.sin(a) * (80 + R() * 120), s: 0.4, r: 0, size: 8, delay: 80, dur: 900 });
+            }
+        } else {
+          // arc: copies drift out of the message and across the chat
+          const dir = d.fromRight ? -1 : 1;
+          const room = dir > 0 ? vw - d.x : d.x;
+          for (let i = 0; i < 15; i++) {
+            const big = i % 5 === 0;
+            parts.push({
+              type: "fly",
+              dx: dir * (40 + R() * Math.max(120, room * 0.95)),
+              dy: -(50 + R() * Math.min(vh * 0.42, Math.max(80, d.y - 90))),
+              s: 1,
+              r: (R() - 0.5) * 44,
+              size: big ? 92 + R() * 40 : 30 + R() * 34,
+              delay: R() * 520,
+              dur: 1500 + R() * 800,
+            });
+          }
         }
       }
       setItems((prev) => [...prev.slice(-3), { id, x: d.x, y: d.y, emoji: d.emoji, parts }]);
@@ -1540,6 +1841,18 @@ function FxLayer() {
             );
           if (p.type === "dot")
             return <span key={key} className="absolute rounded-full" style={{ ...at, ...vars, background: p.color, animation: `loopFxBurst ${p.dur}ms cubic-bezier(.15,.8,.3,1) ${p.delay}ms both` }} />;
+          if (p.type === "anim") {
+            const cx = p.x ?? it.x;
+            const cy = p.y ?? it.y;
+            const box = { left: cx - p.size / 2, top: cy - p.size / 2, width: p.size, height: p.size };
+            return (
+              <span key={key} className="absolute" style={{ ...box, ...(p.vars || {}), animation: p.outer ? p.outer(p.dur, p.delay) : undefined }}>
+                <span className="block" style={{ animation: `${p.inner} ${p.dur}ms ${p.ease || "ease-out"} ${p.delay}ms both` }}>
+                  <AnimatedEmoji emoji={it.emoji} size={Math.round(p.size)} />
+                </span>
+              </span>
+            );
+          }
           if (p.type === "fly")
             return (
               <span key={key} className="absolute" style={{ ...at, ...vars, animation: `loopFxX ${p.dur}ms cubic-bezier(.25,.6,.4,1) ${p.delay}ms both` }}>
@@ -2122,6 +2435,7 @@ const APP_CONFIG_DEFAULTS = {
   upload: { max_video_mb: 50, photo_side: 1440, photo_side_hq: 2160, video_height: 720 },
   badge_pay: { bkash: "", nagad: "" },
   badge_prices: { ocean: 99, ruby: 499, gold: 899 },
+  support_pay: { bkash: "", nagad: "" },
 };
 const APP_CONFIG_EVENT = "loop:config";
 const APP_CONFIG_KEY = "loop_app_config";
@@ -2138,6 +2452,7 @@ function appConfig() {
     const saved = JSON.parse(localStorage.getItem(APP_CONFIG_KEY) || "null");
     if (saved) {
       delete saved.badge_pay;
+      delete saved.support_pay;
       appConfigCache = mergeAppConfig(saved);
     }
   } catch {}
@@ -2154,7 +2469,7 @@ function loadAppConfig(force) {
         const rows = Object.fromEntries(data.map((r) => [r.key, r.value]));
         appConfigCache = mergeAppConfig(rows);
         // Payment numbers are never kept on the phone.
-        const { badge_pay: _pay, ...keep } = rows;
+        const { badge_pay: _pay, support_pay: _gift, ...keep } = rows;
         try {
           localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(keep));
         } catch {}
@@ -2319,10 +2634,13 @@ const badgePerks = (p) => {
   return [
     `The ${p.name} badge next to your name, everywhere on Loop`,
     `Your posts and reels are shown ${p.boost} in Suggested posts and Reels`,
-    "Pin up to 6 posts on your profile — everyone else can pin 3",
+    "Pin up to 7 posts on your profile — everyone else can pin 3",
     "Watch stories privately — you won't appear on the viewer list",
-    "See when each person watched your story",
-    ...(r >= 2 ? ["Your stories stay up for 48 hours instead of 24", "Write your bio in a special font"] : []),
+    "See when each person watched your story, and search your viewers",
+    "Peek at a chat's newest messages without them seeing you read it",
+    ...(r >= 2
+      ? ["Your stories stay up for 48 hours instead of 24", "Write your bio in a special font", "Send Super hearts on stories", "Share a post to your profile only, not to feeds"]
+      : []),
     ...(r >= 3 ? ["See how many times each person rewatched your story", "Your story shows first in your followers' story row"] : []),
   ];
 };
@@ -2360,6 +2678,19 @@ function storyPrivateOn() {
     return localStorage.getItem(STORY_PRIVATE_KEY) === "1";
   } catch {
     return false;
+  }
+}
+// Elite/Supreme perk: posts shared "to profile only" never show in feeds or
+// Reels. Asked for separately so feeds keep working before loop-step-18.sql.
+async function withoutProfileOnly(list) {
+  if (!list.length) return list;
+  try {
+    const { data, error } = await supabase.from("posts").select("id").in("id", list.map((p) => p.id)).eq("profile_only", true);
+    if (error || !data?.length) return list;
+    const hide = new Set(data.map((r) => r.id));
+    return list.filter((p) => !hide.has(p.id));
+  } catch {
+    return list;
   }
 }
 // Badge holders' posts move up a few places among suggestions and reels.
@@ -2722,6 +3053,187 @@ function VerificationRequestScreen({ onBack }) {
   );
 }
 
+const GIFT_AMOUNTS = [20, 50, 100, 200, 500];
+function supportErrorText(m) {
+  const s = m || "";
+  if (/submit_support|support_pay_info|support_gifts/.test(s) && /does not exist|schema cache|not find/i.test(s)) return "Gifts start working once loop-step-18.sql has been run.";
+  if (/bad_amount/.test(s)) return "Choose an amount between ৳10 and ৳100,000.";
+  if (/too_many_pending/.test(s)) return "You already have 5 gifts waiting to be checked. Thank you!";
+  return verifyErrorText(s);
+}
+function SupportLoopScreen({ onBack, Header }) {
+  const [pay, setPay] = useState(null);
+  const [gifts, setGifts] = useState([]);
+  const [amount, setAmount] = useState(100);
+  const [custom, setCustom] = useState("");
+  const [method, setMethod] = useState("bkash");
+  const [payer, setPayer] = useState("");
+  const [trx, setTrx] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const load = async () => {
+    const { data, error } = await supabase.rpc("support_pay_info");
+    setPay(error || !data ? {} : data);
+    const { data: mine } = await supabase.from("support_gifts").select("id, amount, method, status, created_at").order("created_at", { ascending: false }).limit(10);
+    setGifts(mine || []);
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const open = PAY_METHODS.filter(([k]) => pay?.[`${k}_open`]);
+  const useMethod = open.some(([k]) => k === method) ? method : open[0]?.[0] || "";
+  const number = useMethod ? String(pay?.[useMethod] || "") : "";
+  const value = custom ? Math.round(Number(custom)) : amount;
+  const cleanTrx = trx.replace(/\s/g, "").toUpperCase();
+  const cleanPayer = payer.replace(/[^0-9+]/g, "");
+  const ok = value >= 10 && value <= 100000 && /^[A-Z0-9]{6,30}$/.test(cleanTrx) && /^\+?[0-9]{10,14}$/.test(cleanPayer) && !busy;
+  const submit = async () => {
+    if (!ok) return;
+    setBusy(true);
+    setErr("");
+    const { error } = await supabase.rpc("submit_support", { p_amount: value, p_method: useMethod, p_payer: cleanPayer, p_trx: cleanTrx, p_note: note.trim() || null });
+    setBusy(false);
+    if (error) {
+      setErr(supportErrorText(error.message));
+      return;
+    }
+    setSent(true);
+    setTrx("");
+    setNote("");
+    load();
+  };
+  const share = async () => {
+    const url = window.location.origin;
+    try {
+      if (navigator.share) await navigator.share({ title: "Loop", text: "Join me on Loop", url });
+      else {
+        await navigator.clipboard.writeText(url);
+        setErr("Link copied");
+      }
+    } catch {}
+  };
+  const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
+  const chip = (on) => ({ fontWeight: 700, background: on ? "var(--text)" : "var(--surface)", color: on ? "var(--bg)" : "var(--text)", border: "1px solid var(--border)" });
+  const statusText = { pending: "Being checked", confirmed: "Received — thank you! 💛", rejected: "Payment not found" };
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <Header title="Support Loop" back={onBack} />
+      <div className="px-6 pt-8 pb-5 text-center">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: ACCENT }}>
+          <HandHeart size={30} color="var(--on-accent)" />
+        </div>
+        <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>Help keep Loop running</p>
+        <p className="text-sm mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.55 }}>
+          Loop is built by one person. Servers for photos and videos cost money every month. If you enjoy Loop, a small gift helps keep it free and ad-light for everyone.
+        </p>
+      </div>
+
+      {pay === null ? (
+        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+      ) : open.length === 0 ? (
+        <div className="mx-4 rounded-2xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Gifts are closed right now</p>
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>Sharing Loop with a friend helps just as much.</p>
+        </div>
+      ) : sent ? (
+        <div className="mx-4 rounded-2xl p-5 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <p className="text-3xl">💛</p>
+          <p className="text-[15px] mt-2" style={{ color: "var(--text)", fontWeight: 700 }}>Thank you!</p>
+          <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>We'll match your payment by hand and mark it received below.</p>
+          <button onClick={() => setSent(false)} className="mt-3 text-[13px]" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
+            Send another gift
+          </button>
+        </div>
+      ) : (
+        <div className="mx-4">
+          <p className="text-[13px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Choose an amount</p>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {GIFT_AMOUNTS.map((a) => (
+              <button
+                key={a}
+                onClick={() => {
+                  setAmount(a);
+                  setCustom("");
+                }}
+                className="rounded-full px-4 h-9 text-[13px]"
+                style={chip(!custom && amount === a)}
+              >
+                ৳{a}
+              </button>
+            ))}
+          </div>
+          <input value={custom} onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))} inputMode="numeric" placeholder="Other amount (৳)" className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-4" style={box} />
+
+          <div className="flex gap-2 mb-3">
+            {open.map(([k, label]) => (
+              <button key={k} onClick={() => setMethod(k)} className="rounded-full px-4 h-9 text-[13px]" style={chip(useMethod === k)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="rounded-2xl p-4 mb-3" style={{ background: "var(--surface)" }}>
+            <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              Use <span style={{ color: "var(--text)", fontWeight: 700 }}>Send Money</span> in {useMethod === "nagad" ? "Nagad" : "bKash"} to send
+            </p>
+            <p className="text-[22px] mt-1" style={{ color: "var(--text)", fontWeight: 800 }}>৳{value >= 10 ? value : "—"}</p>
+            <div className="flex items-center justify-between gap-3 mt-1">
+              <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700, letterSpacing: 0.5 }}>{number}</p>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(number);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  } catch {}
+                }}
+                className="rounded-lg px-3 h-8 text-[12px]"
+                style={{ border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700 }}
+              >
+                {copied ? "Copied" : "Copy number"}
+              </button>
+            </div>
+          </div>
+          <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Number you paid from</label>
+          <input value={payer} onChange={(e) => setPayer(e.target.value.slice(0, 15))} inputMode="tel" placeholder="01XXXXXXXXX" className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
+          <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Transaction ID (TrxID)</label>
+          <input value={trx} onChange={(e) => setTrx(e.target.value.slice(0, 30))} autoCapitalize="characters" placeholder="e.g. BGK7A1X2YZ" className="w-full rounded-xl px-4 h-11 text-sm outline-none mb-3" style={box} />
+          <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>A message for the team (optional)</label>
+          <textarea value={note} onChange={(e) => setNote(e.target.value.slice(0, 300))} rows={2} className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none" style={box} />
+          {err && <p className="text-xs mt-2" style={{ color: err === "Link copied" ? "var(--text-muted)" : "var(--heart)" }}>{err}</p>}
+          <button onClick={submit} disabled={!ok} className="w-full rounded-xl h-12 text-sm mt-3" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: ok ? 1 : 0.45 }}>
+            {busy ? "Sending…" : `I've sent ৳${value >= 10 ? value : ""} — let the team know`}
+          </button>
+          <p className="text-[11px] text-center mt-2" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>Gifts are not refundable and don't buy anything in the app. Loop never asks for your PIN or OTP.</p>
+        </div>
+      )}
+
+      {gifts.length > 0 && (
+        <div className="mx-4 mt-6 rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
+          <p className="text-[13px] px-4 pt-3 pb-1" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Your gifts</p>
+          {gifts.map((g) => (
+            <div key={g.id} className="flex items-center justify-between px-4 py-2.5" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+              <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>৳{g.amount}</span>
+              <span className="text-[12px]" style={{ color: g.status === "rejected" ? "var(--heart)" : "var(--text-muted)" }}>
+                {statusText[g.status] || g.status} · {timeAgo(g.created_at)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mx-4 mt-4 mb-10">
+        <button onClick={share} className="w-full rounded-xl h-11 text-sm" style={{ background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", fontWeight: 700 }}>
+          Share Loop with friends
+        </button>
+        <p className="text-[11px] text-center mt-2" style={{ color: "var(--text-muted)" }}>Telling a friend helps just as much.</p>
+      </div>
+    </div>
+  );
+}
+
 // Moderation → Badges (admins only): payment numbers, prices and upload limits.
 function AdminAppSettings({ flash }) {
   const cfg = useAppConfig();
@@ -2738,6 +3250,8 @@ function AdminAppSettings({ flash }) {
         gold: String(cfg.badge_prices.gold),
         max_video_mb: String(cfg.upload.max_video_mb),
         video_height: String([480, 720, 1080].includes(Number(cfg.upload.video_height)) ? cfg.upload.video_height : 720),
+        gift_bkash: (cfg.support_pay || {}).bkash || "",
+        gift_nagad: (cfg.support_pay || {}).nagad || "",
       });
   }, [open]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -2745,7 +3259,9 @@ function AdminAppSettings({ flash }) {
   const save = async (which) => {
     setBusy(true);
     const jobs =
-      which === "pay"
+      which === "gifts"
+        ? [["support_pay", { bkash: form.gift_bkash.replace(/[^0-9+]/g, ""), nagad: form.gift_nagad.replace(/[^0-9+]/g, "") }]]
+        : which === "pay"
         ? [
             ["badge_pay", { bkash: form.bkash.replace(/[^0-9+]/g, ""), nagad: form.nagad.replace(/[^0-9+]/g, "") }],
             ["badge_prices", { ocean: num(form.ocean, 99), ruby: num(form.ruby, 499), gold: num(form.gold, 899) }],
@@ -2808,6 +3324,18 @@ function AdminAppSettings({ flash }) {
         </div>
       )}
       <div className="h-px" style={{ background: "var(--border)" }} />
+      {head("gifts", <HandHeart size={16} color="var(--text-muted)" />, "Support gifts", "Where Support Loop gifts are sent")}
+      {open === "gifts" && form && (
+        <div className="px-3.5 pb-3.5">
+          <p className="text-[12px] mb-2.5 rounded-xl px-3 py-2" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)", lineHeight: 1.45 }}>
+            Anyone logged in can see these on Settings → Support Loop. Use a number you don't mind strangers having. Leave both empty to close gifts.
+          </p>
+          {field("gift_bkash", "bKash number for gifts", "tel")}
+          {field("gift_nagad", "Nagad number for gifts", "tel")}
+          {saveBtn("gifts")}
+        </div>
+      )}
+      <div className="h-px" style={{ background: "var(--border)" }} />
       {head("uploads", <Film size={16} color="var(--text-muted)" />, "Videos", "Upload size and the copy people watch")}
       {open === "uploads" && form && (
         <div className="px-3.5 pb-3.5">
@@ -2836,7 +3364,130 @@ function AdminAppSettings({ flash }) {
 }
 
 // Moderation → Badges (admins only): every request, oldest first.
+function SupportQueue({ flash }) {
+  const [status, setStatus] = useState("pending");
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(null);
+  const load = async () => {
+    setRows(null);
+    setErr("");
+    const { data, error } = await supabase.rpc("mod_list_support", { p_status: status });
+    if (error) {
+      setErr(/does not exist|schema cache|not find/i.test(error.message) ? "Gifts need loop-step-18.sql — run it in Supabase first." : verifyErrorText(error.message));
+      setRows([]);
+      return;
+    }
+    setRows(data || []);
+  };
+  useEffect(() => {
+    load();
+  }, [status]);
+  const decide = async (g, ok) => {
+    if (ok && !window.confirm(`Did ৳${g.amount} arrive by ${g.method === "nagad" ? "Nagad" : "bKash"} with TrxID ${g.trx_id}?`)) return;
+    setBusy(g.id);
+    const { error } = await supabase.rpc("mod_decide_support", { p_id: g.id, p_ok: ok });
+    setBusy(null);
+    if (error) {
+      flash(verifyErrorText(error.message));
+      return;
+    }
+    flash(ok ? "Gift confirmed — thank you sent" : "Marked as not found");
+    load();
+  };
+  const total = (rows || []).reduce((s, g) => s + Number(g.amount || 0), 0);
+  return (
+    <div>
+      <div className="flex gap-2 mb-3">
+        {[
+          ["pending", "Waiting"],
+          ["confirmed", "Confirmed"],
+          ["rejected", "Not found"],
+        ].map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setStatus(k)}
+            className="rounded-full px-3.5 h-8 text-xs"
+            style={{ fontWeight: 700, background: status === k ? "var(--text)" : "var(--surface)", color: status === k ? "var(--bg)" : "var(--text)", border: "1px solid var(--border)" }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {status === "confirmed" && rows && rows.length > 0 && (
+        <p className="text-[12px] mb-2" style={{ color: "var(--text-muted)" }}>
+          {rows.length} {rows.length === 1 ? "gift" : "gifts"} · ৳{total.toLocaleString()} in total
+        </p>
+      )}
+      {err ? (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{err}</p>
+      ) : rows === null ? (
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center py-12">
+          <HandHeart size={34} color="var(--text-muted)" strokeWidth={1.5} />
+          <p className="text-sm mt-2" style={{ color: "var(--text)", fontWeight: 600 }}>{status === "pending" ? "No gifts waiting" : "Nothing here yet"}</p>
+        </div>
+      ) : (
+        rows.map((g) => (
+          <div key={g.id} className="rounded-2xl p-3 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <div className="flex items-center gap-3">
+              <Avatar username={g.username || "?"} avatarUrl={g.avatar_url} size={40} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>@{g.username}</span>
+                <span className="block text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
+                  ৳{g.amount} · {g.method === "nagad" ? "Nagad" : "bKash"} · from {g.payer}
+                </span>
+              </span>
+              <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>{timeAgo(g.created_at)}</span>
+            </div>
+            <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>TrxID {g.trx_id}</p>
+            {g.note && <p className="text-[13px] mt-1.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap" }}>“{g.note}”</p>}
+            {g.status === "pending" && (
+              <div className="flex gap-2 mt-3">
+                <button onClick={() => decide(g, true)} disabled={busy === g.id} className="rounded-lg px-4 h-9 text-xs" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+                  Money arrived
+                </button>
+                <button onClick={() => decide(g, false)} disabled={busy === g.id} className="rounded-lg px-4 h-9 text-xs" style={{ color: "var(--heart)", border: "1px solid var(--heart)", fontWeight: 700 }}>
+                  Not found
+                </button>
+              </div>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function VerificationQueue({ flash }) {
+  const [section, setSection] = useState("badges");
+  if (section === "gifts")
+    return (
+      <div>
+        <AdminAppSettings flash={flash} />
+        <QueueSwitch section={section} setSection={setSection} />
+        <SupportQueue flash={flash} />
+      </div>
+    );
+  return <BadgeQueue flash={flash} switcher={<QueueSwitch section={section} setSection={setSection} />} />;
+}
+function QueueSwitch({ section, setSection }) {
+  return (
+    <div className="flex rounded-xl p-1 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {[
+        ["badges", "Badge requests"],
+        ["gifts", "Support gifts"],
+      ].map(([k, label]) => (
+        <button key={k} onClick={() => setSection(k)} className="flex-1 rounded-lg h-8 text-xs" style={{ fontWeight: 700, background: section === k ? "var(--bg)" : "transparent", color: section === k ? "var(--text)" : "var(--text-muted)" }}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BadgeQueue({ flash, switcher }) {
   const [status, setStatus] = useState("pending");
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
@@ -2883,6 +3534,7 @@ function VerificationQueue({ flash }) {
   return (
     <div>
       <AdminAppSettings flash={flash} />
+      {switcher}
       <div className="flex gap-2 mb-3">
         {[
           ["pending", "Waiting"],
@@ -7586,7 +8238,7 @@ function ShareIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, ...re
   if (!idRef.current) idRef.current = `loopShareMask${++iconMaskSeq}`;
   const id = idRef.current;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" {...rest}>
+    <svg width={size} height={size} viewBox="0 0 24 24" data-motion="fly" {...rest}>
       <defs>
         <mask id={id} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
           <rect x="0" y="0" width="24" height="24" fill="#fff" />
@@ -8048,10 +8700,10 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
   const toggleField = async (field, current) => {
     if (field === "pinned" && !current) {
       const mine = await loadMyBadge();
-      const limit = mine.active ? 6 : 3;
+      const limit = mine.active ? 7 : 3;
       const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", post.user_id).eq("pinned", true);
       if ((count || 0) >= limit) {
-        setMenuError(mine.active ? "You can pin up to 6 posts. Unpin one first." : "You can pin up to 3 posts. Unpin one first — or get a verified badge to pin up to 6.");
+        setMenuError(mine.active ? "You can pin up to 7 posts. Unpin one first." : "You can pin up to 3 posts. Unpin one first — or get a verified badge to pin up to 7.");
         return;
       }
     }
@@ -9181,6 +9833,7 @@ function StoryMenuRow({ icon, label, onClick, danger, busy, trailing }) {
 function StorySendSheet({ story, currentUserId, onClose }) {
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState("");
+  const found = usePeopleSearch(query, currentUserId);
   const [sentTo, setSentTo] = useState([]);
   const [busyId, setBusyId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -9189,11 +9842,7 @@ function StorySendSheet({ story, currentUserId, onClose }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, username, avatar_url")
-        .neq("id", currentUserId || "")
-        .limit(50);
+      const data = await suggestedPeople(currentUserId, 50);
       if (!cancelled) {
         setPeople(data || []);
         setLoading(false);
@@ -9229,7 +9878,7 @@ function StorySendSheet({ story, currentUserId, onClose }) {
     setSentTo((prev) => [...prev, person.id]);
   };
 
-  const filtered = people.filter((p) => p.username.toLowerCase().includes(query.trim().toLowerCase()));
+  const filtered = (query.trim() ? found : people).filter((p) => personMatches(p, query));
 
   return (
     <StorySheetShell title="Send story to" onClose={onClose}>
@@ -9537,7 +10186,7 @@ function StoryActivitySheet({ story, onClose }) {
     (async () => {
       const [viewsRes, likesRes] = await Promise.all([
         supabase.from("story_views").select("*").eq("story_id", story.id),
-        supabase.from("story_likes").select("user_id").eq("story_id", story.id),
+        supabase.from("story_likes").select("*").eq("story_id", story.id),
       ]);
       const rows = (viewsRes.data || []).filter((r) => r.viewer_id && r.viewer_id !== story.user_id);
       const ids = [...new Set(rows.map((r) => r.viewer_id))];
@@ -9547,11 +10196,12 @@ function StoryActivitySheet({ story, onClose }) {
         profiles = data || [];
       }
       const liked = new Set((likesRes.data || []).map((l) => l.user_id));
+      const superSet = new Set((likesRes.data || []).filter((l) => l.super).map((l) => l.user_id));
       const when = (r) => r.last_viewed_at || r.created_at || null;
       const list = rows
         .map((r) => {
           const p = profiles.find((x) => x.id === r.viewer_id);
-          return { id: r.viewer_id, username: p?.username || "unknown", fullName: p?.full_name || "", avatarUrl: p?.avatar_url || null, at: when(r), times: Number(r.view_count || 1), liked: liked.has(r.viewer_id) };
+          return { id: r.viewer_id, username: p?.username || "unknown", fullName: p?.full_name || "", avatarUrl: p?.avatar_url || null, at: when(r), times: Number(r.view_count || 1), liked: liked.has(r.viewer_id), super: superSet.has(r.viewer_id) };
         })
         .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
       if (!cancelled) setViewers(list);
@@ -9561,6 +10211,8 @@ function StoryActivitySheet({ story, onClose }) {
     };
   }, [story.id]);
   const rank = mine.active ? tierRank(mine.tier) : 0;
+  const [find, setFind] = useState("");
+  const shownViewers = (viewers || []).filter((v) => personMatches({ username: v.username, full_name: v.fullName }, find));
   const tabBtn = (key, label) => (
     <button
       onClick={() => setTab(key)}
@@ -9585,7 +10237,16 @@ function StoryActivitySheet({ story, onClose }) {
           ) : viewers.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No one has watched yet</p>
           ) : (
-            viewers.map((v) => (
+            <>
+            {rank >= 1 && viewers.length > 3 && (
+              <div className="px-4 pt-2 pb-1">
+                <div className="flex items-center gap-2 rounded-full px-3.5 h-9" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+                  <Search size={15} color="var(--text-muted)" />
+                  <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Search viewers" className="flex-1 bg-transparent outline-none text-[13px]" style={{ color: "var(--text)" }} />
+                </div>
+              </div>
+            )}
+            {shownViewers.map((v) => (
               <div key={v.id} className="flex items-center gap-3 px-4 py-2.5">
                 <Avatar username={v.username} avatarUrl={v.avatarUrl} size={40} />
                 <div className="flex-1 min-w-0">
@@ -9597,9 +10258,10 @@ function StoryActivitySheet({ story, onClose }) {
                     </p>
                   )}
                 </div>
-                {v.liked && <Heart size={16} fill="var(--heart)" color="var(--heart)" />}
+                {v.super ? <span className="text-[18px]" title="Super heart">💖</span> : v.liked ? <Heart size={16} fill="var(--heart)" color="var(--heart)" /> : null}
               </div>
-            ))
+            ))}
+            </>
           )}
           {viewers && viewers.length > 0 && rank < 3 && (
             <p className="text-[11.5px] text-center px-6 pt-3" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
@@ -9708,7 +10370,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
       // RLS narrows these automatically: the owner sees every row,
       // a visitor sees only their own — so one query serves both.
       const [likesRes, viewsRes, repliesRes] = await Promise.all([
-        supabase.from("story_likes").select("user_id").eq("story_id", rawStory.id),
+        supabase.from("story_likes").select("*").eq("story_id", rawStory.id),
         supabase.from("story_views").select("viewer_id", { count: "exact", head: true }).eq("story_id", rawStory.id),
         supabase.from("story_replies").select("id", { count: "exact", head: true }).eq("story_id", rawStory.id),
       ]);
@@ -9720,6 +10382,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         likes: likeRows.length,
         replies: repliesRes.count || 0,
         liked: likeRows.some((l) => l.user_id === currentUserId),
+        superLiked: likeRows.some((l) => l.user_id === currentUserId && l.super),
       });
     })();
 
@@ -9755,10 +10418,34 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
     setSIndex(dir > 0 ? 0 : Math.max(0, groupList[nextG].items.length - 1));
   };
 
+  // Elite/Supreme perk: hold the heart to send a Super heart.
+  const heartHold = React.useRef({ t: null, fired: false });
+  const sendSuperHeart = async (el) => {
+    if (!story || !currentUserId) return;
+    const mine = await loadMyBadge();
+    if (!mine.active || tierRank(mine.tier) < 2) {
+      showFlash("Super hearts come with Elite and Supreme badges");
+      return;
+    }
+    const c = centerOf(el);
+    if (c) playEmojiShower("💖", c.x, c.y, false, "float");
+    setMeta((m) => ({ ...m, liked: true, superLiked: true, likes: m.liked ? m.likes : m.likes + 1 }));
+    const { error } = await supabase.from("story_likes").upsert({ story_id: story.id, user_id: currentUserId, super: true }, { onConflict: "story_id,user_id" });
+    if (error) {
+      await supabase.from("story_likes").upsert({ story_id: story.id, user_id: currentUserId }, { onConflict: "story_id,user_id" });
+      showFlash(/super/.test(error.message) ? "Liked — Super hearts start working after loop-step-18.sql" : error.message);
+      return;
+    }
+    showFlash("Super heart sent");
+  };
   const toggleLike = async () => {
     if (!story || !currentUserId) return;
+    if (heartHold.current.fired) {
+      heartHold.current.fired = false;
+      return;
+    }
     const wasLiked = meta.liked;
-    setMeta((m) => ({ ...m, liked: !wasLiked, likes: m.likes + (wasLiked ? -1 : 1) }));
+    setMeta((m) => ({ ...m, liked: !wasLiked, superLiked: wasLiked ? false : m.superLiked, likes: m.likes + (wasLiked ? -1 : 1) }));
     if (wasLiked) {
       await supabase.from("story_likes").delete().eq("story_id", story.id).eq("user_id", currentUserId);
     } else {
@@ -10121,11 +10808,27 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
               </button>
             ) : (
               <>
-                <button onClick={toggleLike} className="p-1.5 shrink-0 transition-transform active:scale-90">
+                <button
+                  onClick={toggleLike}
+                  onPointerDown={(e) => {
+                    const el = e.currentTarget;
+                    heartHold.current.fired = false;
+                    clearTimeout(heartHold.current.t);
+                    heartHold.current.t = setTimeout(() => {
+                      heartHold.current.fired = true;
+                      sendSuperHeart(el);
+                    }, 450);
+                  }}
+                  onPointerUp={() => clearTimeout(heartHold.current.t)}
+                  onPointerLeave={() => clearTimeout(heartHold.current.t)}
+                  onContextMenu={(e) => e.preventDefault()}
+                  aria-label="Like — hold for a Super heart"
+                  className="p-1.5 shrink-0 transition-transform active:scale-90"
+                >
                   <Heart
                     size={26}
-                    color={meta.liked ? "var(--heart)" : "#FFFFFF"}
-                    fill={meta.liked ? "var(--heart)" : "none"}
+                    color={meta.superLiked ? "#FF4FA3" : meta.liked ? "var(--heart)" : "#FFFFFF"}
+                    fill={meta.superLiked ? "#FF4FA3" : meta.liked ? "var(--heart)" : "none"}
                     strokeWidth={1.9}
                   />
                 </button>
@@ -11260,10 +11963,18 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           }
         }
       }
+      gathered = await withoutProfileOnly(gathered);
       const enriched = boostByBadge(await attachSounds(await enrichPosts(gathered, st.me)), (p) => p.suggested);
       setPosts((prev) => {
+        // A post can come back in both "following" and "suggested" — keep one.
         const seen = new Set(prev.map((p) => p.id));
-        return prev.concat(enriched.filter((p) => !seen.has(p.id)));
+        const fresh = [];
+        for (const p of enriched) {
+          if (seen.has(p.id)) continue;
+          seen.add(p.id);
+          fresh.push(p);
+        }
+        return prev.concat(fresh);
       });
     } catch (e) {
       setLoadError(e.message || "Couldn't load posts");
@@ -12180,7 +12891,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       const batch = data || [];
       if (batch.length > 0) st.cursor = batch[batch.length - 1].created_at;
       if (batch.length < REELS_PAGE) st.done = true;
-      const visible = batch.filter((r) => r.id !== st.skipId && !isHiddenFromFeed(rel, r.user_id));
+      const visible = await withoutProfileOnly(batch.filter((r) => r.id !== st.skipId && !isHiddenFromFeed(rel, r.user_id)));
       const enriched = boostByBadge(await attachLowCopies(await attachSounds(await enrichReels(visible, st.me))));
       setReels((prev) => {
         const seen = new Set(prev.map((r) => r.id));
@@ -12721,16 +13432,6 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   </span>
                 </button>
 
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    showToast("Remix — coming soon");
-                  }}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
-                  style={{ color: "var(--text)" }}
-                >
-                  <Sparkles size={15} /> Remix
-                </button>
 
                 <button
                   onClick={toggleFullscreen}
@@ -14743,6 +15444,11 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
   const [hideComments, setHideComments] = useState(false);
   const [hideRepostsSaves, setHideRepostsSaves] = useState(false);
   const [turnOffComments, setTurnOffComments] = useState(false);
+  const [profileOnly, setProfileOnly] = useState(false);
+  const [uploadRank, setUploadRank] = useState(0);
+  useEffect(() => {
+    loadMyBadge().then((b) => setUploadRank(b.active ? tierRank(b.tier) : 0));
+  }, []);
   const [matureContent, setMatureContent] = useState(false); // 18+
   const [tagInput, setTagInput] = useState(""); // only read from old drafts
   const [taggedPeople, setTaggedPeople] = useState([]); // [{id, username, avatar_url}]
@@ -15113,6 +15819,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
         hide_saves: hideRepostsSaves,
         comments_disabled: turnOffComments,
         ...(matureContent ? { is_mature: true } : {}),
+        ...(profileOnly && uploadRank >= 2 ? { profile_only: true } : {}),
         ...(mode === "reel" && sound?.id ? { sound_id: sound.id } : {}),
         // A scheduled post is simply one whose time is in the future. The
         // database keeps it hidden from everyone else until then, and it
@@ -15124,7 +15831,13 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
 
     if (insertError) {
       setUploading(false);
-      setError(insertError.message);
+      setError(
+        /profile_only_needs_badge/.test(insertError.message)
+          ? "Profile-only posts need an active Elite or Supreme badge."
+          : /profile_only/.test(insertError.message)
+          ? "Profile-only posts start working once loop-step-18.sql has been run."
+          : insertError.message
+      );
       return;
     }
 
@@ -15625,6 +16338,9 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
               setMatureContent,
               "Only people whose birthday on Loop says they're 18 or older will see this. Everyone else — and anyone without a birthday — won't.",
             ],
+            ...(uploadRank >= 2
+              ? [["Profile only", profileOnly, setProfileOnly, "Shows on your profile, not in anyone's feed or Reels. Elite & Supreme perk."]]
+              : []),
           ].map(([label, value, setValue, hint], i) => (
             <button
               key={label}
@@ -16832,48 +17548,7 @@ function SettingsScreen({
     );
   }
 
-  if (view === "support") {
-    return (
-      <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
-        <Header title="Support Loop" back={() => setView("menu")} />
-        <div className="px-6 pt-8 pb-6 text-center">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: ACCENT }}>
-            <HandHeart size={30} color="var(--on-accent)" />
-          </div>
-          <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>Help keep Loop running</p>
-          <p className="text-sm mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.55 }}>
-            Loop is built by one person. Servers for photos and videos cost money every month. If you enjoy Loop, a small
-            gift helps keep it free and ad-light for everyone.
-          </p>
-        </div>
-        <div className="mx-4 rounded-2xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Ways to give are coming soon</p>
-          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>bKash and Nagad will appear here.</p>
-        </div>
-        <div className="mx-4 mt-3">
-          <button
-            onClick={async () => {
-              const url = window.location.origin;
-              try {
-                if (navigator.share) await navigator.share({ title: "Loop", text: "Join me on Loop", url });
-                else {
-                  await navigator.clipboard.writeText(url);
-                  alert("Link copied");
-                }
-              } catch (e) {
-                // share cancelled
-              }
-            }}
-            className="w-full rounded-xl h-11 text-sm"
-            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
-          >
-            Share Loop with friends
-          </button>
-          <p className="text-[11px] text-center mt-2" style={{ color: "var(--text-muted)" }}>Telling a friend helps just as much.</p>
-        </div>
-      </div>
-    );
-  }
+  if (view === "support") return <SupportLoopScreen onBack={() => setView("menu")} Header={Header} />;
 
   if (view === "deleteAccount") {
     return (
@@ -18920,6 +19595,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
   const [members, setMembers] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [query, setQuery] = useState("");
+  const found = usePeopleSearch(query, currentUserId);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
@@ -18942,12 +19618,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
     }
     setMembers(profiles);
 
-    const { data: all } = await supabase
-      .from("profiles")
-      .select("id, username, full_name, avatar_url")
-      .neq("id", currentUserId || "")
-      .limit(80);
-    setCandidates(all || []);
+    setCandidates(await suggestedPeople(currentUserId, 80));
     setLoading(false);
   };
 
@@ -18992,9 +19663,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
 
   const memberIds = members.map((m) => m.id);
   const q = query.trim().toLowerCase();
-  const shown = candidates
-    .filter((c) => !memberIds.includes(c.id))
-    .filter((c) => c.username.toLowerCase().includes(q) || (c.full_name || "").toLowerCase().includes(q));
+  const shown = (q ? found : candidates).filter((c) => !memberIds.includes(c.id)).filter((c) => personMatches(c, q));
 
   return (
     <div className="flex-1 overflow-y-auto pb-6">
@@ -19660,7 +20329,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Bio font</label>
             <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-              <VerifiedBadge size={13} tier="ruby" /> Elite & Supreme
+              <VerifiedBadge size={13} tier="ruby" />
+              <VerifiedBadge size={13} tier="gold" /> Elite & Supreme
             </span>
           </div>
           {fontRank >= 2 ? (
@@ -22961,6 +23631,64 @@ function timeShort(dateStr) {
   return `${weeks}w`;
 }
 
+// Badge perk: read a chat's newest messages from the inbox without opening
+// it, so the other person doesn't see "Seen".
+function ConvoPeek({ conversationId, meId }) {
+  const [mine, setMine] = useState(null);
+  const [msgs, setMsgs] = useState(null);
+  useEffect(() => {
+    loadMyBadge().then(setMine);
+  }, []);
+  useEffect(() => {
+    if (!mine?.active || !conversationId) return;
+    let cancelled = false;
+    supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(6)
+      .then(({ data }) => !cancelled && setMsgs((data || []).slice().reverse()));
+    return () => {
+      cancelled = true;
+    };
+  }, [mine, conversationId]);
+  if (!mine) return null;
+  if (!mine.active)
+    return (
+      <p className="text-[12px] mx-4 mb-2 rounded-xl px-3.5 py-2.5" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)", lineHeight: 1.45 }}>
+        With a verified badge you can peek at new messages here without them seeing you read them.
+      </p>
+    );
+  const label = (m) => (m.deleted ? "Message deleted" : m.content || (m.image_url || m.media_url ? "Photo" : m.audio_url ? "Voice message" : "Attachment"));
+  return (
+    <div className="mx-4 mb-2 rounded-2xl p-3" style={{ background: "var(--bg-sunken)" }}>
+      <p className="text-[11px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Peek · they won't see that you read this</p>
+      {msgs === null ? (
+        <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>Loading…</p>
+      ) : msgs.length === 0 ? (
+        <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>No messages yet</p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {msgs.map((m) => {
+            const me = m.sender_id === meId;
+            return (
+              <div key={m.id} className={`flex ${me ? "justify-end" : "justify-start"}`}>
+                <span
+                  className="rounded-2xl px-3 py-1.5 text-[13px] max-w-[80%]"
+                  style={{ background: me ? ACCENT : "var(--surface)", color: me ? "var(--on-accent)" : "var(--text)", wordBreak: "break-word", opacity: m.deleted ? 0.6 : 1 }}
+                >
+                  {label(m)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MessagesScreen({ onBack, startWith }) {
   const [userId, setUserId] = useState(null);
   const [conversations, setConversations] = useState([]);
@@ -23424,6 +24152,7 @@ function MessagesScreen({ onBack, startWith }) {
       {rowMenu && (
         <StorySheetShell title={rowMenu.displayName} onClose={() => setRowMenu(null)}>
           <div className="pb-6">
+            <ConvoPeek conversationId={rowMenu.conversationId} meId={userId} />
             <StoryMenuRow
               icon={<Pin size={17} color="var(--text)" />}
               label={rowMenu.pinned ? "Unpin from top" : "Pin to top"}
@@ -23743,6 +24472,7 @@ function ForwardSheet({ message, currentUserId, onClose, onDone }) {
   const [groups, setGroups] = useState([]);
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState("");
+  const found = usePeopleSearch(query, currentUserId);
   const [loading, setLoading] = useState(true);
   const [sentTo, setSentTo] = useState([]);
   const [busyId, setBusyId] = useState(null);
@@ -23765,11 +24495,7 @@ function ForwardSheet({ message, currentUserId, onClose, onDone }) {
           .eq("is_group", true);
         groupRows = data || [];
       }
-      const { data: profileRows } = await supabase
-        .from("profiles")
-        .select("id, username, avatar_url")
-        .neq("id", currentUserId || "")
-        .limit(50);
+      const profileRows = await suggestedPeople(currentUserId, 50);
       if (!cancelled) {
         setGroups(groupRows);
         setPeople(profileRows || []);
@@ -23835,7 +24561,7 @@ function ForwardSheet({ message, currentUserId, onClose, onDone }) {
 
   const q = query.trim().toLowerCase();
   const shownGroups = groups.filter((g) => (g.title || "Group").toLowerCase().includes(q));
-  const shownPeople = people.filter((p) => p.username.toLowerCase().includes(q));
+  const shownPeople = (q ? found : people).filter((p) => personMatches(p, q));
 
   const Btn = ({ id, onClick }) => {
     const done = sentTo.includes(id);
@@ -23920,6 +24646,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
   const [adding, setAdding] = useState(false);
   const [candidates, setCandidates] = useState([]);
   const [query, setQuery] = useState("");
+  const found = usePeopleSearch(query, currentUserId);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
   const [photo, setPhoto] = useState(avatarUrl || null);
@@ -23981,8 +24708,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
 
   const openAdd = async () => {
     setAdding(true);
-    const { data } = await supabase.from("profiles").select("id, username, avatar_url").limit(60);
-    setCandidates(data || []);
+    setCandidates(await suggestedPeople(currentUserId, 60));
   };
 
   const iAmAdmin = members.find((m) => m.user_id === currentUserId)?.is_admin === true;
@@ -24062,9 +24788,9 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
   };
 
   const memberIds = members.map((m) => m.user_id);
-  const shownCandidates = candidates
+  const shownCandidates = (query.trim() ? found : candidates)
     .filter((c) => !memberIds.includes(c.id))
-    .filter((c) => c.username.toLowerCase().includes(query.trim().toLowerCase()));
+    .filter((c) => personMatches(c, query));
 
   return (
     <StorySheetShell title="Group info" onClose={onClose}>
@@ -24808,6 +25534,7 @@ function ShareSheet({ item, currentUserId, onClose, onShared }) {
   const [groups, setGroups] = useState([]);
   const [people, setPeople] = useState([]);
   const [query, setQuery] = useState("");
+  const found = usePeopleSearch(query, currentUserId);
   const [loading, setLoading] = useState(true);
   const [sentTo, setSentTo] = useState([]);
   const [busyId, setBusyId] = useState(null);
@@ -24843,11 +25570,7 @@ function ShareSheet({ item, currentUserId, onClose, onShared }) {
         const { data } = await supabase.from("conversations").select("id, title, avatar_url").in("id", ids).eq("is_group", true);
         groupRows = data || [];
       }
-      const { data: profileRows } = await supabase
-        .from("profiles")
-        .select("id, username, avatar_url")
-        .neq("id", currentUserId || "")
-        .limit(50);
+      const profileRows = await suggestedPeople(currentUserId, 50);
       if (!cancelled) {
         setGroups(groupRows);
         setPeople(profileRows || []);
@@ -24959,7 +25682,7 @@ function ShareSheet({ item, currentUserId, onClose, onShared }) {
 
   const q = query.trim().toLowerCase();
   const shownGroups = groups.filter((g) => (g.title || "Group").toLowerCase().includes(q));
-  const shownPeople = people.filter((pr) => pr.username.toLowerCase().includes(q));
+  const shownPeople = (q ? found : people).filter((pr) => personMatches(pr, q));
 
   const SendBtn = ({ id, onClick }) => {
     const done = sentTo.includes(id);
@@ -25277,6 +26000,7 @@ function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
   const [rows, setRows] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [query, setQuery] = useState("");
+  const found = usePeopleSearch(query, currentUserId);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
@@ -25300,8 +26024,7 @@ function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
         avatarUrl: profiles.find((pr) => pr.id === r.user_id)?.avatar_url || null,
       }))
     );
-    const { data: all } = await supabase.from("profiles").select("id, username, avatar_url").limit(60);
-    setCandidates(all || []);
+    setCandidates(await suggestedPeople(currentUserId, 60));
     setLoading(false);
   };
 
@@ -25342,9 +26065,9 @@ function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
   };
 
   const memberIds = rows.map((r) => r.user_id);
-  const shown = candidates
+  const shown = (query.trim() ? found : candidates)
     .filter((c) => !memberIds.includes(c.id) && c.id !== collection.owner_id)
-    .filter((c) => c.username.toLowerCase().includes(query.trim().toLowerCase()));
+    .filter((c) => personMatches(c, query));
 
   return (
     <StorySheetShell title="Collaborators" onClose={onClose}>
@@ -29548,6 +30271,7 @@ export default function App() {
     <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={shownTheme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
       <style>{THEME_CSS}</style>
       <FxLayer />
+      <IconMotions />
       <DemoPill />
       <LowCopyChip />
       <div
