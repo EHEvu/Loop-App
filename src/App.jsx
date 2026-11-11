@@ -89,6 +89,7 @@ import {
   Globe,
   Info,
   HandHeart,
+  Cloud,
   UserX,
   Palette,
   LifeBuoy,
@@ -1293,19 +1294,120 @@ function isPhotoPost(p) {
 // instead of an hour. Without this, Supabase counts a download every time
 // someone scrolls back to the same photo or video an hour later.
 const LONG_CACHE = "31536000";
-(function keepUploadsLonger() {
+
+// ---- Cloudflare R2 ----
+// When an admin switches it on (Moderation → Badges → App settings → Media
+// storage), new photos, videos and voice notes go to Cloudflare R2 through
+// the loop-media Worker, where watching them costs nothing. Older files stay
+// where they are. Switching it off sends uploads back to Supabase at once.
+const R2_BUCKETS = new Set(["posts", "avatars", "messages", "stories", "comments"]);
+const r2Urls = new Map();
+const R2_TYPES = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", heic: "image/heic", mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", m4v: "video/mp4", m4a: "audio/mp4", mp3: "audio/mpeg", ogg: "audio/ogg", oga: "audio/ogg", wav: "audio/wav", aac: "audio/aac" };
+const guessType = (path) => R2_TYPES[String(path).split(".").pop().toLowerCase()] || "application/octet-stream";
+const cleanWorker = (w) => String(w || "").trim().toLowerCase().replace(/\/+$/, "");
+const isWorkerAddress = (w) => /^https:\/\/[a-z0-9.-]+(\/.*)?$/i.test(w) || /^http:\/\/localhost(:\d+)?$/.test(w);
+function mediaWorkerBase() {
+  if (DEMO_MODE) return "";
+  const m = appConfig().media || {};
+  const w = String(m.worker || "").trim().replace(/\/+$/, "");
+  return m.uploads && isWorkerAddress(w) ? w : "";
+}
+const r2Path = (bucket, path) => `${bucket}/${String(path).split("/").map(encodeURIComponent).join("/")}`;
+async function r2Put(base, bucket, path, body, contentType) {
+  const {
+    data: { session },
+  } = await liveSupabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Please log in again.");
+  const res = await fetch(`${base}/u/${r2Path(bucket, path)}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": contentType },
+    body,
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok || !out.url)
+    throw new Error(
+      out.error === "file_too_large"
+        ? "That file is too large."
+        : out.error === "file_type_not_allowed"
+        ? "That kind of file can't be uploaded."
+        : out.error === "not_logged_in"
+        ? "Please log in again."
+        : `Upload failed (${res.status}).`
+    );
+  return out;
+}
+(function routeUploads() {
   try {
     // supabase.storage makes a fresh helper each time, so the change goes on
-    // the shared upload function they all use.
+    // the shared functions they all use.
     const proto = Object.getPrototypeOf(supabase.storage.from("posts"));
-    if (!proto || proto.__loopLongCache || typeof proto.upload !== "function") return;
+    if (!proto || proto.__loopRouted || typeof proto.upload !== "function") return;
     const upload = proto.upload;
-    proto.upload = function (path, body, opts) {
+    const publicUrl = proto.getPublicUrl;
+    const remove = proto.remove;
+    proto.upload = async function (path, body, opts) {
+      if (!DEMO_MODE && !appConfigCache)
+        try {
+          await loadAppConfig();
+        } catch {}
+      const base = mediaWorkerBase();
+      const bucket = this.bucketId;
+      if (base && R2_BUCKETS.has(bucket)) {
+        try {
+          const type = (opts && opts.contentType) || (body && body.type) || guessType(path);
+          const out = await r2Put(base, bucket, path, body, type);
+          r2Urls.set(`${bucket}/${path}`, out.url);
+          return { data: { path, fullPath: out.key }, error: null };
+        } catch (e) {
+          return { data: null, error: { message: e?.message || "Upload failed." } };
+        }
+      }
       return upload.call(this, path, body, { cacheControl: LONG_CACHE, ...(opts || {}) });
     };
-    proto.__loopLongCache = true;
+    if (typeof publicUrl === "function")
+      proto.getPublicUrl = function (path, o) {
+        const hit = r2Urls.get(`${this.bucketId}/${path}`);
+        return hit ? { data: { publicUrl: hit } } : publicUrl.call(this, path, o);
+      };
+    if (typeof remove === "function")
+      proto.remove = async function (paths) {
+        const base = mediaWorkerBase();
+        if (base && R2_BUCKETS.has(this.bucketId)) {
+          const {
+            data: { session },
+          } = await liveSupabase.auth.getSession();
+          await Promise.allSettled(
+            (paths || []).map((p) => fetch(`${base}/u/${r2Path(this.bucketId, p)}`, { method: "DELETE", headers: { Authorization: `Bearer ${session?.access_token || ""}` } }))
+          );
+        }
+        return remove.call(this, paths);
+      };
+    proto.__loopRouted = true;
   } catch {}
 })();
+// Admin check: upload a tiny picture to the Worker, read it back, delete it.
+async function testMediaWorker(base, meId) {
+  const w = cleanWorker(base);
+  if (!isWorkerAddress(w)) throw new Error("Paste the Worker address — it starts with https://");
+  const health = await fetch(`${w}/`).then((r) => r.json()).catch(() => null);
+  if (!health?.ok) throw new Error("The Worker didn't answer. Check the address and that it's deployed.");
+  if (!health.bucket) throw new Error("The Worker can't see the bucket. Add the R2 binding named MEDIA.");
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 8;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#F5C518";
+  ctx.fillRect(0, 0, 8, 8);
+  const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+  const path = `${meId}/r2-test-${Date.now()}.png`;
+  const out = await r2Put(w, "posts", path, blob, "image/png");
+  const back = await fetch(out.url);
+  if (!back.ok) throw new Error(`Saved, but reading it back failed (${back.status}).`);
+  const {
+    data: { session },
+  } = await liveSupabase.auth.getSession();
+  await fetch(`${w}/u/${r2Path("posts", path)}`, { method: "DELETE", headers: { Authorization: `Bearer ${session?.access_token || ""}` } }).catch(() => {});
+  return true;
+}
 
 const videoThumb = (url) => (url ? `${url}${url.includes("#") ? "" : "#t=0.1"}` : url);
 
@@ -2436,6 +2538,7 @@ const APP_CONFIG_DEFAULTS = {
   badge_pay: { bkash: "", nagad: "" },
   badge_prices: { ocean: 99, ruby: 499, gold: 899 },
   support_pay: { bkash: "", nagad: "" },
+  media: { worker: "", uploads: false },
 };
 const APP_CONFIG_EVENT = "loop:config";
 const APP_CONFIG_KEY = "loop_app_config";
@@ -2751,6 +2854,8 @@ function verifyErrorText(msg) {
     return "This needs loop-step-15a.sql and loop-step-15b.sql — run them in Supabase first.";
   if (/verification_requests|verification_checklist/.test(m) && /does not exist|not find|schema cache/i.test(m)) return "This needs loop-step-14b.sql — run it in Supabase first.";
   if (/rules_not_met/.test(m)) return "Some of the checklist above isn't done yet.";
+  if (/bad_worker_address/.test(m)) return "That doesn't look like a Worker address — it should start with https://";
+  if (/unknown_setting/.test(m)) return "This setting needs loop-step-19.sql — run it first, then save again.";
   if (/available in the demo/.test(m)) return m;
   if (/already_pending/.test(m)) return "You already have a request waiting.";
   if (/already_verified/.test(m)) return "Your account already has a badge with no end date.";
@@ -3252,14 +3357,31 @@ function AdminAppSettings({ flash }) {
         video_height: String([480, 720, 1080].includes(Number(cfg.upload.video_height)) ? cfg.upload.video_height : 720),
         gift_bkash: (cfg.support_pay || {}).bkash || "",
         gift_nagad: (cfg.support_pay || {}).nagad || "",
+        media_worker: (cfg.media || {}).worker || "",
+        media_on: !!(cfg.media || {}).uploads,
       });
   }, [open]);
+  const [testMsg, setTestMsg] = useState("");
+  const runMediaTest = async () => {
+    setTestMsg("Testing…");
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      await testMediaWorker(form.media_worker, user?.id);
+      setTestMsg("✓ Upload and download both work. You can switch R2 on.");
+    } catch (e) {
+      setTestMsg(e?.message || "The test failed.");
+    }
+  };
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : d);
   const save = async (which) => {
     setBusy(true);
     const jobs =
-      which === "gifts"
+      which === "media"
+        ? [["media", { worker: cleanWorker(form.media_worker), uploads: !!form.media_on && isWorkerAddress(cleanWorker(form.media_worker)) }]]
+        : which === "gifts"
         ? [["support_pay", { bkash: form.gift_bkash.replace(/[^0-9+]/g, ""), nagad: form.gift_nagad.replace(/[^0-9+]/g, "") }]]
         : which === "pay"
         ? [
@@ -3281,10 +3403,10 @@ function AdminAppSettings({ flash }) {
     setOpen(null);
   };
   const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
-  const field = (k, label, mode, hint) => (
+  const field = (k, label, mode, hint, max = 20) => (
     <label className="block mb-2.5">
       <span className="text-[11px] block mb-1" style={{ color: "var(--text-muted)" }}>{label}</span>
-      <input value={form[k]} onChange={(e) => set(k, e.target.value.slice(0, 20))} inputMode={mode} className="w-full rounded-xl px-3.5 h-10 text-sm outline-none" style={box} />
+      <input value={form[k]} onChange={(e) => set(k, e.target.value.slice(0, max))} inputMode={mode} className="w-full rounded-xl px-3.5 h-10 text-sm outline-none" style={box} />
       {hint && <span className="text-[11px] block mt-1" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{hint}</span>}
     </label>
   );
@@ -3321,6 +3443,35 @@ function AdminAppSettings({ flash }) {
             {field("gold", "Supreme ৳", "numeric")}
           </div>
           {saveBtn("pay")}
+        </div>
+      )}
+      <div className="h-px" style={{ background: "var(--border)" }} />
+      {head("media", <Cloud size={16} color="var(--text-muted)" />, "Media storage", (cfg.media || {}).uploads ? "On — new uploads go to Cloudflare R2" : "Off — new uploads use the old storage")}
+      {open === "media" && form && (
+        <div className="px-3.5 pb-3.5">
+          <p className="text-[12px] mb-2.5 rounded-xl px-3 py-2" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)", lineHeight: 1.45 }}>
+            With R2 on, new photos, videos and voice notes are kept in Cloudflare R2, where watching them is free. Files that are already up stay where they are.
+          </p>
+          {field("media_worker", "Worker address", "url", "Looks like https://loop-media.yourname.workers.dev", 200)}
+          <button
+            onClick={() => set("media_on", !form.media_on)}
+            className="w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 mb-2.5 text-left"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
+          >
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Save new uploads to R2</span>
+            <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: form.media_on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+              <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: form.media_on ? 18 : 2, transition: "left 0.15s" }} />
+            </span>
+          </button>
+          <button onClick={runMediaTest} className="w-full rounded-xl h-10 text-sm mb-2" style={{ background: "var(--bg-sunken)", color: "var(--text)", border: "1px solid var(--border)", fontWeight: 700 }}>
+            Test the Worker
+          </button>
+          {testMsg && (
+            <p className="text-[12px] mb-2" style={{ color: testMsg.startsWith("✓") ? "#22C55E" : testMsg === "Testing…" ? "var(--text-muted)" : "var(--heart)", lineHeight: 1.45 }}>
+              {testMsg}
+            </p>
+          )}
+          {saveBtn("media")}
         </div>
       )}
       <div className="h-px" style={{ background: "var(--border)" }} />
