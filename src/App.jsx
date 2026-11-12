@@ -1,3 +1,7 @@
+/** @jsxRuntime classic */
+/** @jsx jsxT */
+/** @jsxFrag LoopFragment */
+// Loop draws every screen through jsxT() so the app can show any language.
 import React, { useState, useEffect } from "react";
 import { supabase as liveSupabase } from "./lib/supabaseClient";
 import {
@@ -90,6 +94,7 @@ import {
   Info,
   HandHeart,
   Cloud,
+  Loader2,
   UserX,
   Palette,
   LifeBuoy,
@@ -125,6 +130,346 @@ import {
   Move,
   SunMoon,
 } from "lucide-react";
+
+// ===================== Languages =====================
+// Every word Loop shows is written in English in this file. While the app
+// draws the screen, jsxT() below swaps each piece of text for the chosen
+// language, using a word list from public/locales/<code>.json. The app's own
+// logic never sees the translations, so nothing else changes.
+const LANGUAGES = [
+  { code: "ar", name: "العربية", en: "Arabic", rtl: true },
+  { code: "bn", name: "বাংলা", en: "Bengali" },
+  { code: "en", name: "English", en: "English" },
+  { code: "ur", name: "اردو", en: "Urdu", rtl: true },
+  { code: "hi", name: "हिन्दी", en: "Hindi" },
+  { code: "ru", name: "Русский", en: "Russian" },
+  { code: "tr", name: "Türkçe", en: "Turkish" },
+  { code: "th", name: "ไทย", en: "Thai" },
+  { code: "ja", name: "日本語", en: "Japanese" },
+  { code: "ko", name: "한국어", en: "Korean" },
+  { code: "zh-CN", name: "中文(简体)", en: "Chinese (Simplified)" },
+  { code: "zh-TW", name: "中文(台灣)", en: "Chinese (Traditional, Taiwan)" },
+  { code: "zh-HK", name: "中文(香港)", en: "Chinese (Traditional, Hong Kong)" },
+  { code: "fa", name: "فارسی", en: "Persian", rtl: true },
+  { code: "el", name: "Ελληνικά", en: "Greek" },
+  { code: "fi", name: "Suomi", en: "Finnish" },
+  { code: "ro", name: "Română", en: "Romanian" },
+  { code: "pt-BR", name: "Português (Brasil)", en: "Portuguese (Brazil)" },
+  { code: "pt-PT", name: "Português (Portugal)", en: "Portuguese (Portugal)" },
+  { code: "fr-FR", name: "Français (France)", en: "French (France)" },
+  { code: "fr-CA", name: "Français (Canada)", en: "French (Canada)" },
+  { code: "es-ES", name: "Español (España)", en: "Spanish (Spain)" },
+  { code: "es-419", name: "Español (Latinoamérica)", en: "Spanish (Latin America)" },
+  { code: "de", name: "Deutsch", en: "German" },
+  { code: "id", name: "Bahasa Indonesia", en: "Indonesian" },
+  { code: "af", name: "Afrikaans", en: "Afrikaans" },
+  { code: "bg", name: "Български", en: "Bulgarian" },
+  { code: "sv", name: "Svenska", en: "Swedish" },
+  { code: "mr", name: "मराठी", en: "Marathi" },
+  { code: "gu", name: "ગુજરાતી", en: "Gujarati" },
+  { code: "ta", name: "தமிழ்", en: "Tamil" },
+  { code: "te", name: "తెలుగు", en: "Telugu" },
+  { code: "kn", name: "ಕನ್ನಡ", en: "Kannada" },
+];
+const LANG_CHOICE_KEY = "loop_lang";
+const LANG_PACK_KEY = "loop_lang_pack";
+const LANG_CHECK_KEY = "loop_lang_checked";
+const langInfo = (code) => LANGUAGES.find((l) => l.code === code) || LANGUAGES[2];
+// The phone's own language, matched to one Loop has (or English).
+function deviceLanguage() {
+  const want = (typeof navigator !== "undefined" && (navigator.languages || [navigator.language])) || [];
+  for (const raw of want) {
+    const tag = String(raw || "").toLowerCase();
+    if (!tag) continue;
+    const [base, region = ""] = tag.split("-");
+    const exact = LANGUAGES.find((l) => l.code.toLowerCase() === tag);
+    if (exact) return exact.code;
+    if (base === "zh") return /hk|mo/.test(tag) ? "zh-HK" : /tw|hant/.test(tag) ? "zh-TW" : "zh-CN";
+    if (base === "pt") return region === "br" ? "pt-BR" : "pt-PT";
+    if (base === "fr") return region === "ca" ? "fr-CA" : "fr-FR";
+    if (base === "es") return !region || region === "es" ? "es-ES" : "es-419";
+    const b = LANGUAGES.find((l) => l.code.split("-")[0] === base);
+    if (b) return b.code;
+  }
+  return "en";
+}
+function chosenLanguage() {
+  try {
+    const saved = localStorage.getItem(LANG_CHOICE_KEY);
+    if (saved && LANGUAGES.some((l) => l.code === saved)) return saved;
+  } catch {}
+  return deviceLanguage();
+}
+let I18N_CODE = "en";
+let I18N_DICT = null;
+let I18N_RTL = false;
+let I18N_PATTERNS = null;
+let I18N_CACHE = new Map();
+let I18N_LOCALE = undefined; // dates and numbers follow the app language (with 0-9 digits)
+function readPack(code) {
+  try {
+    const pack = JSON.parse(localStorage.getItem(LANG_PACK_KEY) || "null");
+    return pack && pack.code === code && pack.t ? pack : null;
+  } catch {
+    return null;
+  }
+}
+// Turns "{0} followers" into a matcher, so "12 followers" can be translated too.
+function compilePatterns(dict) {
+  const byStart = new Map();
+  const byEnd = new Map();
+  const middle = [];
+  for (const key of Object.keys(dict)) {
+    if (!/\{\d\}/.test(key)) continue;
+    const parts = key.split(/\{(\d)\}/);
+    const lits = parts.filter((_, i) => i % 2 === 0);
+    const letters = lits.join("").replace(/[^\p{L}]/gu, "").length;
+    if (!letters) continue;
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let src = "^";
+    const order = [];
+    parts.forEach((p, i) => {
+      if (i % 2 === 0) src += esc(p);
+      else {
+        src += "(.*?)";
+        order.push(+p);
+      }
+    });
+    const pat = { key, re: new RegExp(src + "$", "s"), order, numeric: letters < 3, out: dict[key] };
+    const first = lits[0];
+    const last = lits[lits.length - 1];
+    if (first.length >= 2) {
+      const k = first.slice(0, 2);
+      if (!byStart.has(k)) byStart.set(k, []);
+      byStart.get(k).push(pat);
+    } else if (last.length >= 2) {
+      const k = last.slice(-2);
+      if (!byEnd.has(k)) byEnd.set(k, []);
+      byEnd.get(k).push(pat);
+    } else {
+      pat.mid = lits.reduce((a, b) => (b.length > a.length ? b : a), "");
+      middle.push(pat);
+    }
+  }
+  return { byStart, byEnd, middle };
+}
+function applyPack(pack) {
+  const info = langInfo(pack.code);
+  I18N_CODE = info.code;
+  I18N_DICT = pack.t;
+  I18N_RTL = !!info.rtl;
+  I18N_PATTERNS = compilePatterns(pack.t);
+  I18N_CACHE = new Map();
+  I18N_LOCALE = info.code + "-u-nu-latn";
+}
+function setDocumentLanguage() {
+  if (typeof document === "undefined") return;
+  document.documentElement.lang = I18N_CODE;
+  document.documentElement.dir = I18N_RTL ? "rtl" : "ltr";
+}
+(function startLanguage() {
+  const code = chosenLanguage();
+  if (code !== "en") {
+    const pack = readPack(code);
+    if (pack) applyPack(pack);
+  }
+  setDocumentLanguage();
+})();
+const trExact = (s) => {
+  if (!I18N_DICT || typeof s !== "string") return s;
+  const hit = I18N_DICT[s];
+  if (hit !== undefined) return hit;
+  const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s);
+  if (m && (m[1] || m[3]) && m[2]) {
+    const inner = I18N_DICT[m[2]];
+    if (inner !== undefined) return m[1] + inner + m[3];
+  }
+  return null;
+};
+const NUMERIC_BIT = /^[\d\s.,:%+\-–—·/৳$€£KMBkmbhdwsy]+$/;
+function trPattern(s) {
+  const P = I18N_PATTERNS;
+  if (!P || s.length > 600) return null;
+  const tryList = (list) => {
+    if (!list) return null;
+    for (const p of list) {
+      if (p.mid !== undefined && !s.includes(p.mid)) continue;
+      const m = p.re.exec(s);
+      if (!m) continue;
+      const vals = m.slice(1);
+      if (vals.some((v) => v.length > 80 || v.includes("\n"))) continue;
+      if (p.numeric && !vals.every((v) => NUMERIC_BIT.test(v))) continue;
+      const byIndex = {};
+      p.order.forEach((idx, i) => (byIndex[idx] = vals[i]));
+      return p.out.replace(/\{(\d)\}/g, (_, i) => {
+        const v = byIndex[+i];
+        if (v === undefined) return "";
+        const t = trExact(v);
+        return t === null ? v : t;
+      });
+    }
+    return null;
+  };
+  return tryList(P.byStart.get(s.slice(0, 2))) ?? tryList(P.byEnd.get(s.slice(-2))) ?? tryList(P.middle);
+}
+// Translate one piece of text. Anything not in the word list stays as it is.
+function trText(s) {
+  if (!I18N_DICT || typeof s !== "string" || !s) return s;
+  const cached = I18N_CACHE.get(s);
+  if (cached !== undefined) return cached;
+  let out = trExact(s);
+  if (out === null && /\p{L}/u.test(s)) {
+    const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s);
+    const inner = trPattern(m[2]);
+    out = inner === null ? null : m[1] + inner + m[3];
+  }
+  if (out === null) out = s;
+  if (I18N_CACHE.size > 5000) I18N_CACHE = new Map();
+  I18N_CACHE.set(s, out);
+  return out;
+}
+// Text with pieces in the middle: "Delete {0} posts?" keeps the right word order.
+function trJoin(pat, ...args) {
+  const out = (I18N_DICT && I18N_DICT[pat]) || pat;
+  const empty = (a) => a === null || a === undefined || a === false || a === true || a === "";
+  const plain = args.every((a) => empty(a) || typeof a === "string" || typeof a === "number");
+  if (plain)
+    return out.replace(/\{(\d)\}/g, (_, i) => {
+      const a = args[+i];
+      if (empty(a)) return "";
+      if (typeof a === "string" && I18N_DICT) {
+        const t = trExact(a);
+        return t === null ? a : t;
+      }
+      return String(a);
+    });
+  const bits = out.split(/\{(\d)\}/);
+  const res = [];
+  for (let i = 0; i < bits.length; i++) {
+    if (i % 2 === 0) {
+      if (bits[i]) res.push(bits[i]);
+    } else {
+      const a = args[+bits[i]];
+      if (empty(a)) continue;
+      const v = typeof a === "string" && I18N_DICT ? trExact(a) ?? a : a;
+      res.push(React.createElement(React.Fragment, { key: "p" + i }, v));
+    }
+  }
+  return res;
+}
+const TR_PROPS = ["placeholder", "title", "aria-label", "alt"];
+const TEXT_INPUTS = new Set([undefined, "text", "search", "email", "tel", "url", "password"]);
+// Every element in this file is made through jsxT() (see the note at the top).
+function jsxT(type, props, ...children) {
+  if (typeof type === "string") {
+    if (I18N_DICT && !(props && props.translate === "no")) {
+      for (let i = 0; i < children.length; i++) {
+        const c = children[i];
+        if (typeof c === "string") children[i] = trText(c);
+        else if (Array.isArray(c) && c.some((x) => typeof x === "string")) children[i] = c.map((x) => (typeof x === "string" ? trText(x) : x));
+      }
+      if (props) {
+        let copy = null;
+        for (const k of TR_PROPS) {
+          const v = props[k];
+          if (typeof v === "string" && v) {
+            const t = trText(v);
+            if (t !== v) {
+              copy = copy || { ...props };
+              copy[k] = t;
+            }
+          }
+        }
+        if (copy) props = copy;
+      }
+    }
+    if (I18N_RTL && (type === "textarea" || (type === "input" && TEXT_INPUTS.has(props && props.type))) && props && props.dir === undefined) props = { ...props, dir: "auto" };
+  }
+  return React.createElement(type, props, ...children);
+}
+const LoopFragment = React.Fragment;
+// Native pop-ups (confirm, alert) are translated the same way.
+const alert = (msg) => window.alert(trText(String(msg)));
+async function fetchLanguagePack(code) {
+  const res = await fetch(`/locales/${code}.json?v=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("That language isn't available yet.");
+  const pack = await res.json();
+  if (!pack || !pack.t) throw new Error("That language isn't available yet.");
+  return { code, v: pack.v || 1, t: pack.t };
+}
+async function fetchLanguageList() {
+  const res = await fetch(`/locales/index.json?v=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("no list");
+  const j = await res.json();
+  return j && Array.isArray(j.languages) ? j : { languages: [] };
+}
+function savePack(pack) {
+  try {
+    localStorage.setItem(LANG_PACK_KEY, JSON.stringify(pack));
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function switchLanguage(code) {
+  if (code === "en") {
+    try {
+      localStorage.setItem(LANG_CHOICE_KEY, "en");
+      localStorage.removeItem(LANG_PACK_KEY);
+    } catch {}
+  } else {
+    const pack = await fetchLanguagePack(code);
+    if (!savePack(pack)) throw new Error("This phone is out of space for the language file.");
+    try {
+      localStorage.setItem(LANG_CHOICE_KEY, code);
+    } catch {}
+  }
+  window.location.reload();
+}
+// First start on a phone set to another language: fetch that language
+// before showing anything, so the app doesn't flash in English.
+function useLanguageReady() {
+  const [ready, setReady] = useState(() => chosenLanguage() === "en" || !!I18N_DICT);
+  useEffect(() => {
+    if (ready) return;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      setDocumentLanguage();
+      setReady(true);
+    };
+    const timer = setTimeout(finish, 3500);
+    fetchLanguagePack(chosenLanguage())
+      .then((pack) => {
+        savePack(pack);
+        applyPack(pack);
+      })
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(timer);
+        finish();
+      });
+    return () => clearTimeout(timer);
+  }, []);
+  // Once a day, fetch a newer word list in the background (used from the next start).
+  useEffect(() => {
+    if (!I18N_DICT || I18N_CODE === "en") return;
+    let last = 0;
+    try {
+      last = Number(localStorage.getItem(LANG_CHECK_KEY) || 0);
+    } catch {}
+    if (Date.now() - last < 864e5) return;
+    const code = I18N_CODE;
+    fetchLanguagePack(code)
+      .then((pack) => {
+        if (chosenLanguage() === code) savePack(pack);
+        localStorage.setItem(LANG_CHECK_KEY, String(Date.now()));
+      })
+      .catch(() => {});
+  }, [ready]);
+  return ready;
+}
 import QRCode from "qrcode";
 
 // ============================================================
@@ -876,10 +1221,10 @@ function DemoPill() {
   return (
     <>
       <style>{DEMO_CSS}</style>
-      <div className="fixed left-0 right-0 top-0 flex items-center justify-center gap-2 text-[12px]" style={{ height: 28, zIndex: 400, background: "linear-gradient(90deg, #7F5AF0, #2CB67D)", color: "#fff" }}>
+      <div className="fixed start-0 end-0 top-0 flex items-center justify-center gap-2 text-[12px]" style={{ height: 28, zIndex: 400, background: "linear-gradient(90deg, #7F5AF0, #2CB67D)", color: "#fff" }}>
         <span style={{ fontWeight: 800, letterSpacing: 0.3 }}>DEMO</span>
         <span style={{ opacity: 0.9 }}>· nothing here is real</span>
-        <button onClick={leaveDemo} className="rounded-full px-2.5 h-[20px] ml-1 text-[11px]" style={{ background: "rgba(255,255,255,0.95)", color: "#111", fontWeight: 700 }}>
+        <button onClick={leaveDemo} className="rounded-full px-2.5 h-[20px] ms-1 text-[11px]" style={{ background: "rgba(255,255,255,0.95)", color: "#111", fontWeight: 700 }}>
           Leave
         </button>
       </div>
@@ -1133,6 +1478,12 @@ const THEME_CSS = `
     animation: loopHeartBurst 0.9s ease-out forwards;
     filter: drop-shadow(0 4px 14px rgba(0,0,0,0.45));
   }
+  /* Right-to-left languages (Arabic, Urdu, Persian): arrows point the other way. */
+  [dir="rtl"] .lucide-chevron-right, [dir="rtl"] .lucide-chevron-left, [dir="rtl"] .lucide-chevrons-right,
+  [dir="rtl"] .lucide-chevrons-left, [dir="rtl"] .lucide-arrow-left, [dir="rtl"] .lucide-arrow-right,
+  [dir="rtl"] .lucide-send-horizontal, [dir="rtl"] .lucide-send, [dir="rtl"] .lucide-reply,
+  [dir="rtl"] .lucide-corner-up-left, [dir="rtl"] .lucide-corner-up-right, [dir="rtl"] .lucide-log-out,
+  [dir="rtl"] .lucide-undo-2, [dir="rtl"] .lucide-redo-2, [dir="rtl"] [data-motion="fly"] { scale: -1 1; }
 `;
 
 class ErrorBoundary extends React.Component {
@@ -2303,16 +2654,14 @@ function AdjustPreviewEditor({ post, onBack, onSaved }) {
           {[33.33, 66.66].map((p) => (
             <React.Fragment key={p}>
               <span className="absolute top-0 bottom-0" style={{ left: `${p}%`, width: 1, background: "rgba(255,255,255,0.45)" }} />
-              <span className="absolute left-0 right-0" style={{ top: `${p}%`, height: 1, background: "rgba(255,255,255,0.45)" }} />
+              <span className="absolute start-0 end-0" style={{ top: `${p}%`, height: 1, background: "rgba(255,255,255,0.45)" }} />
             </React.Fragment>
           ))}
         </div>
         <span
           className="absolute left-1/2 bottom-2.5 -translate-x-1/2 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] pointer-events-none"
           style={{ background: "rgba(0,0,0,0.55)", color: "#fff", fontWeight: 600 }}
-        >
-          <Move size={12} /> Drag to move
-        </span>
+        >{trJoin("{0} Drag to move", <Move size={12} />)}</span>
       </div>
       <div className="flex items-center gap-3 mt-4" style={{ maxWidth: 360, margin: "16px auto 0" }}>
         <ZoomIn size={17} color="var(--text-muted)" />
@@ -2327,7 +2676,7 @@ function AdjustPreviewEditor({ post, onBack, onSaved }) {
           style={{ accentColor: "var(--accent-solid)" }}
           aria-label="Zoom"
         />
-        <span className="text-[12px] tabular-nums w-9 text-right" style={{ color: "var(--text-muted)" }}>{pos.z.toFixed(1)}×</span>
+        <span className="text-[12px] tabular-nums w-9 text-end" style={{ color: "var(--text-muted)" }}>{pos.z.toFixed(1)}×</span>
       </div>
       {err && <p className="text-xs mt-3" style={{ color: "var(--heart)" }}>{err}</p>}
       <div className="flex gap-2 mt-4">
@@ -2488,7 +2837,7 @@ function LegalScreen({ doc, onBack }) {
     <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
       <ScreenHeader title={d.title} onBack={onBack} />
       <div className="px-5 pt-4 pb-10">
-        <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Last updated {LEGAL_UPDATED}</p>
+        <p className="text-[11px] uppercase tracking-wide" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Last updated {0}", LEGAL_UPDATED)}</p>
         <p className="text-[14px] mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.55 }}>{d.intro}</p>
         {d.sections.map(([heading, lines], i) => (
           <div key={heading} className="mt-6">
@@ -2644,6 +2993,85 @@ function maxVideoBytes() {
   return maxVideoMb() * 1024 * 1024;
 }
 
+// Settings → Language. Shows the languages that have a word list on the
+// site (public/locales/index.json), in the owner's order.
+function LanguageScreen({ onBack }) {
+  const [list, setList] = useState(null);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let live = true;
+    fetchLanguageList()
+      .then((j) => live && setList(["en", ...j.languages]))
+      .catch(() => live && setList(I18N_DICT ? ["en", I18N_CODE] : ["en"]));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const query = q.trim().toLowerCase();
+  const shown = LANGUAGES.filter((l) => (list || []).includes(l.code)).filter(
+    (l) => !query || l.name.toLowerCase().includes(query) || l.en.toLowerCase().includes(query) || String(trText(l.en)).toLowerCase().includes(query)
+  );
+  const pick = async (code) => {
+    if (code === I18N_CODE || busy) return;
+    setBusy(code);
+    setErr("");
+    try {
+      await switchLanguage(code);
+    } catch (e) {
+      setBusy("");
+      setErr(e?.message || "That didn't work");
+    }
+  };
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <ScreenHeader title="App language" onBack={onBack} />
+      <div className="px-4 pt-3 pb-2">
+        <div className="flex items-center gap-2 rounded-xl px-3 h-10" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <Search size={16} color="var(--text-muted)" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "var(--text)" }} />
+        </div>
+      </div>
+      {err && (
+        <p className="px-4 pb-2 text-[12px]" style={{ color: "var(--heart)" }}>
+          {err}
+        </p>
+      )}
+      {!list ? (
+        <div className="py-12 flex justify-center">
+          <Loader2 size={22} className="animate-spin" color="var(--text-muted)" />
+        </div>
+      ) : (
+        <div className="pb-10">
+          {shown.map((l) => (
+            <button key={l.code} onClick={() => pick(l.code)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start">
+              <span className="min-w-0">
+                <span className="block text-[15px]" dir="auto" translate="no" style={{ color: "var(--text)", fontWeight: 600 }}>
+                  {l.name}
+                </span>
+                <span className="block text-[13px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  {l.en}
+                </span>
+              </span>
+              {busy === l.code ? (
+                <Loader2 size={20} className="animate-spin shrink-0" color="var(--text-muted)" />
+              ) : I18N_CODE === l.code ? (
+                <Check size={20} className="shrink-0" color={ACCENT} />
+              ) : null}
+            </button>
+          ))}
+          {!shown.length && (
+            <p className="text-center text-sm py-10" style={{ color: "var(--text-muted)" }}>
+              No languages match
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MediaQualityScreen({ onBack }) {
   const [prefs, setPrefs] = useState(getUploadPrefs());
   const [quality, setQuality] = useState(getVideoQuality());
@@ -2655,7 +3083,7 @@ function MediaQualityScreen({ onBack }) {
   };
   const kind = connectionKind();
   const row = (label, hint, on, onTap, disabled) => (
-    <button onClick={onTap} disabled={disabled} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ opacity: disabled ? 0.45 : 1 }}>
+    <button onClick={onTap} disabled={disabled} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start" style={{ opacity: disabled ? 0.45 : 1 }}>
       <span>
         <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
         <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{hint}</span>
@@ -2701,7 +3129,7 @@ function MediaQualityScreen({ onBack }) {
                 setQuality(k);
                 saveVideoQuality(k);
               }}
-              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start"
               style={{ borderTop: i ? "1px solid var(--border-subtle)" : "none" }}
             >
               <span>
@@ -2830,7 +3258,7 @@ function BadgePerksCard({ tier }) {
           <span className="text-[13.5px]" style={{ color: "var(--text)", lineHeight: 1.45 }}>{t}</span>
         </div>
       ))}
-      <button onClick={flip} className="w-full flex items-center justify-between gap-3 px-4 py-3 mt-1 text-left" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+      <button onClick={flip} className="w-full flex items-center justify-between gap-3 px-4 py-3 mt-1 text-start" style={{ borderTop: "1px solid var(--border-subtle)" }}>
         <span>
           <span className="block text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Watch stories privately</span>
           <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>People won't see you on their story's viewer list</span>
@@ -2952,7 +3380,7 @@ function VerificationRequestScreen({ onBack }) {
   const pending = req?.status === "pending";
   const lifetime = state?.verified && !state.until;
   const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
-  const untilText = state?.until ? new Date(state.until).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : "";
+  const untilText = state?.until ? new Date(state.until).toLocaleDateString(I18N_LOCALE, { day: "numeric", month: "long", year: "numeric" }) : "";
 
   return (
     <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
@@ -2987,10 +3415,7 @@ function VerificationRequestScreen({ onBack }) {
         ) : pending ? (
           <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
             <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>We're checking your payment</p>
-            <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              {req.plan ? `${badgePlanOf(req.plan).name} · ৳${req.amount || ""} · TrxID ${req.trx_id || ""}. ` : ""}
-              Sent {timeAgo(req.created_at)} ago. You'll get a notification when it's decided. Loop will never ask for your password or PIN.
-            </p>
+            <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{trJoin("{0}Sent {1} ago. You'll get a notification when it's decided. Loop will never ask for your password or PIN.", req.plan ? `${badgePlanOf(req.plan).name} · ৳${req.amount || ""} · TrxID ${req.trx_id || ""}. ` : "", timeAgo(req.created_at))}</p>
           </div>
         ) : lifetime ? (
           <div className="rounded-2xl p-4 mt-6 text-center" style={{ background: "var(--surface)" }}>
@@ -3015,7 +3440,7 @@ function VerificationRequestScreen({ onBack }) {
                   <button
                     key={p.key}
                     onClick={() => setPlan(p.key)}
-                    className="flex items-center gap-3 rounded-2xl px-3.5 py-3 text-left transition-transform active:scale-[0.99]"
+                    className="flex items-center gap-3 rounded-2xl px-3.5 py-3 text-start transition-transform active:scale-[0.99]"
                     style={{ background: "var(--surface)", border: on ? `2px solid ${BADGE_TIERS[p.key].fill}` : "2px solid transparent" }}
                   >
                     <VerifiedBadge size={44} tier={p.key} />
@@ -3033,7 +3458,7 @@ function VerificationRequestScreen({ onBack }) {
             </div>
 
             <div className="rounded-2xl mt-2 px-4 py-3" style={{ background: "var(--surface)" }}>
-              <p className="text-[13px] mb-1.5" style={{ color: "var(--text)", fontWeight: 700 }}>With {badgePlanOf(plan).name} you get</p>
+              <p className="text-[13px] mb-1.5" style={{ color: "var(--text)", fontWeight: 700 }}>{trJoin("With {0} you get", badgePlanOf(plan).name)}</p>
               {badgePerks(badgePlanOf(plan)).map((t) => (
                 <div key={t} className="flex items-start gap-2.5 py-1">
                   <Check size={15} color={BADGE_TIERS[plan].fill} strokeWidth={3} className="mt-0.5 shrink-0" />
@@ -3081,15 +3506,11 @@ function VerificationRequestScreen({ onBack }) {
                 </div>
                 {!payNumber ? (
                   <div className="rounded-2xl p-4 mb-3" style={{ background: "var(--surface)" }}>
-                    <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                      Finish every item in the checklist above. The number to send ৳{price} to appears here after that.
-                    </p>
+                    <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{trJoin("Finish every item in the checklist above. The number to send ৳{0} to appears here after that.", price)}</p>
                   </div>
                 ) : (
                 <div className="rounded-2xl p-4 mb-3" style={{ background: "var(--surface)" }}>
-                  <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                    Use <span style={{ color: "var(--text)", fontWeight: 700 }}>Send Money</span> in your {useMethod === "bkash" ? "bKash" : "Nagad"} app to send exactly
-                  </p>
+                  <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{trJoin("Use {0} in your {1} app to send exactly", <span style={{ color: "var(--text)", fontWeight: 700 }}>Send Money</span>, useMethod === "bkash" ? "bKash" : "Nagad")}</p>
                   <p className="text-[22px] mt-1" style={{ color: "var(--text)", fontWeight: 800 }}>৳{price}</p>
                   <div className="flex items-center justify-between gap-3 mt-1">
                     <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700, letterSpacing: 0.5 }}>{payNumber}</p>
@@ -3280,9 +3701,7 @@ function SupportLoopScreen({ onBack, Header }) {
             ))}
           </div>
           <div className="rounded-2xl p-4 mb-3" style={{ background: "var(--surface)" }}>
-            <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              Use <span style={{ color: "var(--text)", fontWeight: 700 }}>Send Money</span> in {useMethod === "nagad" ? "Nagad" : "bKash"} to send
-            </p>
+            <p className="text-[13px]" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{trJoin("Use {0} in {1} to send", <span style={{ color: "var(--text)", fontWeight: 700 }}>Send Money</span>, useMethod === "nagad" ? "Nagad" : "bKash")}</p>
             <p className="text-[22px] mt-1" style={{ color: "var(--text)", fontWeight: 800 }}>৳{value >= 10 ? value : "—"}</p>
             <div className="flex items-center justify-between gap-3 mt-1">
               <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700, letterSpacing: 0.5 }}>{number}</p>
@@ -3411,7 +3830,7 @@ function AdminAppSettings({ flash }) {
     </label>
   );
   const head = (key, icon, title, sub) => (
-    <button onClick={() => setOpen((o) => (o === key ? null : key))} className="w-full flex items-center justify-between gap-3 px-3.5 py-3 text-left">
+    <button onClick={() => setOpen((o) => (o === key ? null : key))} className="w-full flex items-center justify-between gap-3 px-3.5 py-3 text-start">
       <span className="flex items-center gap-2.5">
         {icon}
         <span>
@@ -3455,7 +3874,7 @@ function AdminAppSettings({ flash }) {
           {field("media_worker", "Worker address", "url", "Looks like https://loop-media.yourname.workers.dev", 200)}
           <button
             onClick={() => set("media_on", !form.media_on)}
-            className="w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 mb-2.5 text-left"
+            className="w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 mb-2.5 text-start"
             style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
           >
             <span className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Save new uploads to R2</span>
@@ -3535,7 +3954,7 @@ function SupportQueue({ flash }) {
     load();
   }, [status]);
   const decide = async (g, ok) => {
-    if (ok && !window.confirm(`Did ৳${g.amount} arrive by ${g.method === "nagad" ? "Nagad" : "bKash"} with TrxID ${g.trx_id}?`)) return;
+    if (ok && !window.confirm(trText(`Did ৳${g.amount} arrive by ${g.method === "nagad" ? "Nagad" : "bKash"} with TrxID ${g.trx_id}?`))) return;
     setBusy(g.id);
     const { error } = await supabase.rpc("mod_decide_support", { p_id: g.id, p_ok: ok });
     setBusy(null);
@@ -3566,9 +3985,7 @@ function SupportQueue({ flash }) {
         ))}
       </div>
       {status === "confirmed" && rows && rows.length > 0 && (
-        <p className="text-[12px] mb-2" style={{ color: "var(--text-muted)" }}>
-          {rows.length} {rows.length === 1 ? "gift" : "gifts"} · ৳{total.toLocaleString()} in total
-        </p>
+        <p className="text-[12px] mb-2" style={{ color: "var(--text-muted)" }}>{trJoin("{0} {1} · ৳{2} in total", rows.length, rows.length === 1 ? "gift" : "gifts", total.toLocaleString(I18N_LOCALE))}</p>
       )}
       {err ? (
         <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{err}</p>
@@ -3586,13 +4003,11 @@ function SupportQueue({ flash }) {
               <Avatar username={g.username || "?"} avatarUrl={g.avatar_url} size={40} />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>@{g.username}</span>
-                <span className="block text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
-                  ৳{g.amount} · {g.method === "nagad" ? "Nagad" : "bKash"} · from {g.payer}
-                </span>
+                <span className="block text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>{trJoin("৳{0} · {1} · from {2}", g.amount, g.method === "nagad" ? "Nagad" : "bKash", g.payer)}</span>
               </span>
               <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>{timeAgo(g.created_at)}</span>
             </div>
-            <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>TrxID {g.trx_id}</p>
+            <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>{trJoin("TrxID {0}", g.trx_id)}</p>
             {g.note && <p className="text-[13px] mt-1.5" style={{ color: "var(--text)", whiteSpace: "pre-wrap" }}>“{g.note}”</p>}
             {g.status === "pending" && (
               <div className="flex gap-2 mt-3">
@@ -3665,9 +4080,9 @@ function BadgeQueue({ flash, switcher }) {
       const ask = r.plan
         ? `Did ৳${r.amount} arrive by ${r.pay_method === "nagad" ? "Nagad" : "bKash"} with TrxID ${r.trx_id}?\n\nGive @${r.username} the ${p.name} badge for ${p.line}?`
         : `Give @${r.username} the Ocean badge with no end date?`;
-      if (!window.confirm(ask)) return;
+      if (!window.confirm(trText(ask))) return;
     } else {
-      note = window.prompt("Why isn't it approved? They will see this.", r.plan ? "We couldn't find a payment with that transaction ID." : "We couldn't confirm the account yet.");
+      note = window.prompt(trText("Why isn't it approved? They will see this."), r.plan ? "We couldn't find a payment with that transaction ID." : "We couldn't confirm the account yet.");
       if (note === null) return;
     }
     setBusy(r.id);
@@ -3714,7 +4129,7 @@ function BadgeQueue({ flash, switcher }) {
       ) : (
         rows.map((r) => (
           <div key={r.id} className="rounded-2xl p-3 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <button onClick={() => openProfileGlobal(r.user_id)} className="flex items-center gap-3 text-left w-full">
+            <button onClick={() => openProfileGlobal(r.user_id)} className="flex items-center gap-3 text-start w-full">
               <Avatar username={r.username || "?"} avatarUrl={r.avatar_url} size={42} />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>@{r.username}</span>
@@ -3734,7 +4149,7 @@ function BadgeQueue({ flash, switcher }) {
                   <span className="block text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>
                     {badgePlanOf(r.plan).name} · ৳{r.amount} · {r.pay_method === "nagad" ? "Nagad" : "bKash"}
                   </span>
-                  <span className="block text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>From {r.payer} · TrxID {r.trx_id}</span>
+                  <span className="block text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>{trJoin("From {0} · TrxID {1}", r.payer, r.trx_id)}</span>
                 </span>
               </div>
             ) : (
@@ -3744,7 +4159,7 @@ function BadgeQueue({ flash, switcher }) {
               const note = String(r.reason || "").replace(/^Badge plan: [a-z]+( — )?/, "").replace(/^no note added$/, "").trim();
               return note ? <p className="text-[13px] mt-2" style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{note}</p> : null;
             })()}
-            {r.note && <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>Note: {r.note}</p>}
+            {r.note && <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>{trJoin("Note: {0}", r.note)}</p>}
             {r.status === "pending" && (
               <div className="flex gap-2 mt-3">
                 <button
@@ -4035,9 +4450,9 @@ function LowCopyChip() {
       ? "Data-saver copy stopped"
       : job.error;
   return (
-    <div className="fixed left-0 right-0 flex justify-center pointer-events-none" style={{ top: "calc(10px + env(safe-area-inset-top, 0px))", zIndex: 120 }}>
+    <div className="fixed start-0 end-0 flex justify-center pointer-events-none" style={{ top: "calc(10px + env(safe-area-inset-top, 0px))", zIndex: 120 }}>
       <div
-        className="pointer-events-auto flex items-center gap-2 rounded-full pl-3 pr-1.5 h-8 text-[12px]"
+        className="pointer-events-auto flex items-center gap-2 rounded-full ps-3 pe-1.5 h-8 text-[12px]"
         style={{ background: "rgba(20,20,24,0.88)", color: "#fff", fontWeight: 600, boxShadow: "0 6px 18px rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", maxWidth: 340 }}
       >
         {job.state === "working" ? (
@@ -4223,7 +4638,7 @@ function ChannelWelcomeScreen({ channel, onClose, onSaved }) {
           className="w-full rounded-2xl px-4 py-3 text-sm outline-none resize-none mt-4"
           style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" }}
         />
-        <p className="text-[11px] text-right mt-1" style={{ color: "var(--text-muted)" }}>{text.length}/1000</p>
+        <p className="text-[11px] text-end mt-1" style={{ color: "var(--text-muted)" }}>{text.length}/1000</p>
         {text.trim() && (
           <>
             <p className="text-[12px] mt-4 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Preview</p>
@@ -4250,9 +4665,7 @@ function ChannelWelcomeBubble({ channel, text }) {
         <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
           <LinkifiedText text={text} />
         </p>
-        <p className="flex items-center justify-end gap-1 text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
-          <Lock size={9} /> Only visible to you
-        </p>
+        <p className="flex items-center justify-end gap-1 text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{trJoin("{0} Only visible to you", <Lock size={9} />)}</p>
       </div>
     </div>
   );
@@ -4311,7 +4724,7 @@ function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
     load();
   };
   const remove = async (p) => {
-    if (!window.confirm(`Remove ${p.username} as an admin?`)) return;
+    if (!window.confirm(trText(`Remove ${p.username} as an admin?`))) return;
     const { error } = await supabase.from("channel_admins").delete().eq("channel_id", channel.id).eq("user_id", p.id);
     if (error) return setErr(error.message);
     load();
@@ -4327,7 +4740,7 @@ function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
   };
 
   const toggle = ({ on, label, hint, onFlip, disabled }) => (
-    <button onClick={onFlip} disabled={disabled} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ opacity: disabled ? 0.5 : 1 }}>
+    <button onClick={onFlip} disabled={disabled} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start" style={{ opacity: disabled ? 0.5 : 1 }}>
       <span>
         <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
         <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{hint}</span>
@@ -4371,7 +4784,7 @@ function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
                 </button>
               </div>
               {found.map((p) => (
-                <button key={p.id} onClick={() => add(p)} className="w-full flex items-center gap-3 px-1 py-2 text-left">
+                <button key={p.id} onClick={() => add(p)} className="w-full flex items-center gap-3 px-1 py-2 text-start">
                   <Avatar username={p.username} avatarUrl={p.avatar_url} size={36} />
                   <span className="flex-1 min-w-0 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
                   <span className="text-[12px]" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>Add</span>
@@ -4379,7 +4792,7 @@ function ChannelAdminsScreen({ channel, owner, onClose, onSaved }) {
               ))}
             </div>
           ) : (
-            <button onClick={() => setAdding(true)} className="w-full flex items-center gap-3 px-4 py-3.5 text-left" disabled={!!err && /step-14/.test(err)}>
+            <button onClick={() => setAdding(true)} className="w-full flex items-center gap-3 px-4 py-3.5 text-start" disabled={!!err && /step-14/.test(err)}>
               <UserPlus size={20} color="var(--accent-solid)" />
               <span className="text-sm" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>Add Admin</span>
             </button>
@@ -4509,7 +4922,7 @@ function RepostNoteBubble({ entry, onTap, avatarSize = 34 }) {
       }}
       onTouchStart={(e) => e.stopPropagation()}
       onTouchEnd={(e) => e.stopPropagation()}
-      className="flex items-end text-left transition-transform active:scale-95"
+      className="flex items-end text-start transition-transform active:scale-95"
       style={{ maxWidth: 250, animation: "loopPop 0.28s ease-out", transformOrigin: "bottom left" }}
     >
       <span className="relative rounded-full shrink-0" style={{ padding: 1.5, background: white, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
@@ -4593,12 +5006,9 @@ function RepostNoteSheet({ post, meId, initialNote = "", onClose, onSaved, onUnd
           <Avatar username={me?.username || "?"} avatarUrl={me?.avatar_url} size={86} />
           <RepostBadge size={30} />
         </span>
-        <p className="text-[14px] mt-4 text-center" style={{ color: "rgba(255,255,255,0.72)" }}>
-          You reposted this {kind}.{" "}
-          <button onClick={onUndo} style={{ color: "#FFFFFF", fontWeight: 700 }}>
+        <p className="text-[14px] mt-4 text-center" style={{ color: "rgba(255,255,255,0.72)" }}>{trJoin("You reposted this {0}. {1}", kind, <button onClick={onUndo} style={{ color: "#FFFFFF", fontWeight: 700 }}>
             Undo
-          </button>
-        </p>
+          </button>)}</p>
         <div className="flex justify-between w-full mt-5" style={{ maxWidth: 380 }}>
           {REPOST_NOTE_EMOJI.map((emo) => (
             <button
@@ -4706,7 +5116,7 @@ function BannerSheet({ userId, initial, onClose, onSaved }) {
                     setKind(b.key);
                     setPicking(false);
                   }}
-                  className="flex items-center gap-2 rounded-xl px-3 h-10 text-[13px] text-left"
+                  className="flex items-center gap-2 rounded-xl px-3 h-10 text-[13px] text-start"
                   style={{
                     background: on ? "var(--text)" : "var(--bg-sunken)",
                     color: on ? "var(--bg)" : "var(--text)",
@@ -4732,9 +5142,7 @@ function BannerSheet({ userId, initial, onClose, onSaved }) {
           <span className="text-[12px] tabular-nums" style={{ color: "var(--text-muted)" }}>{text.length}/20</span>
         </div>
         {text.trim() && (
-          <p className="flex items-center gap-1.5 text-[13px] mt-3" style={{ color: "var(--text-muted)" }}>
-            Preview: <KIcon size={13} /> {k.label} <span style={{ color: "var(--text)", fontWeight: 600 }}>{text.trim()}</span>
-          </p>
+          <p className="flex items-center gap-1.5 text-[13px] mt-3" style={{ color: "var(--text-muted)" }}>{trJoin("Preview: {0} {1} {2}", <KIcon size={13} />, k.label, <span style={{ color: "var(--text)", fontWeight: 600 }}>{text.trim()}</span>)}</p>
         )}
         {err && <p className="text-xs mt-2" style={{ color: "var(--heart)" }}>{err}</p>}
         <button
@@ -4797,7 +5205,7 @@ function NotifyPrefsSheet({ targetId, targetName, myId, onClose, onChange }) {
   const Row = ({ k, label, hint }) => {
     const on = !!prefs?.[k];
     return (
-      <button onClick={() => set(k)} disabled={!prefs} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left">
+      <button onClick={() => set(k)} disabled={!prefs} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start">
         <span>
           <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
           <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>{hint}</span>
@@ -4811,9 +5219,7 @@ function NotifyPrefsSheet({ targetId, targetName, myId, onClose, onChange }) {
   return (
     <StorySheetShell title="Notifications" onClose={onClose}>
       <div className="pb-6">
-        <p className="px-4 pb-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
-          Get a notification when <span style={{ color: "var(--text)", fontWeight: 700 }}>{targetName}</span> shares something new.
-        </p>
+        <p className="px-4 pb-2 text-[12px]" style={{ color: "var(--text-muted)" }}>{trJoin("Get a notification when {0} shares something new.", <span style={{ color: "var(--text)", fontWeight: 700 }}>{targetName}</span>)}</p>
         <Row k="posts" label="Posts" hint="New photo posts" />
         <Row k="reels" label="Reels" hint="New reels and videos" />
         <Row k="stories" label="Stories" hint="When they add to their story" />
@@ -4928,7 +5334,7 @@ function SharedPostCard({ info, onOpen }) {
         e.stopPropagation();
         if (p) onOpen(p);
       }}
-      className="block text-left rounded-2xl overflow-hidden transition-transform active:scale-[0.98]"
+      className="block text-start rounded-2xl overflow-hidden transition-transform active:scale-[0.98]"
       style={{ width: 236, background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 2px 10px rgba(0,0,0,0.12)" }}
     >
       <div className="flex items-center gap-2 px-3 py-2">
@@ -4939,7 +5345,7 @@ function SharedPostCard({ info, onOpen }) {
         {p && <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />}
         {isVideo && (
           <>
-            <span className="absolute top-2 right-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+            <span className="absolute top-2 end-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
               <Clapperboard size={18} color="#FFFFFF" />
             </span>
             <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -4950,7 +5356,7 @@ function SharedPostCard({ info, onOpen }) {
           </>
         )}
         {p && (p.media_count || 1) > 1 && (
-          <span className="absolute top-2 right-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+          <span className="absolute top-2 end-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
             <Layers size={17} color="#FFFFFF" />
           </span>
         )}
@@ -5068,9 +5474,7 @@ function QuickEmojiSheet({ current, onSave, onClose }) {
   return (
     <StorySheetShell title="Your quick reactions" onClose={onClose}>
       <div className="px-4 pb-6">
-        <p className="text-[12px] mb-2" style={{ color: "var(--text-muted)" }}>
-          Pick up to 8. They show in this order under every story. {picked.length}/8
-        </p>
+        <p className="text-[12px] mb-2" style={{ color: "var(--text-muted)" }}>{trJoin("Pick up to 8. They show in this order under every story. {0}/8", picked.length)}</p>
         <div className="flex gap-1.5 mb-3 min-h-[44px] rounded-2xl px-2 items-center" style={{ background: "var(--bg-sunken)" }}>
           {picked.map((e) => (
             <button key={e} onClick={() => toggle(e)} className="transition-transform active:scale-90" aria-label={`Remove ${e}`}>
@@ -5179,7 +5583,7 @@ function DevicePermissionsScreen({ onBack }) {
       {DEVICE_PERMS.map((x) => {
         const Icon = x.icon;
         return (
-          <button key={x.key} onClick={() => setOpen(x.key)} className="w-full flex items-center gap-3.5 px-4 py-3.5 text-left active:opacity-70">
+          <button key={x.key} onClick={() => setOpen(x.key)} className="w-full flex items-center gap-3.5 px-4 py-3.5 text-start active:opacity-70">
             <Icon size={20} color="var(--text)" strokeWidth={1.8} />
             <span className="flex-1 text-[15px]" style={{ color: "var(--text)" }}>{x.label}</span>
             <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{states[x.key] ? permLabel(states[x.key]) : "…"}</span>
@@ -5208,11 +5612,7 @@ function DevicePermissionsScreen({ onBack }) {
               </button>
             )}
             {(st === "granted" || st === "denied") && (
-              <div className="rounded-2xl px-3.5 py-3 text-[12.5px]" style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)", lineHeight: 1.55 }}>
-                To change this:
-                <br />• In the browser: tap the icon next to the web address → <b>Permissions</b> → {p.label}.
-                <br />• In the installed Loop app: hold the Loop icon → <b>App info</b> → <b>Permissions</b>.
-              </div>
+              <div className="rounded-2xl px-3.5 py-3 text-[12.5px]" style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)", lineHeight: 1.55 }}>{trJoin("To change this:{0}• In the browser: tap the icon next to the web address → {1} → {2}.{3}• In the installed Loop app: hold the Loop icon → {4} → {5}.", <br />, <b>Permissions</b>, p.label, <br />, <b>App info</b>, <b>Permissions</b>)}</div>
             )}
           </div>
         </StorySheetShell>
@@ -5241,8 +5641,8 @@ function CountsSettingsScreen({ onBack }) {
       {rows.map(([k, label]) => {
         const on = prefs[k] !== false;
         return (
-          <button key={k} onClick={() => toggle(k)} className="w-full flex items-center justify-between px-4 py-3.5 text-left">
-            <span className="text-[15px]" style={{ color: "var(--text)" }}>Show {label.toLowerCase()} counts</span>
+          <button key={k} onClick={() => toggle(k)} className="w-full flex items-center justify-between px-4 py-3.5 text-start">
+            <span className="text-[15px]" style={{ color: "var(--text)" }}>{trJoin("Show {0} counts", label.toLowerCase())}</span>
             <span className="rounded-full shrink-0" style={{ width: 40, height: 23, background: on ? ACCENT : "var(--toggle-off)", position: "relative" }}>
               <span className="rounded-full bg-white absolute" style={{ width: 19, height: 19, top: 2, left: on ? 19 : 2, transition: "left 0.15s" }} />
             </span>
@@ -5306,7 +5706,7 @@ function SavedAudioList() {
   return (
     <div className="pt-2">
       {rows.map((x) => (
-        <button key={x.id} onClick={() => openSoundGlobal(x.id)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left active:opacity-70">
+        <button key={x.id} onClick={() => openSoundGlobal(x.id)} className="w-full flex items-center gap-3 px-4 py-2.5 text-start active:opacity-70">
           <span className="relative rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 52, height: 52, background: "var(--surface)" }}>
             {x.pic ? (
               <img src={x.pic} alt="" className="absolute inset-0 w-full h-full object-cover" />
@@ -5331,7 +5731,7 @@ function RepostNoteTile({ note }) {
   if (!note) return null;
   const bg = "rgba(22,22,26,0.86)";
   return (
-    <span className="absolute left-1.5 bottom-2 flex flex-col items-start pointer-events-none" style={{ maxWidth: "90%" }}>
+    <span className="absolute start-1.5 bottom-2 flex flex-col items-start pointer-events-none" style={{ maxWidth: "90%" }}>
       <span className="rounded-2xl px-2.5 py-1 text-[11.5px] truncate" style={{ background: bg, color: "#FFFFFF", fontWeight: 600, maxWidth: "100%" }}>
         {note}
       </span>
@@ -5531,7 +5931,7 @@ function ChannelSettingsScreen({ channel, owner, onClose, onSaved, onChanged, on
   };
 
   const remove = async () => {
-    if (!window.confirm(`Delete "${channel.name}"? Every post in it goes too. This can't be undone.`)) return;
+    if (!window.confirm(trText(`Delete "${channel.name}"? Every post in it goes too. This can't be undone.`))) return;
     const { error } = await supabase.from("channels").delete().eq("id", channel.id);
     if (error) return setErr(error.message);
     onDeleted();
@@ -5540,7 +5940,7 @@ function ChannelSettingsScreen({ channel, owner, onClose, onSaved, onChanged, on
   const Choice = ({ k, label, hint }) => (
     <button
       onClick={() => setMode(k)}
-      className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+      className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start"
       style={{ borderTop: "1px solid var(--border-subtle)" }}
     >
       <span>
@@ -5638,7 +6038,7 @@ function ChannelSettingsScreen({ channel, owner, onClose, onSaved, onChanged, on
             <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Replies</p>
             <button
               onClick={() => setReplies((v) => !v)}
-              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start"
               style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}
             >
               <span>
@@ -5657,7 +6057,7 @@ function ChannelSettingsScreen({ channel, owner, onClose, onSaved, onChanged, on
         <div style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}>
           <button
             onClick={() => ("auto_translate" in channel ? setAutoTr((v) => !v) : setErr("Auto-Translate needs loop-step-14.sql — run it in Supabase first."))}
-            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start"
           >
             <span className="flex items-center gap-3">
               <Languages size={20} color="var(--text)" />
@@ -5670,7 +6070,7 @@ function ChannelSettingsScreen({ channel, owner, onClose, onSaved, onChanged, on
               <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: autoTr ? 18 : 2, transition: "left 0.15s" }} />
             </span>
           </button>
-          <button onClick={() => setSub("welcome")} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+          <button onClick={() => setSub("welcome")} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start" style={{ borderTop: "1px solid var(--border-subtle)" }}>
             <span className="flex items-center gap-3">
               <MessageCircle size={20} color="var(--text)" />
               <span className="text-sm" style={{ color: "var(--text)" }}>Welcome Message</span>
@@ -5679,7 +6079,7 @@ function ChannelSettingsScreen({ channel, owner, onClose, onSaved, onChanged, on
               {channel.welcome_message ? "On" : "Off"} <ChevronRight size={17} />
             </span>
           </button>
-          <button onClick={() => setSub("admins")} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ borderTop: "1px solid var(--border-subtle)" }}>
+          <button onClick={() => setSub("admins")} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start" style={{ borderTop: "1px solid var(--border-subtle)" }}>
             <span className="flex items-center gap-3">
               <Shield size={20} color="var(--text)" />
               <span className="text-sm" style={{ color: "var(--text)" }}>Administrators</span>
@@ -5929,13 +6329,13 @@ function ChannelPeopleScreen({ channel, owner, me, onClose }) {
         <Section>Who can post?</Section>
         {owner && (
           <div className="flex items-center gap-3 px-4 py-2">
-            <button onClick={() => openProfileGlobal(owner.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+            <button onClick={() => openProfileGlobal(owner.id)} className="flex items-center gap-3 flex-1 min-w-0 text-start">
               <Avatar username={owner.username} avatarUrl={owner.avatar_url} size={52} />
               <span className="min-w-0">
                 <span className="flex items-center gap-1 text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
                   {owner.full_name || owner.username} {owner.is_verified && <VerifiedBadge size={13} tier={owner.badge_tier} />}
                 </span>
-                <span className="block text-[13px] truncate" style={{ color: "var(--text-muted)" }}>Admin · {owner.username}</span>
+                <span className="block text-[13px] truncate" style={{ color: "var(--text-muted)" }}>{trJoin("Admin · {0}", owner.username)}</span>
               </span>
             </button>
             {owner.id !== me && (
@@ -5998,7 +6398,7 @@ function ChannelInfoScreen({ channel, owner, me, isOwner, membership, members, p
     </button>
   );
   const Row = ({ icon, title, sub, onClick, right }) => (
-    <button onClick={onClick} className="w-full flex items-center gap-4 px-5 py-3 text-left transition-colors active:bg-[var(--active-highlight)]">
+    <button onClick={onClick} className="w-full flex items-center gap-4 px-5 py-3 text-start transition-colors active:bg-[var(--active-highlight)]">
       <span className="shrink-0">{icon}</span>
       <span className="flex-1 min-w-0">
         <span className="block text-[15px]" style={{ color: "var(--text)", fontWeight: 600 }}>{title}</span>
@@ -6064,9 +6464,9 @@ function ChannelInfoScreen({ channel, owner, me, isOwner, membership, members, p
                   <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>Nothing matches</p>
                 ) : (
                   hits.slice(0, 30).map((x) => (
-                    <button key={x.id} onClick={() => onJumpTo(x.id)} className="w-full text-left py-2" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                    <button key={x.id} onClick={() => onJumpTo(x.id)} className="w-full text-start py-2" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
                       <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
-                        {new Date(x.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                        {new Date(x.created_at).toLocaleDateString(I18N_LOCALE, { day: "numeric", month: "short", year: "numeric" })}
                       </span>
                       <span className="block text-[13px]" style={{ color: "var(--text)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                         {x.content}
@@ -6423,7 +6823,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
 
   const removePost = async (post) => {
     setPostMenu(null);
-    if (!window.confirm("Delete this post for everyone?")) return;
+    if (!window.confirm(trText("Delete this post for everyone?"))) return;
     const { error: err } = await supabase.from("channel_posts").delete().eq("id", post.id);
     if (err) return say(err.message);
     setPosts((prev) => prev.filter((x) => x.id !== post.id));
@@ -6466,7 +6866,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
     const y = new Date(Date.now() - 86400000);
     if (d.toDateString() === today.toDateString()) return "Today";
     if (d.toDateString() === y.toDateString()) return "Yesterday";
-    return d.toLocaleDateString(undefined, { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+    return d.toLocaleDateString(I18N_LOCALE, { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
   };
   const pill = {
     background: bubbleBg,
@@ -6491,7 +6891,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
         <button onClick={onClose} aria-label="Back" className="p-1">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
-        <button onClick={() => channel && setInfoOpen(true)} className="flex items-center gap-2.5 flex-1 min-w-0 text-left">
+        <button onClick={() => channel && setInfoOpen(true)} className="flex items-center gap-2.5 flex-1 min-w-0 text-start">
           <ChannelAvatar channel={channel} size={38} />
           <span className="min-w-0">
             <span className="block text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{channel?.name || "…"}</span>
@@ -6519,7 +6919,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       {pinned && (
         <button
           onClick={() => postRefs.current[pinned.id]?.scrollIntoView({ behavior: "smooth", block: "center" })}
-          className="flex items-center gap-2.5 px-4 py-2 text-left shrink-0"
+          className="flex items-center gap-2.5 px-4 py-2 text-start shrink-0"
           style={{ background: "var(--surface)", borderBottom: "1px solid var(--border-subtle)" }}
         >
           <Pin size={14} color="var(--accent-solid)" className="shrink-0" />
@@ -6544,9 +6944,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                 }}
                 className="text-[12px] mt-0.5 flex items-center gap-1"
                 style={{ color: "var(--text-muted)" }}
-              >
-                by @{owner.username} {owner.is_verified && <VerifiedBadge size={11} tier={owner.badge_tier} />}
-              </button>
+              >{trJoin("by @{0} {1}", owner.username, owner.is_verified && <VerifiedBadge size={11} tier={owner.badge_tier} />)}</button>
             )}
             {channel.description && (
               <p className="text-[13px] mt-2" style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap" }}>{channel.description}</p>
@@ -6584,9 +6982,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                     </span>
                   </div>
                   {owner && !showAuthors && (
-                    <p className="text-[12px] mb-1" style={{ color: "var(--text-muted)", marginLeft: 40 }}>
-                      {owner.full_name || owner.username} · Admin
-                    </p>
+                    <p className="text-[12px] mb-1" style={{ color: "var(--text-muted)", marginLeft: 40 }}>{trJoin("{0} · Admin", owner.full_name || owner.username)}</p>
                   )}
                 </>
               )}
@@ -6664,11 +7060,11 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                                   <LinkifiedText text={post.content} />
                                 </p>
                               ))}
-                            <p className="text-[10px] mt-1 text-right" style={{ color: "var(--text-muted)" }}>
+                            <p className="text-[10px] mt-1 text-end" style={{ color: "var(--text-muted)" }}>
                               {signed && !showAuthors && authorName && <span style={{ fontStyle: "italic" }}>{authorName} · </span>}
                               {post.pinned && "📌 "}
                               {post.edited_at ? "edited · " : ""}
-                              {new Date(post.created_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                              {new Date(post.created_at).toLocaleTimeString(I18N_LOCALE, { hour: "numeric", minute: "2-digit" })}
                             </p>
                           </div>
                         </>
@@ -6740,9 +7136,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                 </div>
               </div>
               {isLast && seenBy > 0 && (
-                <p className="text-[11.5px] text-right pr-1 -mt-1 mb-2" style={{ color: "var(--text-muted)" }}>
-                  Seen by {formatCount(seenBy)}
-                </p>
+                <p className="text-[11.5px] text-end pe-1 -mt-1 mb-2" style={{ color: "var(--text-muted)" }}>{trJoin("Seen by {0}", formatCount(seenBy))}</p>
               )}
             </React.Fragment>
           );
@@ -6751,7 +7145,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       </div>
 
       {flash && (
-        <div className="absolute left-0 right-0 bottom-24 flex justify-center pointer-events-none z-[90]">
+        <div className="absolute start-0 end-0 bottom-24 flex justify-center pointer-events-none z-[90]">
           <span className="rounded-full px-4 py-2 text-[12px]" style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600 }}>{flash}</span>
         </div>
       )}
@@ -6768,7 +7162,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
                     URL.revokeObjectURL(image.url);
                     setImage(null);
                   }}
-                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center"
+                  className="absolute -top-2 -end-2 w-6 h-6 rounded-full flex items-center justify-center"
                   style={{ background: "rgba(0,0,0,0.75)" }}
                   aria-label="Remove photo"
                 >
@@ -7076,7 +7470,7 @@ function ChannelsTab({ currentUserId }) {
   }, [currentUserId]);
 
   const Row = ({ ch }) => (
-    <button onClick={() => openChannelGlobal(ch.id)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors active:bg-[var(--active-highlight)]">
+    <button onClick={() => openChannelGlobal(ch.id)} className="w-full flex items-center gap-3 px-4 py-2.5 text-start transition-colors active:bg-[var(--active-highlight)]">
       <ChannelAvatar channel={ch} size={50} />
       <div className="flex-1 min-w-0">
         <p className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{ch.name}</p>
@@ -7093,7 +7487,7 @@ function ChannelsTab({ currentUserId }) {
       <div className="px-4 pt-3 pb-2">
         <button
           onClick={() => setCreating(true)}
-          className="w-full flex items-center gap-3 rounded-2xl px-3 py-3 text-left"
+          className="w-full flex items-center gap-3 rounded-2xl px-3 py-3 text-start"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
         >
           <span className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: ACCENT }}>
@@ -7395,7 +7789,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
   };
 
   const rename = async () => {
-    const name = window.prompt("Name this sound", snd.title === "Original audio" ? "" : snd.title);
+    const name = window.prompt(trText("Name this sound"), snd.title === "Original audio" ? "" : snd.title);
     if (name === null) return;
     const title = name.trim().slice(0, 60) || null;
     const { error: err } = await supabase.from("sounds").update({ title }).eq("id", snd.id);
@@ -7415,9 +7809,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
         </button>
         <div className="flex-1" />
         {trending && (
-          <span className="flex items-center gap-1 rounded-full px-3 h-8 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700 }}>
-            <ArrowUpRight size={15} /> Trending
-          </span>
+          <span className="flex items-center gap-1 rounded-full px-3 h-8 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700 }}>{trJoin("{0} Trending", <ArrowUpRight size={15} />)}</span>
         )}
         {snd && (
           <button onClick={() => setMenuOpen(true)} aria-label="More" className="p-1.5">
@@ -7511,9 +7903,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
                 }}
                 className="w-full rounded-xl h-11 text-[15px] flex items-center justify-center gap-2 transition-transform active:scale-[0.99]"
                 style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
-              >
-                <Clapperboard size={17} /> Use audio
-              </button>
+              >{trJoin("{0} Use audio", <Clapperboard size={17} />)}</button>
             </div>
           )}
 
@@ -7529,11 +7919,11 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
               >
                 <MediaThumb src={pp.media_url} cover={pp.cover_url} isVideo={!isPhotoPost(pp)} />
                 {pp.id === snd.sourcePostId && (
-                  <span className="absolute top-1.5 left-1.5 rounded-full px-2 py-0.5 text-[11px]" style={{ background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontWeight: 700 }}>
+                  <span className="absolute top-1.5 start-1.5 rounded-full px-2 py-0.5 text-[11px]" style={{ background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontWeight: 700 }}>
                     Original
                   </span>
                 )}
-                <span className="absolute left-1.5 bottom-1.5 flex items-center gap-1 text-[12px]" style={{ color: "#FFFFFF", fontWeight: 700, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
+                <span className="absolute start-1.5 bottom-1.5 flex items-center gap-1 text-[12px]" style={{ color: "#FFFFFF", fontWeight: 700, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
                   <Play size={11} color="#FFFFFF" fill="#FFFFFF" /> {formatCount(pp.views_count || 0)}
                 </span>
               </button>
@@ -7681,9 +8071,7 @@ function SoundPickerSheet({ onPick, onClose }) {
           />
         </div>
       </div>
-      <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
-        {query.trim() ? "Results" : "New on Loop"} · tap ▶ to listen
-      </p>
+      <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · tap ▶ to listen", query.trim() ? "Results" : "New on Loop")}</p>
       <div className="pb-6" style={{ maxHeight: "55vh", overflowY: "auto" }}>
         {items === null ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
@@ -7852,7 +8240,7 @@ function LoginActivityScreen({ onBack }) {
   };
 
   const logOutOne = async (row) => {
-    if (!window.confirm(`Log out of ${row.os} · ${row.browser}?`)) return;
+    if (!window.confirm(trText(`Log out of ${row.os} · ${row.browser}?`))) return;
     setBusy(row.device_id);
     const { error: err } = await supabase
       .from("login_devices")
@@ -7868,7 +8256,7 @@ function LoginActivityScreen({ onBack }) {
   };
 
   const logOutOthers = async () => {
-    if (!window.confirm("Log out of every other phone and browser? You stay logged in here.")) return;
+    if (!window.confirm(trText("Log out of every other phone and browser? You stay logged in here."))) return;
     setBusy("all");
     // This one is immediate: Supabase cancels every other sign-in on its side.
     const { error: err } = await supabase.auth.signOut({ scope: "others" });
@@ -7941,9 +8329,7 @@ function LoginActivityScreen({ onBack }) {
             {mine ? <DeviceRow row={mine} isMine /> : <DeviceRow row={{ ...describeDevice(), last_seen: new Date().toISOString() }} isMine />}
           </div>
 
-          <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
-            Other devices {others.length > 0 ? `· ${others.length}` : ""}
-          </p>
+          <p className="px-4 pt-5 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Other devices {0}", others.length > 0 ? `· ${others.length}` : "")}</p>
           <div style={{ borderBottom: "1px solid var(--border-subtle)" }}>
             {others.length === 0 ? (
               <p className="px-4 py-4 text-[13px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--border-subtle)" }}>
@@ -8360,7 +8746,7 @@ function CaptionText({ username, caption, onOpenProfile, onMention, onTap, light
         {hasMoreLines && !overflows ? "…" : ""}
       </span>
       {showMore && (
-        <button onClick={toggle} className="shrink-0 ml-1" style={{ color: toggleColor, fontWeight: 500 }}>
+        <button onClick={toggle} className="shrink-0 ms-1" style={{ color: toggleColor, fontWeight: 500 }}>
           more
         </button>
       )}
@@ -8532,7 +8918,7 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
     <>
       <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose} />
       <div
-        className="fixed left-0 right-0 bottom-0 z-[71] rounded-t-3xl flex flex-col"
+        className="fixed start-0 end-0 bottom-0 z-[71] rounded-t-3xl flex flex-col"
         style={{ background: "var(--bg)", border: "1px solid var(--border)", maxHeight: "82vh" }}
       >
         <div className="flex items-center justify-center pt-2.5 pb-1">
@@ -8545,19 +8931,17 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
         <div className="flex items-center justify-center gap-8 py-3.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
           <span className="flex items-center gap-2 text-[17px]" style={{ color: "var(--text)", fontWeight: 600 }}>
             <Heart size={20} color="var(--text)" strokeWidth={2} />
-            {countHidden ? "—" : (post.likeCount || 0).toLocaleString()}
+            {countHidden ? "—" : (post.likeCount || 0).toLocaleString(I18N_LOCALE)}
           </span>
           {isVideo && (
             <span className="flex items-center gap-2 text-[17px]" style={{ color: "var(--text)", fontWeight: 600 }}>
               <Play size={19} color="var(--text)" strokeWidth={2} />
-              {(post.views_count || 0).toLocaleString()}
+              {(post.views_count || 0).toLocaleString(I18N_LOCALE)}
             </span>
           )}
         </div>
         {countHidden && (
-          <p className="text-[11px] text-center pt-2" style={{ color: "var(--text-muted)" }}>
-            {post.username ? `${post.username} hid` : "The creator hid"} the like count on this post.
-          </p>
+          <p className="text-[11px] text-center pt-2" style={{ color: "var(--text-muted)" }}>{trJoin("{0} the like count on this post.", post.username ? `${post.username} hid` : "The creator hid")}</p>
         )}
 
         <div className="px-4 pt-3 flex-1 min-h-0 flex flex-col">
@@ -8591,7 +8975,7 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
                       onClose();
                       onOpenProfile(p.id);
                     }}
-                    className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                    className="flex items-center gap-3 flex-1 min-w-0 text-start"
                   >
                     <Avatar username={p.username} avatarUrl={p.avatar_url} size={48} />
                     <div className="min-w-0">
@@ -8688,7 +9072,7 @@ function InThisPostSheet({ tags, isVideo, onClose, onOpenProfile }) {
                   onClose();
                   onOpenProfile?.(pp.id);
                 }}
-                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                className="flex items-center gap-3 flex-1 min-w-0 text-start"
               >
                 <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={46} />
                 <div className="min-w-0">
@@ -8720,7 +9104,7 @@ function MediaTagOverlay({ tags, isVideo, onOpenProfile }) {
           setOpen(true);
         }}
         aria-label="Tagged people"
-        className="absolute left-2.5 bottom-2.5 z-[6] w-7 h-7 rounded-full flex items-center justify-center"
+        className="absolute start-2.5 bottom-2.5 z-[6] w-7 h-7 rounded-full flex items-center justify-center"
         style={{ background: "rgba(0,0,0,0.6)" }}
       >
         <CircleUserRound size={15} color="#FFFFFF" fill="rgba(255,255,255,0.15)" />
@@ -8786,12 +9170,12 @@ function PollBlock({ postId, currentUserId }) {
             <button
               key={opt.id}
               onClick={() => vote(opt.id)}
-              className="relative rounded-lg overflow-hidden text-left px-3 py-2"
+              className="relative rounded-lg overflow-hidden text-start px-3 py-2"
               style={{ background: "var(--bg)", border: isMine ? "1px solid var(--accent-start)" : "1px solid var(--border)" }}
             >
               {myVote && (
                 <div
-                  className="absolute inset-y-0 left-0"
+                  className="absolute inset-y-0 start-0"
                   style={{ width: `${pct}%`, background: "rgba(255,93,115,0.18)" }}
                 />
               )}
@@ -8804,7 +9188,7 @@ function PollBlock({ postId, currentUserId }) {
         })}
       </div>
       {totalVotes > 0 && (
-        <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>{totalVotes} vote{totalVotes === 1 ? "" : "s"}</p>
+        <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} vote{1}", totalVotes, totalVotes === 1 ? "" : "s")}</p>
       )}
     </div>
   );
@@ -8862,7 +9246,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm("Delete this post? This cannot be undone.")) return;
+    if (!window.confirm(trText("Delete this post? This cannot be undone."))) return;
     const { error } = await supabase.from("posts").delete().eq("id", post.id);
     if (error) {
       setMenuError(error.message);
@@ -8918,7 +9302,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
     <>
       <div className="fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <div
-        className="fixed left-0 right-0 bottom-0 z-50 rounded-t-3xl"
+        className="fixed start-0 end-0 bottom-0 z-50 rounded-t-3xl"
         style={{ background: "var(--bg)", border: "1px solid var(--border)", maxHeight: "80vh", overflowY: "auto" }}
       >
         <div className="flex items-center justify-center pt-2.5 pb-1">
@@ -8935,20 +9319,13 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
           <div className="pb-6">
             {post.removed_at && (
               <div className="mx-4 mb-2 rounded-xl px-3 py-2.5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--heart)" }}>
-                <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--heart)", fontWeight: 700 }}>
-                  <Shield size={13} /> Removed by Loop
-                </p>
-                <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
-                  Only you can see this post. Reason: {post.removed_reason || "Community Guidelines"}.
-                </p>
+                <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--heart)", fontWeight: 700 }}>{trJoin("{0} Removed by Loop", <Shield size={13} />)}</p>
+                <p className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>{trJoin("Only you can see this post. Reason: {0}.", post.removed_reason || "Community Guidelines")}</p>
               </div>
             )}
             {post.created_at && new Date(post.created_at).getTime() > Date.now() && (
               <div className="mx-4 mb-2 rounded-xl px-3 py-2.5" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
-                <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--text)", fontWeight: 600 }}>
-                  <Clock size={13} /> Scheduled for{" "}
-                  {new Date(post.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                </p>
+                <p className="text-xs flex items-center gap-1.5" style={{ color: "var(--text)", fontWeight: 600 }}>{trJoin("{0} Scheduled for {1}", <Clock size={13} />, new Date(post.created_at).toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" }))}</p>
                 <div className="flex gap-2 mt-2">
                   <button
                     onClick={() => patchPost({ created_at: new Date().toISOString() })}
@@ -8976,9 +9353,7 @@ function PostOptionsSheet({ post, onClose, onSaved, onDeleted }) {
               className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm"
               style={{ color: "var(--text)", textAlign: "left" }}
             >
-              <span className="flex items-center gap-3">
-                <Settings size={16} color="var(--text)" /> Advanced settings
-              </span>
+              <span className="flex items-center gap-3">{trJoin("{0} Advanced settings", <Settings size={16} color="var(--text)" />)}</span>
               <span className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
                 {[post.hide_likes, post.hide_comments, post.hide_reposts, post.comments_disabled, matureNow].filter(Boolean).length || ""}
                 <ChevronRight size={16} color="var(--text-muted)" style={{ transform: advOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
@@ -9257,7 +9632,7 @@ function StoryComposer({ file, onCancel, onPublished }) {
   return (
     <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "#000000" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
-        <button onClick={onCancel} className="p-1 -ml-1 transition-transform active:scale-90">
+        <button onClick={onCancel} className="p-1 -ms-1 transition-transform active:scale-90">
           <X size={24} color="#FFFFFF" />
         </button>
         <span className="text-sm" style={{ color: "#FFFFFF", fontWeight: 700 }}>Your story</span>
@@ -9265,7 +9640,7 @@ function StoryComposer({ file, onCancel, onPublished }) {
           onClick={() => setTray(true)}
           disabled={stickers.length >= MAX_STICKERS}
           aria-label="Stickers"
-          className="p-1 -mr-1 transition-transform active:scale-90"
+          className="p-1 -me-1 transition-transform active:scale-90"
           style={{ opacity: stickers.length >= MAX_STICKERS ? 0.4 : 1 }}
         >
           <Sticker size={24} color="#FFFFFF" />
@@ -9306,7 +9681,7 @@ function StoryComposer({ file, onCancel, onPublished }) {
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setStickers((prev) => prev.filter((x) => x.id !== st.id))}
                 aria-label="Remove sticker"
-                className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full flex items-center justify-center"
+                className="absolute -top-2.5 -end-2.5 w-6 h-6 rounded-full flex items-center justify-center"
                 style={{ background: "rgba(0,0,0,0.75)", border: "1.5px solid #fff" }}
               >
                 <X size={12} color="#fff" />
@@ -9455,7 +9830,7 @@ function StickerBody({ st, mode, poll, myVote, answers, onVote, onAsk, onOpen, t
               >
                 {showResults && (
                   <span
-                    className="absolute left-0 bottom-0 top-0"
+                    className="absolute start-0 bottom-0 top-0"
                     style={{ width: `${pct}%`, background: mine ? "rgba(29,111,224,0.16)" : "rgba(0,0,0,0.05)" }}
                   />
                 )}
@@ -9491,7 +9866,7 @@ function StickerBody({ st, mode, poll, myVote, answers, onVote, onAsk, onOpen, t
           }}
           className="w-full px-3 py-2.5"
         >
-          <span className="block rounded-xl px-3 py-2 text-[13px] text-left" style={{ background: "#F2F2F2", color: "#888", fontWeight: 600 }}>
+          <span className="block rounded-xl px-3 py-2 text-[13px] text-start" style={{ background: "#F2F2F2", color: "#888", fontWeight: 600 }}>
             {mode === "view" && answers !== undefined ? `${answers} ${answers === 1 ? "answer" : "answers"} · tap to see` : "Type something…"}
           </span>
         </button>
@@ -9697,7 +10072,7 @@ function StickerEditorSheet({ type, onDone, onClose }) {
           <>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people" autoCapitalize="none" className={field} style={fieldStyle} autoFocus />
             {people.map((pp) => (
-              <button key={pp.id} onClick={() => onDone({ user_id: pp.id, username: pp.username })} className="w-full flex items-center gap-3 py-2 text-left">
+              <button key={pp.id} onClick={() => onDone({ user_id: pp.id, username: pp.username })} className="w-full flex items-center gap-3 py-2 text-start">
                 <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={36} />
                 <span className="min-w-0">
                   <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{pp.username}</span>
@@ -9906,7 +10281,7 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
             >
               Send
             </button>
-            <p className="text-[11px] mt-2 text-center" style={{ color: "var(--text-muted)" }}>Only {story.username || "they"} will see your answer.</p>
+            <p className="text-[11px] mt-2 text-center" style={{ color: "var(--text-muted)" }}>{trJoin("Only {0} will see your answer.", story.username || "they")}</p>
           </div>
         </StorySheetShell>
       )}
@@ -9948,7 +10323,7 @@ function StorySheetShell({ title, onClose, children }) {
     <>
       <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.6)" }} onClick={onClose} />
       <div
-        className="fixed left-0 right-0 bottom-0 z-[71] rounded-t-3xl"
+        className="fixed start-0 end-0 bottom-0 z-[71] rounded-t-3xl"
         style={{ background: "var(--bg)", border: "1px solid var(--border)", maxHeight: "80vh", overflowY: "auto" }}
       >
         <div className="flex items-center justify-center pt-2.5 pb-1">
@@ -9969,7 +10344,7 @@ function StoryMenuRow({ icon, label, onClick, danger, busy, trailing }) {
     <button
       onClick={onClick}
       disabled={busy}
-      className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-left transition-colors active:bg-[var(--active-highlight)]"
+      className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-start transition-colors active:bg-[var(--active-highlight)]"
       style={{ color: danger ? "var(--heart)" : "var(--text)", opacity: busy ? 0.5 : 1 }}
     >
       {icon}
@@ -10191,7 +10566,7 @@ function StoryHighlightSheet({ story, currentUserId, onClose, onDone }) {
                 key={h.id}
                 onClick={() => !done && addTo(h.id)}
                 disabled={done || busy}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors active:bg-[var(--active-highlight)]"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-start transition-colors active:bg-[var(--active-highlight)]"
               >
                 <div
                   className="w-11 h-11 rounded-full shrink-0 overflow-hidden flex items-center justify-center"
@@ -10239,7 +10614,7 @@ function StorySettingsSheet({ onClose }) {
   };
 
   const Row = ({ label, hint, k }) => (
-    <button onClick={() => toggle(k)} className="w-full flex items-start justify-between gap-3 px-4 py-3.5 text-left">
+    <button onClick={() => toggle(k)} className="w-full flex items-start justify-between gap-3 px-4 py-3.5 text-start">
       <span className="flex-1">
         <span className="text-sm block" style={{ color: "var(--text)" }}>{label}</span>
         <span className="text-[11px] block mt-0.5" style={{ color: "var(--text-muted)" }}>{hint}</span>
@@ -10312,7 +10687,7 @@ function StoryRepliesList({ story }) {
               <div className="flex-1 min-w-0">
                 <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>
                   {r.username}
-                  <span className="ml-2 text-[11px]" style={{ color: "var(--text-muted)", fontWeight: 400 }}>{timeAgo(r.created_at)}</span>
+                  <span className="ms-2 text-[11px]" style={{ color: "var(--text-muted)", fontWeight: 400 }}>{timeAgo(r.created_at)}</span>
                 </p>
                 <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)", wordBreak: "break-word" }}>{r.body}</p>
               </div>
@@ -10663,7 +11038,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
 
   const handleDelete = async () => {
     if (!story) return;
-    if (!window.confirm("Delete this story? This cannot be undone.")) return;
+    if (!window.confirm(trText("Delete this story? This cannot be undone."))) return;
     setBusyAction("delete");
     const { error } = await supabase.from("stories").delete().eq("id", story.id);
     setBusyAction(null);
@@ -10735,11 +11110,11 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
           <img key={story.id} src={story.media_url} alt="" className="w-full h-full object-contain" />
         )}
         <div
-          className="absolute top-0 left-0 right-0 pointer-events-none"
+          className="absolute top-0 start-0 end-0 pointer-events-none"
           style={{ height: 170, background: "linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%)" }}
         />
         <div
-          className="absolute bottom-0 left-0 right-0 pointer-events-none"
+          className="absolute bottom-0 start-0 end-0 pointer-events-none"
           style={{ height: 240, background: "linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%)" }}
         />
       </div>
@@ -10830,13 +11205,13 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
             Replies off
           </span>
         )}
-        <button onClick={onClose} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onClose} className="p-1 -me-1 shrink-0 transition-transform active:scale-90">
           <X size={22} color="#FFFFFF" />
         </button>
       </div>
 
       {/* ---- bottom bar: caption, quick reactions, reply ---- */}
-      <div className="absolute left-0 right-0 bottom-0 px-3.5 pb-5 pt-3">
+      <div className="absolute start-0 end-0 bottom-0 px-3.5 pb-5 pt-3">
         {story?.shared_post_id && (
           <div className="flex justify-center pb-2.5">
             <button
@@ -11104,11 +11479,11 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
   return (
     <div className="relative flex items-center justify-center px-4 pt-4 pb-3">
       {showNotifications && (
-        <button onClick={onNotificationsClick} aria-label="Notifications" className="absolute left-4 top-1/2 -translate-y-1/2">
+        <button onClick={onNotificationsClick} aria-label="Notifications" className="absolute start-4 top-1/2 -translate-y-1/2">
           <Bell size={21} color="var(--text)" />
           {hasNotifications && (
             <span
-              className="absolute -top-0.5 -right-0.5 rounded-full"
+              className="absolute -top-0.5 -end-0.5 rounded-full"
               style={{ width: 9, height: 9, background: "#FF3040", border: "1.5px solid var(--bg)" }}
             />
           )}
@@ -11136,11 +11511,11 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
         </h1>
       )}
       {showMessages && (
-        <button onClick={onMessagesClick} aria-label="Messages" className="absolute right-4 top-1/2 -translate-y-1/2">
+        <button onClick={onMessagesClick} aria-label="Messages" className="absolute end-4 top-1/2 -translate-y-1/2">
           <ChatsIcon size={24} color="var(--text)" />
           {unreadCount > 0 && (
             <span
-              className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center text-[9px]"
+              className="absolute -top-1.5 -end-1.5 rounded-full flex items-center justify-center text-[9px]"
               style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
             >
               {unreadCount > 99 ? "99+" : unreadCount}
@@ -11313,7 +11688,7 @@ function StoriesBar({ onOpenProfile }) {
             </button>
             <button
               onClick={() => fileRef.current?.click()}
-              className="absolute -bottom-0.5 -right-0.5 rounded-full flex items-center justify-center transition-transform active:scale-90"
+              className="absolute -bottom-0.5 -end-0.5 rounded-full flex items-center justify-center transition-transform active:scale-90"
               style={{ width: 19, height: 19, background: "var(--accent-solid)", border: "2px solid var(--bg)" }}
             >
               <Plus size={11} color="var(--on-accent)" strokeWidth={3.5} />
@@ -11479,7 +11854,7 @@ function PostMediaCarousel({ media }) {
   const onScroll = () => {
     const el = trackRef.current;
     if (!el || el.clientWidth === 0) return;
-    const i = Math.round(el.scrollLeft / el.clientWidth);
+    const i = Math.round(Math.abs(el.scrollLeft) / el.clientWidth);
     if (i !== index) setIndex(i);
   };
 
@@ -11505,7 +11880,7 @@ function PostMediaCarousel({ media }) {
       {media.length > 1 && (
         <>
           <span
-            className="absolute top-2.5 right-2.5 rounded-full px-2 py-0.5 text-[11px]"
+            className="absolute top-2.5 end-2.5 rounded-full px-2 py-0.5 text-[11px]"
             style={{ background: "rgba(0,0,0,0.55)", color: "#FFFFFF", fontWeight: 600 }}
           >
             {index + 1}/{media.length}
@@ -11674,16 +12049,16 @@ function PostAuthorLine({ post, onOpenProfile, light = false, className = "text-
   const collabs = post.collabs || [];
   return (
     <span className={`flex items-center gap-1 min-w-0 ${className}`} style={{ color, fontWeight: 600 }}>
-      <button onClick={() => onOpenProfile?.(post.user_id)} className="truncate text-left">{post.username}</button>
+      <button onClick={() => onOpenProfile?.(post.user_id)} className="truncate text-start">{post.username}</button>
       {post.verified && <VerifiedBadge size={13} tier={post.tier} />}
       {post.isFavorite && <Star size={12} color="#F5B800" fill="#F5B800" className="shrink-0" />}
       {collabs.length > 0 && (
         <>
           <span style={{ fontWeight: 400, opacity: 0.85 }}>and</span>
           {collabs.length === 1 ? (
-            <button onClick={() => onOpenProfile?.(collabs[0].id)} className="truncate text-left">{collabs[0].username}</button>
+            <button onClick={() => onOpenProfile?.(collabs[0].id)} className="truncate text-start">{collabs[0].username}</button>
           ) : (
-            <span className="truncate">{collabs.length} others</span>
+            <span className="truncate">{trJoin("{0} others", collabs.length)}</span>
           )}
         </>
       )}
@@ -11761,7 +12136,7 @@ function AboutAccountSheet({ userId, onClose, onOpenProfile }) {
             </p>
             <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               {[
-                [Clock, "Date joined", new Date(info.joined).toLocaleDateString(undefined, { month: "long", year: "numeric" })],
+                [Clock, "Date joined", new Date(info.joined).toLocaleDateString(I18N_LOCALE, { month: "long", year: "numeric" })],
                 [Layers, "Posts", formatCount(Number(info.posts))],
                 [Users, "Followers", formatCount(Number(info.followers))],
                 [UserCheck, "Following", formatCount(Number(info.following))],
@@ -11797,7 +12172,7 @@ function SuggestedAccountsStrip({ people, onOpenProfile, onFollow, onDismiss }) 
             className="relative shrink-0 rounded-2xl flex flex-col items-center px-3 pt-4 pb-3"
             style={{ width: 150, background: "var(--surface)", border: "1px solid var(--border)" }}
           >
-            <button onClick={() => onDismiss(p.id)} className="absolute top-2 right-2" aria-label="Remove suggestion">
+            <button onClick={() => onDismiss(p.id)} className="absolute top-2 end-2" aria-label="Remove suggestion">
               <X size={14} color="var(--text-muted)" />
             </button>
             <button onClick={() => onOpenProfile(p.id)} className="flex flex-col items-center w-full">
@@ -11844,11 +12219,11 @@ function SuggestedReelsStrip({ reels, onOpenReel }) {
           >
             <video src={r.media_url + "#t=0.5"} className="w-full h-full object-cover" muted playsInline preload="metadata" />
             <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 45%)" }} />
-            <div className="absolute left-2 right-2 bottom-2 flex flex-col items-start">
+            <div className="absolute start-2 end-2 bottom-2 flex flex-col items-start">
               <span className="flex items-center gap-1 text-[11px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>
                 <Play size={10} color="#FFFFFF" fill="#FFFFFF" /> {formatCount(r.views_count || 0)}
               </span>
-              <span className="text-[11px] truncate w-full text-left" style={{ color: "#FFFFFF", fontWeight: 600 }}>{r.username}</span>
+              <span className="text-[11px] truncate w-full text-start" style={{ color: "#FFFFFF", fontWeight: 600 }}>{r.username}</span>
             </div>
           </button>
         ))}
@@ -11926,7 +12301,7 @@ function FeedVideo({ post, onOpenReel, onLike }) {
         </div>
       )}
       {(post.media_type === "reel" || post.media_type === "video") && !post.notReel && (
-        <div className="absolute top-2.5 right-2.5 pointer-events-none" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+        <div className="absolute top-2.5 end-2.5 pointer-events-none" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
           <Clapperboard size={18} color="#FFFFFF" />
         </div>
       )}
@@ -11936,7 +12311,7 @@ function FeedVideo({ post, onOpenReel, onLike }) {
           setMuted(!muted);
         }}
         aria-label={muted ? "Unmute" : "Mute"}
-        className="absolute bottom-2.5 right-2.5 w-8 h-8 rounded-full flex items-center justify-center"
+        className="absolute bottom-2.5 end-2.5 w-8 h-8 rounded-full flex items-center justify-center"
         style={{ background: "rgba(0,0,0,0.55)" }}
       >
         {muted ? <VolumeX size={15} color="#fff" /> : <Volume2 size={15} color="#fff" />}
@@ -12459,7 +12834,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
   const deletePost = async (post) => {
     if (post.user_id !== userId) return;
-    if (!window.confirm("Delete this post? This cannot be undone.")) return;
+    if (!window.confirm(trText("Delete this post? This cannot be undone."))) return;
     setMenuOpenFor(null);
     setPosts((prev) => prev.filter((p) => p.id !== post.id));
     await supabase.from("posts").delete().eq("id", post.id);
@@ -12544,7 +12919,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   {post.iFollow ? "Following" : "Follow"}
                 </button>
               )}
-              <button onClick={() => setPostMenuFor(post)} className="p-1 -mr-1" aria-label="More">
+              <button onClick={() => setPostMenuFor(post)} className="p-1 -me-1" aria-label="More">
                 <Ellipsis size={19} color="var(--text)" />
               </button>
             </div>
@@ -12566,7 +12941,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
               )}
               <MediaTagOverlay tags={post.tags} isVideo={!isPhotoPost(post)} onOpenProfile={onOpenProfile} />
               {repostNotes[post.id] && (
-                <div className="absolute left-3 z-[6]" style={{ bottom: post.tags && post.tags.length ? 46 : 12 }}>
+                <div className="absolute start-3 z-[6]" style={{ bottom: post.tags && post.tags.length ? 46 : 12 }}>
                   <RepostNoteBubble
                     entry={repostNotes[post.id]}
                     avatarSize={30}
@@ -12674,20 +13049,13 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
             <div className="px-4 pt-1.5">
               {post.likedBy?.username && (
-                <p className="text-[13px] mb-1" style={{ color: "var(--text)" }}>
-                  Liked by{" "}
-                  <button onClick={() => onOpenProfile(post.likedBy.id)} style={{ fontWeight: 700 }}>
+                <p className="text-[13px] mb-1" style={{ color: "var(--text)" }}>{trJoin("Liked by {0}{1}", <button onClick={() => onOpenProfile(post.likedBy.id)} style={{ fontWeight: 700 }}>
                     {post.likedBy.username}
-                  </button>
-                  {post.likeCount > 1 && (
-                    <>
-                      {" "}and{" "}
-                      <button onClick={() => setLikesPopupFor(post.id)} style={{ fontWeight: 700 }}>
+                  </button>, post.likeCount > 1 && (
+                    <>{trJoin(" and {0}", <button onClick={() => setLikesPopupFor(post.id)} style={{ fontWeight: 700 }}>
                         others
-                      </button>
-                    </>
-                  )}
-                </p>
+                      </button>)}</>
+                  ))}</p>
               )}
               <CaptionText
                 username={post.username}
@@ -12701,13 +13069,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   onClick={() => setCommentSheetFor(post)}
                   className="text-[13px] mt-1 block"
                   style={{ color: "var(--text-muted)" }}
-                >
-                  View all {formatCount(post.commentCount)} comments
-                </button>
+                >{trJoin("View all {0} comments", formatCount(post.commentCount))}</button>
               )}
-              <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
-                {timeAgo(post.created_at)} ago
-              </span>
+              <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{trJoin("{0} ago", timeAgo(post.created_at))}</span>
             </div>
 
             <div className="h-px mx-4 mt-3" style={{ background: "var(--border-subtle)" }} />
@@ -13296,7 +13660,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
 
   const deleteReel = async () => {
     if (!reel || reel.user_id !== userId) return;
-    if (!window.confirm("Delete this reel? This cannot be undone.")) return;
+    if (!window.confirm(trText("Delete this reel? This cannot be undone."))) return;
     setMenuOpen(false);
     await supabase.from("posts").delete().eq("id", reel.id);
     setReels((prev) => {
@@ -13402,11 +13766,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         )}
         {/* readability scrims — keeps white text legible over any video */}
         <div
-          className="absolute top-0 left-0 right-0 pointer-events-none"
+          className="absolute top-0 start-0 end-0 pointer-events-none"
           style={{ height: 120, background: "linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 100%)" }}
         />
         <div
-          className="absolute bottom-0 left-0 right-0 pointer-events-none"
+          className="absolute bottom-0 start-0 end-0 pointer-events-none"
           style={{ height: 260, background: "linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.35) 45%, rgba(0,0,0,0) 100%)" }}
         />
       </div>
@@ -13414,7 +13778,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       {/* The bar along the bottom — drag it to move through the video */}
       {dur > 0 && !holdPaused && (
         <div
-          className="absolute left-0 right-0 z-20"
+          className="absolute start-0 end-0 z-20"
           style={{ bottom: 0, height: 20, display: "flex", alignItems: "flex-end" }}
           onTouchStart={(e) => {
             e.stopPropagation();
@@ -13438,7 +13802,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         >
           <div className="w-full relative" style={{ height: scrubbing ? 6 : 3, background: "rgba(255,255,255,0.28)", transition: "height 0.12s" }}>
             <div
-              className="absolute left-0 top-0 bottom-0"
+              className="absolute start-0 top-0 bottom-0"
               style={{ width: `${Math.min(100, (cur / dur) * 100)}%`, background: "#FFFFFF" }}
             />
             {scrubbing && (
@@ -13539,19 +13903,19 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
 
       {/* top label + options menu — sits above the pause/play buttons */}
       <div
-        className="absolute top-4 left-0 right-0 z-30 flex items-center justify-center"
+        className="absolute top-4 start-0 end-0 z-30 flex items-center justify-center"
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
         {onBack && (
-          <button onClick={onBack} aria-label="Back" className="absolute left-3 p-0.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
+          <button onClick={onBack} aria-label="Back" className="absolute start-3 p-0.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
             <ChevronLeft size={26} color="#FFFFFF" />
           </button>
         )}
         <span className="text-base" style={{ color: "#FFFFFF", fontWeight: 700, fontFamily: "'Sora', sans-serif", filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
           Reels
         </span>
-        <div className="absolute right-3">
+        <div className="absolute end-3">
           <button onClick={() => setMenuOpen((v) => !v)} aria-label="More" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.6))" }}>
             <Ellipsis size={20} color="#FFFFFF" />
           </button>
@@ -13559,7 +13923,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
               <div
-                className="absolute right-0 top-8 z-20 rounded-2xl overflow-hidden py-1"
+                className="absolute end-0 top-8 z-20 rounded-2xl overflow-hidden py-1"
                 style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", minWidth: 200, boxShadow: "0 8px 28px rgba(0,0,0,0.4)" }}
               >
                 <button
@@ -13571,7 +13935,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
                   style={{ color: "var(--text)" }}
                 >
-                  <span className="flex items-center gap-2"><RefreshCw size={15} /> Auto Scroll</span>
+                  <span className="flex items-center gap-2">{trJoin("{0} Auto Scroll", <RefreshCw size={15} />)}</span>
                   <span
                     className="rounded-full"
                     style={{ width: 30, height: 17, background: autoScroll ? ACCENT : "var(--toggle-off)", position: "relative" }}
@@ -13588,24 +13952,20 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   onClick={toggleFullscreen}
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
                   style={{ color: "var(--text)" }}
-                >
-                  {fullscreen ? <Minimize size={15} /> : <Maximize size={15} />} View Full Screen
-                </button>
+                >{trJoin("{0} View Full Screen", fullscreen ? <Minimize size={15} /> : <Maximize size={15} />)}</button>
 
                 <button
                   onClick={handleDownload}
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
                   style={{ color: "var(--text)" }}
-                >
-                  <Download size={15} /> Download
-                </button>
+                >{trJoin("{0} Download", <Download size={15} />)}</button>
 
                 <button
                   onClick={() => setQualityOpen((v) => !v)}
                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
                   style={{ color: "var(--text)" }}
                 >
-                  <span className="flex items-center gap-2"><Gauge size={15} /> Quality</span>
+                  <span className="flex items-center gap-2">{trJoin("{0} Quality", <Gauge size={15} />)}</span>
                   <span className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
                     {quality === "high" || !onLight ? "HD" : "Standard"}
                     <ChevronDown size={13} style={{ transform: qualityOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
@@ -13620,7 +13980,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                       <button
                         key={k}
                         onClick={() => changeQuality(k)}
-                        className="w-full flex items-center justify-between gap-3 pl-10 pr-4 py-2 text-left"
+                        className="w-full flex items-center justify-between gap-3 ps-10 pe-4 py-2 text-start"
                       >
                         <span>
                           <span className="block text-[13px]" style={{ color: "var(--text)", fontWeight: quality === k ? 700 : 500 }}>{label}</span>
@@ -13631,13 +13991,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                     ))}
                     {reel.user_id === userId && !reel.media_url_low && canMakeLowCopy() && (
                       lowJobs.get(reel.id)?.state === "working" ? (
-                        <p className="pl-10 pr-4 py-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
-                          Making the data-saver copy · {Math.round((lowJobs.get(reel.id).progress || 0) * 100)}%
-                        </p>
+                        <p className="ps-10 pe-4 py-2 text-[12px]" style={{ color: "var(--text-muted)" }}>{trJoin("Making the data-saver copy · {0}%", Math.round((lowJobs.get(reel.id).progress || 0) * 100))}</p>
                       ) : (
                         <button
                           onClick={() => startLowCopyJob({ postId: reel.id, url: reel.media_url, userId })}
-                          className="w-full text-left pl-10 pr-4 py-2 text-[12.5px]"
+                          className="w-full text-start ps-10 pe-4 py-2 text-[12.5px]"
                           style={{ color: "var(--accent-solid)", fontWeight: 700 }}
                         >
                           Make a data-saver copy of your reel
@@ -13680,16 +14038,14 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                     onClick={deleteReel}
                     className="w-full flex items-center gap-2 px-4 py-2.5 text-sm"
                     style={{ color: "var(--accent-start)" }}
-                  >
-                    <Trash2 size={15} /> Delete
-                  </button>
+                  >{trJoin("{0} Delete", <Trash2 size={15} />)}</button>
                 ) : (
                   <button
                     onClick={() => {
                       setMenuOpen(false);
                       onOpenReport(reel.id);
                     }}
-                    className="w-full text-left px-4 py-2.5 text-sm"
+                    className="w-full text-start px-4 py-2.5 text-sm"
                     style={{ color: "var(--accent-start)" }}
                   >
                     Report
@@ -13703,7 +14059,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
 
       {/* bottom-left caption + follow */}
       <div
-        className="absolute left-4 bottom-5 right-20"
+        className="absolute start-4 bottom-5 end-20"
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
@@ -13774,7 +14130,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
 
       {/* Quick Actions — the only action control; expands to full-size icons */}
       <div
-        className="absolute right-3 bottom-6 flex flex-col items-center"
+        className="absolute end-3 bottom-6 flex flex-col items-center"
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
       >
@@ -13922,7 +14278,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
           >
             {railPinned && (
               <span
-                className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center"
+                className="absolute -top-1 -end-1 w-4 h-4 rounded-full flex items-center justify-center"
                 style={{ background: "#FFFFFF" }}
               >
                 <Pin size={9} color="#000000" fill="#000000" />
@@ -13999,16 +14355,16 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
 function timeAgo(dateStr) {
   const diffMs = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
+  if (mins < 1) return trText("now");
+  if (mins < 60) return trJoin("{0}m", mins);
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
+  if (hrs < 24) return trJoin("{0}h", hrs);
   const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
+  if (days < 7) return trJoin("{0}d", days);
   const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks}w`;
+  if (weeks < 5) return trJoin("{0}w", weeks);
   const months = Math.floor(days / 30);
-  return `${months}mo`;
+  return trJoin("{0}mo", months);
 }
 
 function ReelCommentsSheet({
@@ -14243,7 +14599,7 @@ function ReelCommentsSheet({
   const deleteComment = async (comment) => {
     if (comment.user_id !== currentUserId && postOwnerId !== currentUserId) return;
     setMenuFor(null);
-    if (!window.confirm("Delete this comment?")) return;
+    if (!window.confirm(trText("Delete this comment?"))) return;
     setComments((prev) => prev.filter((c) => c.id !== comment.id && c.parent_id !== comment.id));
     await supabase.from("comments").delete().eq("id", comment.id);
   };
@@ -14340,7 +14696,7 @@ function ReelCommentsSheet({
     <>
       <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <div
-        className="fixed left-0 right-0 bottom-0 z-40 rounded-t-3xl flex flex-col"
+        className="fixed start-0 end-0 bottom-0 z-40 rounded-t-3xl flex flex-col"
         style={{ background: "var(--bg)", maxHeight: "82vh", border: "1px solid var(--border)" }}
       >
         <div className="flex items-center justify-center pt-2.5 pb-2">
@@ -14348,7 +14704,7 @@ function ReelCommentsSheet({
         </div>
         <div className="relative flex items-center justify-center px-4 pb-2.5" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
           <span className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>Comments</span>
-          <button onClick={onClose} className="absolute right-4"><X size={20} color="var(--text)" /></button>
+          <button onClick={onClose} className="absolute end-4"><X size={20} color="var(--text)" /></button>
         </div>
 
         {postUsername && (
@@ -14381,7 +14737,7 @@ function ReelCommentsSheet({
             )}
             {postCreatedAt && (
               <p className="text-[12px] mt-2" style={{ color: "var(--text-muted)" }}>
-                {new Date(postCreatedAt).toLocaleDateString(undefined, {
+                {new Date(postCreatedAt).toLocaleDateString(I18N_LOCALE, {
                   day: "numeric",
                   month: "long",
                   ...(new Date(postCreatedAt).getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}),
@@ -14432,9 +14788,7 @@ function ReelCommentsSheet({
               return (
                 <div key={c.id} className="mb-4">
                   {c.pinned_at && (
-                    <p className="flex items-center gap-1 text-[11px] mb-1" style={{ color: "var(--text-muted)", marginLeft: 46 }}>
-                      <Pin size={11} /> Pinned by {postUsername || "author"}
-                    </p>
+                    <p className="flex items-center gap-1 text-[11px] mb-1" style={{ color: "var(--text-muted)", marginLeft: 46 }}>{trJoin("{0} Pinned by {1}", <Pin size={11} />, postUsername || "author")}</p>
                   )}
                   <CommentRow {...rowProps(c, c, false)} />
                   {replies.length > 0 && (
@@ -14454,7 +14808,7 @@ function ReelCommentsSheet({
                         {open ? "Hide replies" : `View ${replies.length} ${replies.length === 1 ? "reply" : "replies"}`}
                       </button>
                       {open && (
-                        <div className="flex flex-col gap-3 pl-3" style={{ borderLeft: "2px solid var(--border-subtle)" }}>
+                        <div className="flex flex-col gap-3 ps-3" style={{ borderLeft: "2px solid var(--border-subtle)" }}>
                           {replies.map((rp) => (
                             <CommentRow key={rp.id} {...rowProps(rp, c, true)} />
                           ))}
@@ -14471,7 +14825,7 @@ function ReelCommentsSheet({
         {hiddenCount > 0 && (
           <button
             onClick={() => setShowHidden((v) => !v)}
-            className="mx-4 mb-2 text-xs text-left"
+            className="mx-4 mb-2 text-xs text-start"
             style={{ color: "var(--text-muted)", fontWeight: 600 }}
           >
             {showHidden ? "Hide comments with your hidden words" : `View ${hiddenCount} hidden ${hiddenCount === 1 ? "comment" : "comments"}`}
@@ -14504,9 +14858,7 @@ function ReelCommentsSheet({
             <>
               {replyingTo && (
                 <div className="flex items-center justify-between mb-2 rounded-xl px-3 py-2" style={{ background: "var(--surface)" }}>
-                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Replying to <span style={{ color: "var(--text)", fontWeight: 700 }}>{replyingTo.username}</span>
-                  </span>
+                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>{trJoin("Replying to {0}", <span style={{ color: "var(--text)", fontWeight: 700 }}>{replyingTo.username}</span>)}</span>
                   <button
                     onClick={() => {
                       setReplyingTo(null);
@@ -14526,7 +14878,7 @@ function ReelCommentsSheet({
                       URL.revokeObjectURL(attachment.url);
                       setAttachment(null);
                     }}
-                    className="absolute -top-1.5 -right-1.5 rounded-full flex items-center justify-center"
+                    className="absolute -top-1.5 -end-1.5 rounded-full flex items-center justify-center"
                     style={{ width: 20, height: 20, background: "var(--text)", border: "2px solid var(--bg)" }}
                   >
                     <X size={11} color="var(--bg)" />
@@ -14681,7 +15033,7 @@ function PostLinkChip({ url, light = false }) {
       target="_blank"
       rel="noopener noreferrer nofollow"
       onClick={(e) => e.stopPropagation()}
-      className="inline-flex items-center gap-2 mt-2 rounded-full pl-1.5 pr-3 py-1 max-w-full"
+      className="inline-flex items-center gap-2 mt-2 rounded-full ps-1.5 pe-3 py-1 max-w-full"
       style={{
         background: light ? "rgba(255,255,255,0.16)" : "var(--surface)",
         border: light ? "1px solid rgba(255,255,255,0.22)" : "1px solid var(--border)",
@@ -14813,9 +15165,7 @@ function CommentRow({
             <div className="flex items-center gap-4 mt-1.5">
               <button onClick={onReply} className="text-xs" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Reply</button>
               {comment.likedByAuthor && (
-                <span className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                  <Heart size={11} color="var(--heart)" fill="var(--heart)" /> by author
-                </span>
+                <span className="flex items-center gap-1 text-xs" style={{ color: "var(--text-muted)" }}>{trJoin("{0} by author", <Heart size={11} color="var(--heart)" fill="var(--heart)" />)}</span>
               )}
               {comment.dislikeCount > 0 && (
                 <span className="text-xs" style={{ color: "var(--text-muted)" }}>
@@ -15017,7 +15367,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
                   if (x.kind === "tag") window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: x.id }));
                   else onOpenProfile(x.id);
                 }}
-                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                className="flex items-center gap-3 flex-1 min-w-0 text-start"
               >
                 {x.kind === "tag" ? (
                   <span className="w-[46px] h-[46px] rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700, fontSize: 20 }}>#</span>
@@ -15044,7 +15394,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
                 remember({ kind: "tag", id: tag });
                 window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: tag }));
               }}
-              className="flex items-center gap-3 py-2.5 w-full text-left"
+              className="flex items-center gap-3 py-2.5 w-full text-start"
             >
               <span className="w-[46px] h-[46px] rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700, fontSize: 20 }}>#</span>
               <span className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{query.trim().replace(/\s+/g, "")}</span>
@@ -15066,7 +15416,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
                   remember({ kind: "user", id: a.id, username: a.username, full_name: a.full_name || null, avatar_url: a.avatar_url || null });
                   onOpenProfile(a.id);
                 }}
-                className="flex items-center gap-3 py-2.5 w-full text-left"
+                className="flex items-center gap-3 py-2.5 w-full text-start"
               >
                 <Avatar username={a.username} avatarUrl={a.avatar_url} size={46} />
                 <div className="flex-1 min-w-0">
@@ -15102,12 +15452,12 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
             >
               <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />
               {p.media_count > 1 ? (
-                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                   <Layers size={13} color="#FFFFFF" />
                 </span>
               ) : (
                 !isPhotoPost(p) && (
-                  <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                  <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                     <Video size={13} color="#FFFFFF" />
                   </span>
                 )
@@ -15284,7 +15634,7 @@ function CaptionBox({ value, onChange, placeholder, rows = 3 }) {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => pick(pp.username)}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-left"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-start"
               style={{ borderTop: "1px solid var(--border)" }}
             >
               <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={30} />
@@ -15412,9 +15762,7 @@ function CoverPicker({ videoUrl, coverUrl, onPick, onClear, label = "Cover", squ
             className="w-full mt-3"
             style={{ accentColor: "var(--accent-solid)" }}
           />
-          <p className="text-[11px] text-center" style={{ color: "var(--text-muted)" }}>
-            Slide to the moment you want · {at.toFixed(1)}s
-          </p>
+          <p className="text-[11px] text-center" style={{ color: "var(--text-muted)" }}>{trJoin("Slide to the moment you want · {0}s", at.toFixed(1))}</p>
 
           <div className="flex gap-2 mt-3">
             <button
@@ -15488,7 +15836,7 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
 
   // In a list of rows: one tidy line that opens when tapped.
   const header = bare ? (
-    <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left">
+    <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-start">
       <RowIcon size={15} color="var(--text-muted)" />
       <span className="flex-1" style={{ color: "var(--text)" }}>{title}</span>
       {value.length > 0 && (
@@ -15529,7 +15877,7 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
       {value.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-3 pb-2">
           {value.map((p) => (
-            <span key={p.id} className="flex items-center gap-1.5 rounded-full pl-1 pr-2 py-1" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <span key={p.id} className="flex items-center gap-1.5 rounded-full ps-1 pe-2 py-1" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
               <Avatar username={p.username} avatarUrl={p.avatar_url} size={20} />
               <span className="text-xs" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
               <button onClick={() => onChange(value.filter((x) => x.id !== p.id))} aria-label={`Remove ${p.username}`}>
@@ -15558,7 +15906,7 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
         {results.length > 0 && (
           <div className="mt-1.5">
             {results.map((p) => (
-              <button key={p.id} onClick={() => add(p)} className="w-full flex items-center gap-2.5 py-1.5 text-left">
+              <button key={p.id} onClick={() => add(p)} className="w-full flex items-center gap-2.5 py-1.5 text-start">
                 <Avatar username={p.username} avatarUrl={p.avatar_url} size={34} />
                 <div className="min-w-0">
                   <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</p>
@@ -16108,10 +16456,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
           {postedScheduled ? "Scheduled!" : "Posted!"}
         </p>
         {postedScheduled && (
-          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
-            It goes live {postedScheduled.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}. Until
-            then only you can see it, on your profile.
-          </p>
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>{trJoin("It goes live {0}. Until then only you can see it, on your profile.", postedScheduled.toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" }))}</p>
         )}
         {!postedScheduled && <div className="mb-3" />}
         <button
@@ -16135,12 +16480,8 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
             className="w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 mb-3 transition-transform active:scale-[0.99]"
             style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
           >
-            <span className="flex items-center gap-2 text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>
-              <Pencil size={14} /> Drafts
-            </span>
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {drafts.length} saved on this device
-            </span>
+            <span className="flex items-center gap-2 text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{trJoin("{0} Drafts", <Pencil size={14} />)}</span>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>{trJoin("{0} saved on this device", drafts.length)}</span>
           </button>
         )}
         <div className="flex gap-2 mb-4">
@@ -16157,9 +16498,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
               fontWeight: 600,
               border: mode === "photo" ? "none" : "1px solid var(--border)",
             }}
-          >
-            <Layers size={16} /> Post
-          </button>
+          >{trJoin("{0} Post", <Layers size={16} />)}</button>
           <button
             onClick={() => {
               setMode("reel");
@@ -16174,9 +16513,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
               fontWeight: 600,
               border: mode === "reel" ? "none" : "1px solid var(--border)",
             }}
-          >
-            <Video size={16} /> Reel
-          </button>
+          >{trJoin("{0} Reel", <Video size={16} />)}</button>
         </div>
 
         {mode === "reel" ? (
@@ -16260,13 +16597,13 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
                         <video src={it.url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                       )}
                       {it.type === "video" && (
-                        <span className="absolute bottom-1 left-1" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.8))" }}>
+                        <span className="absolute bottom-1 start-1" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.8))" }}>
                           <Video size={12} color="#FFFFFF" />
                         </span>
                       )}
                       {i === 0 && (
                         <span
-                          className="absolute top-1 left-1 rounded-full px-1.5 py-0.5 text-[9px]"
+                          className="absolute top-1 start-1 rounded-full px-1.5 py-0.5 text-[9px]"
                           style={{ background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontWeight: 700 }}
                         >
                           Cover
@@ -16274,7 +16611,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
                       )}
                       <button
                         onClick={() => removeItem(i)}
-                        className="absolute top-1 right-1 rounded-full flex items-center justify-center"
+                        className="absolute top-1 end-1 rounded-full flex items-center justify-center"
                         style={{ width: 18, height: 18, background: "rgba(0,0,0,0.65)" }}
                       >
                         <X size={11} color="#FFFFFF" />
@@ -16453,12 +16790,10 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
           className="w-full flex items-center justify-between rounded-xl px-3.5 py-3 mb-3 text-sm transition-transform active:scale-[0.99]"
           style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
         >
-          <span className="flex items-center gap-2" style={{ fontWeight: 600 }}>
-            <Settings size={15} color="var(--text-muted)" /> Advanced settings
-          </span>
+          <span className="flex items-center gap-2" style={{ fontWeight: 600 }}>{trJoin("{0} Advanced settings", <Settings size={15} color="var(--text-muted)" />)}</span>
           <span className="flex items-center gap-2">
             {advancedCount > 0 && (
-              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{advancedCount} on</span>
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} on", advancedCount)}</span>
             )}
             <ChevronRight
               size={16}
@@ -16525,9 +16860,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
             className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
             style={{ color: "var(--text)", textAlign: "left" }}
           >
-            <span className="flex items-center gap-2">
-              <Clock size={15} color="var(--text-muted)" /> Schedule this post
-            </span>
+            <span className="flex items-center gap-2">{trJoin("{0} Schedule this post", <Clock size={15} color="var(--text-muted)" />)}</span>
             <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: scheduleOn ? ACCENT : "var(--toggle-off)", position: "relative" }}>
               <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: scheduleOn ? 17 : 2, transition: "left 0.15s" }} />
             </span>
@@ -16543,9 +16876,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
                 className="w-full rounded-lg px-3 h-10 text-sm outline-none mt-2.5"
                 style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", colorScheme: "dark light" }}
               />
-              <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-                Hidden from everyone but you until then. Up to {SCHEDULE_MAX_DAYS} days ahead.
-              </p>
+              <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>{trJoin("Hidden from everyone but you until then. Up to {0} days ahead.", SCHEDULE_MAX_DAYS)}</p>
             </div>
           )}
         </div>
@@ -16619,7 +16950,7 @@ function DraftRow({ draft, onOpen, onDelete }) {
 
   return (
     <div className="flex items-center gap-3 px-4 py-2.5">
-      <button onClick={onOpen} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+      <button onClick={onOpen} className="flex items-center gap-3 flex-1 min-w-0 text-start">
         <div className="rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 52, height: 52, background: "var(--surface)", border: "1px solid var(--border)" }}>
           {thumb ? (
             isVideo ? (
@@ -16635,10 +16966,7 @@ function DraftRow({ draft, onOpen, onDelete }) {
           <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>
             {draft.caption?.trim() || (draft.mode === "reel" ? "Reel" : "Post")}
           </p>
-          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            {draft.mode === "reel" ? "Reel" : `${count} item${count === 1 ? "" : "s"}`} · saved {timeAgo(new Date(draft.savedAt).toISOString())} ago
-            {draft.scheduleOn ? " · scheduled" : ""}
-          </p>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · saved {1} ago{2}", draft.mode === "reel" ? "Reel" : `${count} item${count === 1 ? "" : "s"}`, timeAgo(new Date(draft.savedAt).toISOString()), draft.scheduleOn ? " · scheduled" : "")}</p>
         </div>
       </button>
       <button onClick={onDelete} className="p-1.5 shrink-0 transition-transform active:scale-90">
@@ -16865,7 +17193,7 @@ function NotificationsSettings({ userId, onBack }) {
   return (
     <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
       <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Notifications</h1>
@@ -16902,7 +17230,7 @@ function NotificationsSettings({ userId, onBack }) {
 
           <p className="text-[10px] uppercase tracking-wide mb-1.5 px-1" style={{ color: "var(--text-muted)" }}>Push notifications</p>
           <div className="rounded-xl overflow-hidden mb-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <button onClick={() => save({ paused: !paused }, "paused")} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
+            <button onClick={() => save({ paused: !paused }, "paused")} className="w-full flex items-center gap-3 px-4 py-3.5 text-start">
               <span className="flex-1">
                 <span className="text-sm block" style={{ color: "var(--text)" }}>Pause all</span>
                 <span className="text-[11px] block mt-0.5" style={{ color: "var(--text-muted)" }}>Temporarily stop every push notification</span>
@@ -16920,7 +17248,7 @@ function NotificationsSettings({ userId, onBack }) {
                   key={c.key}
                   onClick={() => !paused && save({ [c.key]: !on }, c.key)}
                   disabled={paused || saving === c.key}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-start"
                   style={{ borderTop: i > 0 ? "1px solid var(--border)" : "none" }}
                 >
                   <span className="flex-1">
@@ -17169,13 +17497,13 @@ function SettingsScreen({
   };
 
   const handleLogout = async () => {
-    if (!window.confirm("Log out of Loop?")) return;
+    if (!window.confirm(trText("Log out of Loop?"))) return;
     await supabase.auth.signOut();
   };
 
   const Header = ({ title, back }) => (
     <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-      <button onClick={back} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
+      <button onClick={back} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
       <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{title}</h1>
     </div>
   );
@@ -17206,7 +17534,7 @@ function SettingsScreen({
               )}
             </div>
             <div
-              className="absolute bottom-0 right-0 w-6 h-6 rounded-full flex items-center justify-center"
+              className="absolute bottom-0 end-0 w-6 h-6 rounded-full flex items-center justify-center"
               style={{ background: "var(--surface)", border: "2px solid var(--bg)" }}
             >
               <Pencil size={11} color="var(--text)" />
@@ -17315,7 +17643,7 @@ function SettingsScreen({
 
           {phoneStep === "code" ? (
             <>
-              <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>The 6-digit code sent to {newPhone}</label>
+              <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("The 6-digit code sent to {0}", newPhone)}</label>
               <input
                 type="tel"
                 inputMode="numeric"
@@ -17635,7 +17963,7 @@ function SettingsScreen({
       return;
     }
     alert(
-      `Your account will be deleted on ${new Date(when).toLocaleDateString(undefined, { dateStyle: "long" })}. ` +
+      `Your account will be deleted on ${new Date(when).toLocaleDateString(I18N_LOCALE, { dateStyle: "long" })}. ` +
         "Log in before then if you change your mind."
     );
     await supabase.auth.signOut();
@@ -17662,6 +17990,7 @@ function SettingsScreen({
   if (typeof view === "string" && view.startsWith("legal:")) return <LegalScreen doc={view.slice(6)} onBack={() => setView("about")} />;
   if (view === "verify") return <VerificationRequestScreen onBack={() => setView("menu")} />;
   if (view === "media") return <MediaQualityScreen onBack={() => setView("menu")} />;
+  if (view === "language") return <LanguageScreen onBack={() => setView("menu")} />;
 
   if (view === "about") {
     return (
@@ -17684,7 +18013,7 @@ function SettingsScreen({
             <button
               key={k}
               onClick={() => setView(`legal:${k}`)}
-              className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-left transition-colors active:bg-[var(--active-highlight)]"
+              className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-start transition-colors active:bg-[var(--active-highlight)]"
               style={{ color: "var(--text)", borderTop: i ? "1px solid var(--border)" : "none" }}
             >
               {t}
@@ -17706,7 +18035,7 @@ function SettingsScreen({
       <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
         <Header title="Delete account" back={() => setView("menu")} />
         <div className="px-5 pt-5">
-          <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>Delete @{profile?.username}?</p>
+          <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>{trJoin("Delete @{0}?", profile?.username)}</p>
           <div className="mt-3 flex flex-col gap-2.5">
             {[
               "Your profile, photos, videos, comments and likes will be hidden right away.",
@@ -17807,7 +18136,7 @@ function SettingsScreen({
       rows: [
         { icon: Smartphone, label: "Device permissions", onClick: () => setView("permissions") },
         { icon: Palette, label: "Theme & colour", value: themeLabel, onClick: () => setView("appearance") },
-        { icon: Globe, label: "Language", value: "English · বাংলা soon" },
+        { icon: Globe, label: "Language", value: langInfo(I18N_CODE).name, onClick: () => setView("language") },
       ],
     },
     ...(staffRole
@@ -17857,7 +18186,7 @@ function SettingsScreen({
         </div>
       </div>
       {shownSections.length === 0 && (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No settings match "{settingsQuery}"</p>
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{trJoin("No settings match \"{0}\"", settingsQuery)}</p>
       )}
       {shownSections.map((sec) => (
         <div key={sec.title} className="pt-4">
@@ -17869,7 +18198,7 @@ function SettingsScreen({
                 key={row.label}
                 onClick={row.onClick}
                 disabled={!row.onClick || row.busy}
-                className="w-full flex items-center gap-3.5 px-4 py-3 text-left transition-colors active:opacity-70"
+                className="w-full flex items-center gap-3.5 px-4 py-3 text-start transition-colors active:opacity-70"
               >
                 <Icon size={21} color={row.danger ? "var(--heart)" : "var(--text)"} strokeWidth={1.8} />
                 <span className="flex-1 text-[15px]" style={{ color: row.danger ? "var(--heart)" : "var(--text)" }}>{row.label}</span>
@@ -18026,18 +18355,18 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
     <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
       <div className="flex items-center justify-between px-4 pt-3 pb-2.5">
         <div className="flex items-center gap-2 min-w-0">
-          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
             <ChevronLeft size={24} color="var(--text)" />
           </button>
           <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2.5 min-w-0">
             <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
-            <div className="flex flex-col leading-tight min-w-0 text-left">
+            <div className="flex flex-col leading-tight min-w-0 text-start">
               <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
               <LocationLink location={post.location} />
             </div>
           </button>
         </div>
-        <button onClick={() => (isOwner ? setOptionsOpen(true) : onOpenReport?.(post.id))} className="p-1 -mr-1 shrink-0">
+        <button onClick={() => (isOwner ? setOptionsOpen(true) : onOpenReport?.(post.id))} className="p-1 -me-1 shrink-0">
           <Ellipsis size={19} color="var(--text)" />
         </button>
       </div>
@@ -18141,13 +18470,9 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             onClick={() => setCommentSheetOpen(true)}
             className="text-[13px] mt-1 block"
             style={{ color: "var(--text-muted)" }}
-          >
-            View all {formatCount(post.commentCount)} comment{post.commentCount === 1 ? "" : "s"}
-          </button>
+          >{trJoin("View all {0} comment{1}", formatCount(post.commentCount), post.commentCount === 1 ? "" : "s")}</button>
         )}
-        <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
-          {timeAgo(post.created_at)} ago
-        </span>
+        <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{trJoin("{0} ago", timeAgo(post.created_at))}</span>
       </div>
 
       {commentSheetOpen && (
@@ -18417,7 +18742,7 @@ function SecurityScreen({ onBack, onChangePassword, onChangeEmail, onChangePhone
     <button
       onClick={onClick}
       disabled={!onClick}
-      className="w-full flex items-center gap-3.5 px-4 py-3.5 text-left"
+      className="w-full flex items-center gap-3.5 px-4 py-3.5 text-start"
       style={{ borderTop: "1px solid var(--border-subtle)" }}
     >
       <Icon size={20} color={danger ? "var(--heart)" : "var(--text)"} strokeWidth={1.8} />
@@ -18491,12 +18816,12 @@ function SecurityScreen({ onBack, onChangePassword, onChangeEmail, onChangePhone
         <Row
           icon={Clock}
           label="Joined"
-          value={account?.created ? new Date(account.created).toLocaleDateString(undefined, { dateStyle: "long" }) : "…"}
+          value={account?.created ? new Date(account.created).toLocaleDateString(I18N_LOCALE, { dateStyle: "long" }) : "…"}
         />
         <Row
           icon={Shield}
           label="Last login"
-          value={account?.lastSignIn ? new Date(account.lastSignIn).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "…"}
+          value={account?.lastSignIn ? new Date(account.lastSignIn).toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" }) : "…"}
         />
       </div>
     </div>
@@ -18547,7 +18872,7 @@ function TimeManagementScreen({ onBack }) {
               <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Today</p>
               <p className="text-2xl" style={{ color: "var(--text)", fontWeight: 800 }}>{fmtMinutes(today)}</p>
             </div>
-            <div className="text-right">
+            <div className="text-end">
               <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Daily average</p>
               <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>{fmtMinutes(avg)}</p>
             </div>
@@ -18563,15 +18888,13 @@ function TimeManagementScreen({ onBack }) {
                   }}
                 />
                 <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                  {new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "narrow" })}
+                  {new Date(d + "T12:00:00").toLocaleDateString(I18N_LOCALE, { weekday: "narrow" })}
                 </span>
               </div>
             ))}
           </div>
           {prefs.dailyLimit > 0 && (
-            <p className="text-[12px] mt-3" style={{ color: "var(--text-secondary)" }}>
-              Daily limit: {prefs.dailyLimit} min · {today >= prefs.dailyLimit * 60 ? "reached today" : `${fmtMinutes(Math.max(0, prefs.dailyLimit * 60 - today))} left`}
-            </p>
+            <p className="text-[12px] mt-3" style={{ color: "var(--text-secondary)" }}>{trJoin("Daily limit: {0} min · {1}", prefs.dailyLimit, today >= prefs.dailyLimit * 60 ? "reached today" : `${fmtMinutes(Math.max(0, prefs.dailyLimit * 60 - today))} left`)}</p>
           )}
         </div>
 
@@ -18702,7 +19025,7 @@ function AccountStatusScreen({ onBack }) {
               sub={
                 state.ban
                   ? state.ban.until
-                    ? `Posting, commenting, messaging and following are paused until ${new Date(state.ban.until).toLocaleString()}.`
+                    ? `Posting, commenting, messaging and following are paused until ${new Date(state.ban.until).toLocaleString(I18N_LOCALE)}.`
                     : "This account is disabled."
                   : "You can post, comment, message and follow as usual."
               }
@@ -18718,7 +19041,7 @@ function AccountStatusScreen({ onBack }) {
                   </div>
                   <div className="min-w-0">
                     <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{rp.removed_reason || "Community Guidelines"}</p>
-                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Removed {new Date(rp.removed_at).toLocaleDateString()}</p>
+                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("Removed {0}", new Date(rp.removed_at).toLocaleDateString(I18N_LOCALE))}</p>
                   </div>
                 </div>
               ))}
@@ -18773,7 +19096,7 @@ function FavouritesScreen({ onBack, onOpenProfile }) {
       ) : (
         rows.map((pp) => (
           <div key={pp.id} className="flex items-center gap-3 px-4 py-2">
-            <button onClick={() => onOpenProfile?.(pp.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+            <button onClick={() => onOpenProfile?.(pp.id)} className="flex items-center gap-3 flex-1 min-w-0 text-start">
               <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={46} />
               <div className="min-w-0">
                 <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{pp.username}</p>
@@ -18967,7 +19290,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
   };
 
   const clearWatched = async () => {
-    if (!window.confirm("Clear your watch history? This can't be undone.")) return;
+    if (!window.confirm(trText("Clear your watch history? This can't be undone."))) return;
     const { error: err } = await supabase.from("watch_history").delete().eq("user_id", currentUserId);
     if (err) {
       setError(err.message);
@@ -18978,7 +19301,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
 
   const Header = ({ title, back }) => (
     <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-      <button onClick={back} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+      <button onClick={back} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
         <ChevronLeft size={24} color="var(--text)" />
       </button>
       <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{title}</h1>
@@ -19007,11 +19330,11 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
             <button
               key={c.id}
               onClick={() => onOpenPost?.(c.post_id)}
-              className="w-full text-left px-4 py-3"
+              className="w-full text-start px-4 py-3"
               style={{ borderBottom: "1px solid var(--border-subtle)" }}
             >
               <p className="text-sm" style={{ color: "var(--text)", wordBreak: "break-word" }}>{c.content}</p>
-              <span className="text-[11px] mt-1 block" style={{ color: "var(--text-muted)" }}>{timeAgo(c.created_at)} ago</span>
+              <span className="text-[11px] mt-1 block" style={{ color: "var(--text-muted)" }}>{trJoin("{0} ago", timeAgo(c.created_at))}</span>
             </button>
           ))
         )}
@@ -19087,7 +19410,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
                 <div key={d} className="flex-1 flex flex-col items-center gap-1.5">
                   <div className="w-full rounded-t-lg" style={{ height: `${(data[d] / max) * 100}%`, background: ACCENT, minHeight: 4 }} />
                   <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-                    {new Date(d).toLocaleDateString(undefined, { weekday: "short" })}
+                    {new Date(d).toLocaleDateString(I18N_LOCALE, { weekday: "short" })}
                   </span>
                 </div>
               ))}
@@ -19339,9 +19662,7 @@ function InsightsScreen({ onBack }) {
             <Box label="New followers" value={formatCount(state.newFollowers)} hint={`${formatCount(state.followers)} in all`} />
             <Box label="You posted" value={formatCount(state.posted)} hint={`${formatCount(state.totalPosts)} in all`} />
           </div>
-          <p className="px-4 pb-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
-            Views, likes and comments count the posts you put up in the last {state.days} days.
-          </p>
+          <p className="px-4 pb-4 text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("Views, likes and comments count the posts you put up in the last {0} days.", state.days)}</p>
 
           <p className="px-4 pb-2 text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>Your best posts</p>
           {state.top.length === 0 ? (
@@ -19358,9 +19679,7 @@ function InsightsScreen({ onBack }) {
                   <p className="text-[13px] truncate" style={{ color: "var(--text)" }}>
                     {pp.caption || (isPhotoPost(pp) ? "Photo" : "Video")}
                   </p>
-                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {formatCount(pp.views)} views · {formatCount(pp.likes)} likes · {formatCount(pp.comments)} comments
-                  </p>
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} views · {1} likes · {2} comments", formatCount(pp.views), formatCount(pp.likes), formatCount(pp.comments))}</p>
                 </div>
               </div>
             ))
@@ -19408,7 +19727,7 @@ function ArchiveScreen({ currentUserId, onBack, onOpenPost }) {
   return (
     <div className="flex-1 overflow-y-auto pb-6">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Archive</h1>
@@ -19819,7 +20138,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
   return (
     <div className="flex-1 overflow-y-auto pb-6">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{title}</h1>
@@ -19828,9 +20147,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
       {hint && <p className="text-[11px] px-4 pt-3" style={{ color: "var(--text-muted)" }}>{hint}</p>}
       {error && <p className="text-xs px-4 pt-2" style={{ color: "var(--heart)" }}>{error}</p>}
 
-      <p className="text-[11px] px-4 pt-3 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>
-        {members.length} on this list
-      </p>
+      <p className="text-[11px] px-4 pt-3 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>{trJoin("{0} on this list", members.length)}</p>
       {loading ? (
         <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
       ) : members.length === 0 ? (
@@ -19838,7 +20155,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
       ) : (
         members.map((m) => (
           <div key={m.id} className="flex items-center gap-3 px-4 py-2.5">
-            <button onClick={() => onOpenProfile?.(m.id)} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+            <button onClick={() => onOpenProfile?.(m.id)} className="flex items-center gap-3 flex-1 min-w-0 text-start">
               <Avatar username={m.username} avatarUrl={m.avatar_url} size={44} />
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{m.username}</p>
@@ -20317,7 +20634,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   return (
     <div className="flex-1 overflow-y-auto pb-10">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
         <h1 className="flex-1 text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Edit profile</h1>
@@ -20351,7 +20668,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
             )}
           </div>
           <span
-            className="absolute bottom-0 right-0 rounded-full flex items-center justify-center"
+            className="absolute bottom-0 end-0 rounded-full flex items-center justify-center"
             style={{ width: 28, height: 28, background: ACCENT, border: "2px solid var(--bg)" }}
           >
             <ImagePlus size={14} color="var(--on-accent)" />
@@ -20360,9 +20677,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         <span className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
           {avatarBusy ? "Uploading..." : "Change photo or video"}
         </span>
-        <span className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-          Videos up to {AVATAR_VIDEO_MAX_SECONDS} seconds
-        </span>
+        <span className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("Videos up to {0} seconds", AVATAR_VIDEO_MAX_SECONDS)}</span>
         <input
           ref={fileRef}
           type="file"
@@ -20385,7 +20700,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
             className="w-full flex items-center justify-between rounded-2xl px-4 h-12 mb-2"
             style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
           >
-            <span className="text-left">
+            <span className="text-start">
               <span className="block text-sm" style={{ color: "var(--text)" }}>Let it play on my profile</span>
               <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
                 {avatarVideoPlays ? "The video plays by itself" : "Only the still picture shows"}
@@ -20454,7 +20769,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
             maxLength={30}
             autoCapitalize="none"
             autoCorrect="off"
-            className="flex-1 bg-transparent outline-none text-sm ml-1"
+            className="flex-1 bg-transparent outline-none text-sm ms-1"
             style={{ color: "var(--text)" }}
           />
         </div>
@@ -20479,10 +20794,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-[11px]" style={{ color: "var(--text-muted)" }}>Bio font</label>
-            <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-              <VerifiedBadge size={13} tier="ruby" />
-              <VerifiedBadge size={13} tier="gold" /> Elite & Supreme
-            </span>
+            <span className="text-[11px] flex items-center gap-1" style={{ color: "var(--text-muted)" }}>{trJoin("{0}{1} Elite & Supreme", <VerifiedBadge size={13} tier="ruby" />, <VerifiedBadge size={13} tier="gold" />)}</span>
           </div>
           {fontRank >= 2 ? (
             <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
@@ -20543,9 +20855,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
             onClick={addLink}
             className="w-full flex items-center justify-center gap-2 rounded-2xl h-11 text-xs mb-4 transition-transform active:scale-[0.99]"
             style={{ background: "var(--bg-sunken)", border: "1px dashed var(--border)", color: "var(--text)", fontWeight: 600 }}
-          >
-            <Plus size={15} /> Add link
-          </button>
+          >{trJoin("{0} Add link", <Plus size={15} />)}</button>
         )}
 
         <label className="text-[11px] block mb-1.5" style={{ color: "var(--text-muted)" }}>Category</label>
@@ -20573,7 +20883,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
         <button
           type="button"
           onClick={() => setBannerOpen(true)}
-          className="w-full flex items-center gap-3 rounded-2xl px-4 h-12 mb-1 text-left transition-transform active:scale-[0.99]"
+          className="w-full flex items-center gap-3 rounded-2xl px-4 h-12 mb-1 text-start transition-transform active:scale-[0.99]"
           style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
         >
           <CirclePlus size={17} color="var(--text-muted)" />
@@ -20874,7 +21184,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div className="flex items-center gap-2 px-4 pt-4 pb-3 shrink-0" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>{heading}</h1>
@@ -20898,14 +21208,14 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
               <div className="flex items-center justify-between px-4 pt-3 pb-2.5">
                 <button onClick={() => onOpenProfile?.(post.user_id)} className="flex items-center gap-2.5 min-w-0">
                   <Avatar username={post.username} avatarUrl={post.avatarUrl} size={36} />
-                  <div className="flex flex-col leading-tight min-w-0 text-left">
+                  <div className="flex flex-col leading-tight min-w-0 text-start">
                     <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
                     <LocationLink location={post.location} />
                   </div>
                 </button>
                 <button
                   onClick={() => (post.user_id === currentUserId ? setOptionsFor(post) : onOpenReport?.(post.id))}
-                  className="p-1 -mr-1 shrink-0"
+                  className="p-1 -me-1 shrink-0"
                 >
                   <Ellipsis size={19} color="var(--text)" />
                 </button>
@@ -21007,18 +21317,12 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                     onClick={() => setCommentFor(post)}
                     className="text-[13px] mt-1 block"
                     style={{ color: "var(--text-muted)" }}
-                  >
-                    View all {formatCount(post.commentCount)} comments
-                  </button>
+                  >{trJoin("View all {0} comments", formatCount(post.commentCount))}</button>
                 )}
                 {new Date(post.created_at).getTime() > Date.now() ? (
-                  <span className="text-[10px] mt-1.5 flex items-center gap-1 uppercase" style={{ color: "var(--accent-solid)", letterSpacing: "0.3px", fontWeight: 600 }}>
-                    <Clock size={10} /> Scheduled · {new Date(post.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                  </span>
+                  <span className="text-[10px] mt-1.5 flex items-center gap-1 uppercase" style={{ color: "var(--accent-solid)", letterSpacing: "0.3px", fontWeight: 600 }}>{trJoin("{0} Scheduled · {1}", <Clock size={10} />, new Date(post.created_at).toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" }))}</span>
                 ) : (
-                  <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>
-                    {timeAgo(post.created_at)} ago
-                  </span>
+                  <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{trJoin("{0} ago", timeAgo(post.created_at))}</span>
                 )}
               </div>
             </div>
@@ -21321,13 +21625,13 @@ function EditHighlightScreen({ highlight, currentUserId, onClose, onSaved }) {
                     <video src={videoThumb(st.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                   )}
                   <span
-                    className="absolute bottom-1.5 right-1.5 rounded-full flex items-center justify-center"
+                    className="absolute bottom-1.5 end-1.5 rounded-full flex items-center justify-center"
                     style={{ width: 20, height: 20, background: on ? ACCENT : "rgba(0,0,0,0.45)", border: on ? "none" : "1.5px solid rgba(255,255,255,0.85)" }}
                   >
                     {on && <Check size={12} color="var(--on-accent)" strokeWidth={3} />}
                   </span>
-                  <span className="absolute bottom-1.5 left-1.5 text-[9px] px-1 rounded" style={{ background: "rgba(0,0,0,0.5)", color: "#fff" }}>
-                    {new Date(st.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                  <span className="absolute bottom-1.5 start-1.5 text-[9px] px-1 rounded" style={{ background: "rgba(0,0,0,0.5)", color: "#fff" }}>
+                    {new Date(st.created_at).toLocaleDateString(I18N_LOCALE, { day: "numeric", month: "short" })}
                   </span>
                 </button>
               );
@@ -21448,7 +21752,7 @@ function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
 
   const remove = async (h) => {
     setManage(null);
-    if (!window.confirm(`Delete the highlight "${h.title}"? The stories in it aren't deleted.`)) return;
+    if (!window.confirm(trText(`Delete the highlight "${h.title}"? The stories in it aren't deleted.`))) return;
     const { error } = await supabase.from("story_highlights").delete().eq("id", h.id);
     if (error) {
       alert(error.message);
@@ -21582,7 +21886,7 @@ function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
       )}
 
       {flash && (
-        <div className="fixed left-0 right-0 bottom-20 z-[85] flex justify-center px-6 pointer-events-none">
+        <div className="fixed start-0 end-0 bottom-20 z-[85] flex justify-center px-6 pointer-events-none">
           <span
             className="rounded-full px-4 py-2 text-[12px]"
             style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600 }}
@@ -21797,7 +22101,7 @@ function NewHighlightSheet({ currentUserId, onClose, onCreated }) {
                   <video src={videoThumb(st.media_url)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                 )}
                 {on && (
-                  <span className="absolute bottom-1 right-1 rounded-full flex items-center justify-center" style={{ width: 18, height: 18, background: ACCENT }}>
+                  <span className="absolute bottom-1 end-1 rounded-full flex items-center justify-center" style={{ width: 18, height: 18, background: ACCENT }}>
                     <Check size={11} color="var(--on-accent)" strokeWidth={3} />
                   </span>
                 )}
@@ -21836,7 +22140,7 @@ function NoteBubble({ note, noteAt, isOwn, onEdit }) {
     <button
       onClick={isOwn ? onEdit : undefined}
       disabled={!isOwn}
-      className="absolute text-left z-10"
+      className="absolute text-start z-10"
       style={{ top: -14, left: 46, width: "max-content", maxWidth: 170 }}
     >
       <div
@@ -22042,7 +22346,7 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center gap-2 mb-3">
-          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+          <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
             <ChevronLeft size={24} color="var(--text)" />
           </button>
           <h1 className="text-lg truncate" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
@@ -22077,7 +22381,7 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
           <button
             key={p.id}
             onClick={() => onOpenProfile(p.id)}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors active:bg-[var(--active-highlight)]"
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-start transition-colors active:bg-[var(--active-highlight)]"
           >
             <Avatar username={p.username} avatarUrl={p.avatar_url} size={46} />
             <div className="flex-1 min-w-0">
@@ -22575,7 +22879,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   const modBanProfile = async (days) => {
     if (!profile) return;
     const label = days ? `Suspend ${profile.username} for ${days} days?` : `Ban ${profile.username} permanently? Their posts will be hidden.`;
-    if (!window.confirm(label)) return;
+    if (!window.confirm(trText(label))) return;
     setSheet(null);
     const { error } = await supabase.rpc("mod_ban", { p_user: profile.id, p_days: days, p_reason: "Suspended by moderator" });
     flashNote(error ? error.message : days ? `Suspended for ${days} days` : "Banned permanently");
@@ -22627,7 +22931,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
     const on = myRel[kind];
     if (kind === "blocked" && !on) {
       const ok = window.confirm(
-        `Block ${profile.username}? They won't be able to find your profile, see your posts or message you. They won't be told.`
+        trText(`Block ${profile.username}? They won't be able to find your profile, see your posts or message you. They won't be told.`)
       );
       if (!ok) return;
     }
@@ -22721,7 +23025,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
 
   const birthdayShared = !!birthdayInfo?.shared;
   const birthdayLine = birthdayInfo?.date
-    ? new Date(birthdayInfo.date + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "long" })
+    ? new Date(birthdayInfo.date + "T00:00:00").toLocaleDateString(I18N_LOCALE, { day: "numeric", month: "long" })
     : null;
 
   if (loading) {
@@ -22747,7 +23051,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       <div className="flex-1 flex flex-col" style={{ background: "var(--bg)" }}>
         {onBack && (
           <div className="px-4 pt-4 pb-3">
-            <button onClick={onBack} className="-ml-1.5 p-1 transition-transform active:scale-90">
+            <button onClick={onBack} className="-ms-1.5 p-1 transition-transform active:scale-90">
               <ChevronLeft size={24} color="var(--text)" />
             </button>
           </div>
@@ -22781,7 +23085,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div className="flex items-center gap-2 min-w-0">
           {onBack && (
-            <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
+            <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
           )}
           <button
             onClick={() => isOwnProfile && setSheet("accounts")}
@@ -22946,7 +23250,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         {ownChannel && (
           <button
             onClick={() => openChannelGlobal(ownChannel.id)}
-            className="flex items-center gap-1.5 mt-1 max-w-full text-left active:opacity-60"
+            className="flex items-center gap-1.5 mt-1 max-w-full text-start active:opacity-60"
           >
             <Radio size={14} color="var(--accent-solid)" className="shrink-0" />
             <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{ownChannel.name}</span>
@@ -23078,7 +23382,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
 
       {!isOwnProfile && myRel.blocked ? (
         <div className="mx-4 mt-2 rounded-2xl px-4 py-5 text-center" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
-          <p className="text-sm mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>You blocked {profile.username}</p>
+          <p className="text-sm mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>{trJoin("You blocked {0}", profile.username)}</p>
           <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
             You won't see their posts and they can't see yours or message you.
           </p>
@@ -23215,32 +23519,32 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
             >
               <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} pos={tab === "posts" ? p.grid_pos : undefined} />
               {tab === "reposts" && (
-                <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
+                <RepostIcon size={13} color="#FFFFFF" strokeWidth={2.2} className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} />
               )}
               {tab === "reposts" && <RepostNoteTile note={p.repostNote} />}
               {tab === "tagged" && (
-                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                   <UserSquare2 size={12} color="#FFFFFF" />
                 </span>
               )}
               {tab === "posts" && p.media_count > 1 ? (
-                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                   <Layers size={12} color="#FFFFFF" />
                 </span>
               ) : (
                 (tab === "reels" || (tab === "posts" && !isPhotoPost(p))) && (
-                  <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                  <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
                     <Play size={12} color="#FFFFFF" fill="#FFFFFF" />
                   </span>
                 )
               )}
               {p.isCollab && (
-                <div className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
+                <div className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
                   <Users size={14} color="#FFFFFF" />
                 </div>
               )}
               {tab === "posts" && p.pinned && (
-                <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
+                <div className="absolute top-1.5 start-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
                   <Pin size={10} color="var(--accent-end)" />
                 </div>
               )}
@@ -23257,13 +23561,13 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
                 >
                   <Clock size={10} color="#FFFFFF" />
                   <span className="text-[9px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>
-                    {new Date(p.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                    {new Date(p.created_at).toLocaleString(I18N_LOCALE, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                   </span>
                 </div>
               )}
               {tab === "posts" && p.archived && isOwnProfile && (
                 <div
-                  className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5"
+                  className="absolute bottom-1.5 start-1.5 rounded px-1.5 py-0.5"
                   style={{ background: "rgba(0,0,0,0.65)" }}
                 >
                   <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>Archived</span>
@@ -23772,14 +24076,14 @@ function timeShort(dateStr) {
   if (!dateStr) return "";
   const diffMs = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
+  if (mins < 1) return trText("now");
+  if (mins < 60) return trJoin("{0}m", mins);
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
+  if (hrs < 24) return trJoin("{0}h", hrs);
   const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
+  if (days < 7) return trJoin("{0}d", days);
   const weeks = Math.floor(days / 7);
-  return `${weeks}w`;
+  return trJoin("{0}w", weeks);
 }
 
 // Badge perk: read a chat's newest messages from the inbox without opening
@@ -24109,7 +24413,7 @@ function MessagesScreen({ onBack, startWith }) {
               <button
                 key={c.conversationId}
                 onClick={() => setOpenChat(c)}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+                className="w-full flex items-center gap-3 px-4 py-3 text-start transition-colors active:bg-[var(--active-highlight)]"
               >
                 {c.isGroup ? (
                   <div className="w-[52px] h-[52px] rounded-full shrink-0 flex items-center justify-center" style={{ background: "var(--surface)" }}>
@@ -24138,7 +24442,7 @@ function MessagesScreen({ onBack, startWith }) {
       <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2 min-w-0">
-            <button onClick={onBack} className="-ml-1.5 p-1 transition-transform active:scale-90">
+            <button onClick={onBack} className="-ms-1.5 p-1 transition-transform active:scale-90">
               <ChevronLeft size={24} color="var(--text)" />
             </button>
             <h1 className="text-xl truncate" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
@@ -24149,9 +24453,7 @@ function MessagesScreen({ onBack, startWith }) {
             onClick={() => setCreatingGroup(true)}
             className="flex items-center gap-1.5 rounded-full px-3.5 h-9 text-xs shrink-0 transition-transform active:scale-95"
             style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
-          >
-            <Users size={14} /> New group
-          </button>
+          >{trJoin("{0} New group", <Users size={14} />)}</button>
         </div>
         <div className="flex gap-1.5 mb-3">
           {[
@@ -24196,7 +24498,7 @@ function MessagesScreen({ onBack, startWith }) {
         {inboxTab === "chats" && !query.trim() && requests.length > 0 && (
           <button
             onClick={() => setShowRequests(true)}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+            className="w-full flex items-center gap-3 px-4 py-3 text-start transition-colors active:bg-[var(--active-highlight)]"
             style={{ borderBottom: "1px solid var(--border-subtle)" }}
           >
             <span className="w-[52px] h-[52px] rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)" }}>
@@ -24225,7 +24527,7 @@ function MessagesScreen({ onBack, startWith }) {
               <button
                 key={p.id}
                 onClick={() => startChat(p)}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+                className="w-full flex items-center gap-3 px-4 py-3 text-start transition-colors active:bg-[var(--active-highlight)]"
               >
                 <Avatar username={p.username} avatarUrl={p.avatar_url} size={52} />
                 <span className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
@@ -24249,7 +24551,7 @@ function MessagesScreen({ onBack, startWith }) {
                   e.preventDefault();
                   setRowMenu(c);
                 }}
-                className="flex-1 min-w-0 flex items-center gap-3 pl-4 py-3 text-left transition-colors active:bg-[var(--active-highlight)]"
+                className="flex-1 min-w-0 flex items-center gap-3 ps-4 py-3 text-start transition-colors active:bg-[var(--active-highlight)]"
               >
                 {c.isGroup ? (
                   c.avatarUrl ? (
@@ -24335,7 +24637,7 @@ function MessagesScreen({ onBack, startWith }) {
               label="Delete chat"
               danger
               onClick={() => {
-                if (!window.confirm("Delete this chat from your inbox? The other person keeps their copy.")) return;
+                if (!window.confirm(trText("Delete this chat from your inbox? The other person keeps their copy."))) return;
                 setConvoFlag(rowMenu, { hidden: true });
               }}
             />
@@ -24412,7 +24714,7 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
+          <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
           <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>New group</h1>
         </div>
         <button
@@ -24440,7 +24742,7 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
               <button
                 key={s.id}
                 onClick={() => toggle(s)}
-                className="flex items-center gap-1 rounded-full pl-1 pr-2 py-1 text-xs"
+                className="flex items-center gap-1 rounded-full ps-1 pe-2 py-1 text-xs"
                 style={{ background: "var(--border)", color: "var(--text)" }}
               >
                 <Avatar username={s.username} avatarUrl={s.avatar_url} size={20} />
@@ -24469,7 +24771,7 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
         {results.map((p) => {
           const isSel = selected.some((s) => s.id === p.id);
           return (
-            <button key={p.id} onClick={() => toggle(p)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left">
+            <button key={p.id} onClick={() => toggle(p)} className="w-full flex items-center gap-3 px-4 py-2.5 text-start">
               <Avatar username={p.username} avatarUrl={p.avatar_url} size={40} />
               <span className="flex-1 text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
               <div
@@ -24892,7 +25194,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
   };
 
   const removeMember = async (m) => {
-    if (!window.confirm(`Remove ${m.username} from the group?`)) return;
+    if (!window.confirm(trText(`Remove ${m.username} from the group?`))) return;
     setBusyId(m.user_id);
     setError("");
     const { error: err } = await supabase
@@ -24925,7 +25227,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
   };
 
   const leave = async () => {
-    if (!window.confirm("Leave this group? You'll stop receiving its messages.")) return;
+    if (!window.confirm(trText("Leave this group? You'll stop receiving its messages."))) return;
     const { error: err } = await supabase
       .from("conversation_members")
       .delete()
@@ -24957,7 +25259,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
             </div>
           )}
           <span
-            className="absolute bottom-0 right-0 rounded-full flex items-center justify-center"
+            className="absolute bottom-0 end-0 rounded-full flex items-center justify-center"
             style={{ width: 26, height: 26, background: ACCENT, border: "2px solid var(--bg)" }}
           >
             <ImagePlus size={13} color="var(--on-accent)" />
@@ -25004,13 +25306,9 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
       </div>
 
       <div className="flex items-center justify-between px-4 pt-1 pb-1.5">
-        <span className="text-[11px] uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>
-          {members.length} member{members.length === 1 ? "" : "s"}
-        </span>
+        <span className="text-[11px] uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>{trJoin("{0} member{1}", members.length, members.length === 1 ? "" : "s")}</span>
         {!adding && (
-          <button onClick={openAdd} className="flex items-center gap-1 text-xs" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
-            <UserPlus size={13} /> Add
-          </button>
+          <button onClick={openAdd} className="flex items-center gap-1 text-xs" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>{trJoin("{0} Add", <UserPlus size={13} />)}</button>
         )}
       </div>
 
@@ -25026,9 +25324,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
                 {m.user_id === currentUserId ? " (you)" : ""}
               </span>
               {m.is_admin && (
-                <span className="flex items-center gap-1 text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                  <Shield size={10} /> Admin
-                </span>
+                <span className="flex items-center gap-1 text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} Admin", <Shield size={10} />)}</span>
               )}
             </div>
             {iAmAdmin && m.user_id !== currentUserId && (
@@ -25098,9 +25394,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
         onClick={leave}
         className="w-full flex items-center gap-3 px-4 py-3.5 text-sm mb-5 transition-colors active:bg-[var(--active-highlight)]"
         style={{ color: "var(--heart)" }}
-      >
-        <LogOut size={17} /> Leave group
-      </button>
+      >{trJoin("{0} Leave group", <LogOut size={17} />)}</button>
     </StorySheetShell>
   );
 }
@@ -25334,7 +25628,7 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
               Using it right now 🔥
             </div>
           </div>
-          <p className="text-right text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>Seen · {t.name} · {f.name}</p>
+          <p className="text-end text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{trJoin("Seen · {0} · {1}", t.name, f.name)}</p>
         </div>
       </div>
       </div>
@@ -25353,7 +25647,7 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
             {uploading ? (
               <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Uploading…</span>
             ) : pickedImage ? (
-              <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "var(--accent-solid)" }}>
+              <span className="absolute top-1.5 end-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "var(--accent-solid)" }}>
                 <Check size={12} color="var(--on-accent)" strokeWidth={3} />
               </span>
             ) : (
@@ -25388,7 +25682,7 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
                 <span className="self-end rounded-full" style={{ width: "55%", height: 10, background: th.bubble }} />
                 <span className="self-end rounded-full" style={{ width: "40%", height: 10, background: th.bubble }} />
                 {on && (
-                  <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "var(--accent-solid)" }}>
+                  <span className="absolute top-1.5 end-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "var(--accent-solid)" }}>
                     <Check size={12} color="var(--on-accent)" strokeWidth={3} />
                   </span>
                 )}
@@ -25514,7 +25808,7 @@ function InviteSheet({ conversationId, code, title, currentUserId, onClose, onRe
   };
 
   const reset = async () => {
-    if (!window.confirm("Reset the link? The old one will stop working.")) return;
+    if (!window.confirm(trText("Reset the link? The old one will stop working."))) return;
     setBusy(true);
     const { data, error } = await supabase.rpc("reset_invite_code", { p_conversation_id: conversationId });
     setBusy(false);
@@ -25875,16 +26169,12 @@ function ShareSheet({ item, currentUserId, onClose, onShared }) {
           onClick={copyLink}
           className="flex-1 flex items-center justify-center gap-2 rounded-full h-11 text-xs transition-transform active:scale-95"
           style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
-        >
-          <Copy size={15} /> Copy link
-        </button>
+        >{trJoin("{0} Copy link", <Copy size={15} />)}</button>
         <button
           onClick={nativeShare}
           className="flex-1 flex items-center justify-center gap-2 rounded-full h-11 text-xs transition-transform active:scale-95"
           style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
-        >
-          <Share2 size={15} /> Share to...
-        </button>
+        >{trJoin("{0} Share to...", <Share2 size={15} />)}</button>
       </div>
 
       <div className="px-4 pb-2">
@@ -25955,12 +26245,12 @@ function MediaTile({ post, onClick, selected, selectable, badge }) {
     >
       <MediaThumb src={post.media_url} cover={post.cover_url} isVideo={!isPhotoPost(post)} />
       {post.media_count > 1 ? (
-        <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+        <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
           <Layers size={13} color="#FFFFFF" />
         </span>
       ) : (
         !isPhotoPost(post) && (
-          <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+          <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
             <Video size={13} color="#FFFFFF" />
           </span>
         )
@@ -25968,7 +26258,7 @@ function MediaTile({ post, onClick, selected, selectable, badge }) {
       {badge}
       {selectable && (
         <span
-          className="absolute bottom-1.5 right-1.5 rounded-full flex items-center justify-center"
+          className="absolute bottom-1.5 end-1.5 rounded-full flex items-center justify-center"
           style={{
             width: 20,
             height: 20,
@@ -26092,7 +26382,7 @@ function AddToCollectionSheet({ postIds, currentUserId, onClose, onDone }) {
             Create
           </button>
         </div>
-        <button onClick={() => setCollaborative((v) => !v)} className="flex items-center gap-2.5 w-full text-left">
+        <button onClick={() => setCollaborative((v) => !v)} className="flex items-center gap-2.5 w-full text-start">
           <span className="rounded-full shrink-0" style={{ width: 34, height: 19, background: collaborative ? ACCENT : "var(--toggle-off)", position: "relative" }}>
             <span className="rounded-full bg-white absolute" style={{ width: 15, height: 15, top: 2, left: collaborative ? 17 : 2, transition: "left 0.15s" }} />
           </span>
@@ -26115,7 +26405,7 @@ function AddToCollectionSheet({ postIds, currentUserId, onClose, onDone }) {
                 key={c.id}
                 onClick={() => !done && addInto(c.id)}
                 disabled={done || busy}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors active:bg-[var(--active-highlight)]"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-start transition-colors active:bg-[var(--active-highlight)]"
               >
                 <div
                   className="w-12 h-12 rounded-xl shrink-0 overflow-hidden flex items-center justify-center"
@@ -26130,10 +26420,7 @@ function AddToCollectionSheet({ postIds, currentUserId, onClose, onDone }) {
                 <div className="flex-1 min-w-0">
                   <span className="text-sm truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
                   {c.is_collaborative && (
-                    <span className="flex items-center gap-1 text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                      <Users size={10} /> Collaborative
-                      {c.owner_id !== currentUserId ? " · shared with you" : ""}
-                    </span>
+                    <span className="flex items-center gap-1 text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} Collaborative{1}", <Users size={10} />, c.owner_id !== currentUserId ? " · shared with you" : "")}</span>
                   )}
                 </div>
                 {done && <Check size={17} color="var(--accent-solid)" />}
@@ -26229,9 +26516,7 @@ function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
         </p>
       )}
 
-      <p className="text-[11px] px-4 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>
-        {rows.length} collaborator{rows.length === 1 ? "" : "s"}
-      </p>
+      <p className="text-[11px] px-4 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>{trJoin("{0} collaborator{1}", rows.length, rows.length === 1 ? "" : "s")}</p>
       {loading ? (
         <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
       ) : rows.length === 0 ? (
@@ -26359,7 +26644,7 @@ function CollectionEditSheet({ collection, posts, onClose, onSaved }) {
                   <img src={p.media_url} alt="" className="w-full h-full object-cover" />
                   {picked && (
                     <span
-                      className="absolute bottom-1 right-1 rounded-full flex items-center justify-center"
+                      className="absolute bottom-1 end-1 rounded-full flex items-center justify-center"
                       style={{ width: 18, height: 18, background: ACCENT }}
                     >
                       <Check size={11} color="var(--on-accent)" strokeWidth={3} />
@@ -26568,7 +26853,7 @@ function SavedScreen({ onBack, onOpenPost }) {
   };
 
   const deleteCollection = async () => {
-    if (!window.confirm(`Delete "${openCollection.name}"? The posts stay saved.`)) return;
+    if (!window.confirm(trText(`Delete "${openCollection.name}"? The posts stay saved.`))) return;
     const { error } = await supabase.from("save_collections").delete().eq("id", openCollection.id);
     if (error) {
       say(error.message);
@@ -26591,7 +26876,7 @@ function SavedScreen({ onBack, onOpenPost }) {
               setSelectMode(false);
               setSelected([]);
             }}
-            className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"
+            className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"
           >
             <ChevronLeft size={24} color="var(--text)" />
           </button>
@@ -26599,12 +26884,9 @@ function SavedScreen({ onBack, onOpenPost }) {
             <h1 className="text-lg truncate" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
               {openCollection.name}
             </h1>
-            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              {collectionPosts.length} post{collectionPosts.length === 1 ? "" : "s"}
-              {openCollection.is_collaborative ? " · Collaborative" : ""}
-            </span>
+            <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} post{1}{2}", collectionPosts.length, collectionPosts.length === 1 ? "" : "s", openCollection.is_collaborative ? " · Collaborative" : "")}</span>
           </div>
-          <button onClick={() => setSheet("menu")} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
+          <button onClick={() => setSheet("menu")} className="p-1 -me-1 shrink-0 transition-transform active:scale-90">
             <Ellipsis size={19} color="var(--text)" />
           </button>
         </div>
@@ -26638,7 +26920,7 @@ function SavedScreen({ onBack, onOpenPost }) {
                       e.stopPropagation();
                       removeFromCollection(p.id);
                     }}
-                    className="absolute bottom-1.5 left-1.5 rounded-full flex items-center justify-center"
+                    className="absolute bottom-1.5 start-1.5 rounded-full flex items-center justify-center"
                     style={{ width: 20, height: 20, background: "rgba(0,0,0,0.55)" }}
                   >
                     <X size={11} color="#FFFFFF" />
@@ -26716,7 +26998,7 @@ function SavedScreen({ onBack, onOpenPost }) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="flex items-center gap-2 px-4 pt-4 pb-3">
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
         <h1 className="flex-1 text-xl" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>Saved</h1>
@@ -26834,7 +27116,7 @@ function SavedScreen({ onBack, onOpenPost }) {
 
           <div className="grid grid-cols-2 gap-3">
             {collections.map((c) => (
-              <button key={c.id} onClick={() => openCollectionView(c)} className="text-left transition-transform active:scale-[0.98]">
+              <button key={c.id} onClick={() => openCollectionView(c)} className="text-start transition-transform active:scale-[0.98]">
                 <div
                   className="aspect-square rounded-2xl overflow-hidden flex items-center justify-center mb-1.5"
                   style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
@@ -26850,16 +27132,13 @@ function SavedScreen({ onBack, onOpenPost }) {
                   )}
                 </div>
                 <span className="text-[13px] truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
-                <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  {c.count} post{c.count === 1 ? "" : "s"}
-                  {c.is_collaborative && (
+                <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} post{1}{2}", c.count, c.count === 1 ? "" : "s", c.is_collaborative && (
                     <>
                       {" · "}
                       <Users size={10} />
                       {c.owner_id !== userId ? "shared" : "collab"}
                     </>
-                  )}
-                </span>
+                  ))}</span>
               </button>
             ))}
           </div>
@@ -26868,14 +27147,12 @@ function SavedScreen({ onBack, onOpenPost }) {
 
       {/* selection action bar */}
       {selectMode && selected.length > 0 && (
-        <div className="fixed left-0 right-0 bottom-0 px-4 py-3 z-40" style={{ background: "var(--bg)", borderTop: "1px solid var(--border)" }}>
+        <div className="fixed start-0 end-0 bottom-0 px-4 py-3 z-40" style={{ background: "var(--bg)", borderTop: "1px solid var(--border)" }}>
           <button
             onClick={() => setSheet("add")}
             className="w-full rounded-full h-11 text-sm transition-transform active:scale-95"
             style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
-          >
-            Add {selected.length} to a collection
-          </button>
+          >{trJoin("Add {0} to a collection", selected.length)}</button>
         </div>
       )}
 
@@ -27057,7 +27334,7 @@ function ScheduleMessageSheet({ conversationId, currentUserId, presetText, onClo
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] truncate" style={{ color: "var(--text)" }}>{x.content}</p>
                   <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {new Date(x.send_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                    {new Date(x.send_at).toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" })}
                   </p>
                 </div>
                 <button onClick={() => cancel(x.id)} className="text-xs shrink-0" style={{ color: "var(--heart)", fontWeight: 700 }}>
@@ -27560,12 +27837,12 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     onAccepted?.();
   };
   const deleteRequest = async () => {
-    if (!window.confirm("Delete this request? They won't be told.")) return;
+    if (!window.confirm(trText("Delete this request? They won't be told."))) return;
     await supabase.from("conversation_members").update({ hidden: true }).eq("conversation_id", conversationId).eq("user_id", currentUserId);
     onBack();
   };
   const blockFromRequest = async () => {
-    if (!otherUser?.id || !window.confirm(`Block ${title}? They won't be able to message you or find your profile. They won't be told.`)) return;
+    if (!otherUser?.id || !window.confirm(trText(`Block ${title}? They won't be able to message you or find your profile. They won't be told.`))) return;
     const { error } = await supabase.from("user_relations").insert({ user_id: currentUserId, target_id: otherUser.id, kind: "blocked" });
     if (error && !/duplicate/i.test(error.message)) {
       alert(error.message);
@@ -27600,7 +27877,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
 
   const deleteMessage = async (m) => {
     setMenuFor(null);
-    if (!window.confirm("Delete this message?")) return;
+    if (!window.confirm(trText("Delete this message?"))) return;
     setMessages((prev) =>
       prev.map((x) => (x.id === m.id ? { ...x, deleted: true, content: null, image_url: null, audio_url: null } : x))
     );
@@ -27716,13 +27993,13 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     <div className="relative flex flex-col h-full" style={{ background: "var(--bg)", fontFamily: chatFont.stack }}>
       {/* header */}
       <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
           <ChevronLeft size={24} color="var(--text)" />
         </button>
         <button
           onClick={() => isGroup && setGroupSheet(true)}
           disabled={!isGroup}
-          className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+          className="flex items-center gap-2.5 min-w-0 flex-1 text-start"
         >
           {isGroup ? (
             convoMeta.avatar_url ? (
@@ -27757,7 +28034,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         >
           <Search size={19} color={searchOpen ? "var(--accent-solid)" : "var(--text)"} />
         </button>
-        <button onClick={() => setSheet("options")} className="p-1 -mr-1 shrink-0 transition-transform active:scale-90">
+        <button onClick={() => setSheet("options")} className="p-1 -me-1 shrink-0 transition-transform active:scale-90">
           <Ellipsis size={19} color="var(--text)" />
         </button>
       </div>
@@ -27800,7 +28077,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </div>
           <p className="text-[11px] mt-1.5 px-1" style={{ color: "var(--text-muted)" }}>
             {searchDate
-              ? `Jumping to ${searchDate.toLocaleDateString(undefined, { dateStyle: "medium" })}`
+              ? `Jumping to ${searchDate.toLocaleDateString(I18N_LOCALE, { dateStyle: "medium" })}`
               : "Type a word, or a date like 3/11/2026 to jump to that day."}
           </p>
         </div>
@@ -27879,15 +28156,13 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                 }
               >
                 {isGroup && !mine && (
-                  <span className="text-[10px] mb-0.5 ml-1" style={{ color: "var(--text-muted)" }}>
+                  <span className="text-[10px] mb-0.5 ms-1" style={{ color: "var(--text-muted)" }}>
                     {nicknames[m.sender_id] || memberNames[m.sender_id] || "unknown"}
                   </span>
                 )}
 
                 {m.forwarded && !m.deleted && (
-                  <span className="flex items-center gap-1 text-[10px] mb-0.5 mx-1" style={{ color: "var(--text-muted)" }}>
-                    <Forward size={10} /> Forwarded
-                  </span>
+                  <span className="flex items-center gap-1 text-[10px] mb-0.5 mx-1" style={{ color: "var(--text-muted)" }}>{trJoin("{0} Forwarded", <Forward size={10} />)}</span>
                 )}
 
                 <div
@@ -27993,7 +28268,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       <span key={e} className="text-[12px] leading-none">{e}</span>
                     ))}
                     {rx.length > 1 && (
-                      <span className="text-[10px] ml-0.5" style={{ color: "var(--text-muted)" }}>{rx.length}</span>
+                      <span className="text-[10px] ms-0.5" style={{ color: "var(--text-muted)" }}>{rx.length}</span>
                     )}
                   </button>
                 )}
@@ -28011,7 +28286,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         )}
 
         {typingUsers.length > 0 && !q && (
-          <div className="flex items-center gap-1 ml-1 mb-1">
+          <div className="flex items-center gap-1 ms-1 mb-1">
             <div className="px-3 py-2 rounded-2xl" style={{ background: "var(--surface)" }}>
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                 {isGroup ? `${typingUsers.join(", ")} typing...` : "typing..."}
@@ -28029,9 +28304,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         >
           <div style={{ width: 3, alignSelf: "stretch", background: "var(--accent-solid)", borderRadius: 2 }} />
           <div className="flex-1 min-w-0">
-            <span className="text-[10px] block" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
-              Replying to {nameOf(replyTo.sender_id)}
-            </span>
+            <span className="text-[10px] block" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>{trJoin("Replying to {0}", nameOf(replyTo.sender_id))}</span>
             <span className="text-[11px] block truncate" style={{ color: "var(--text-muted)" }}>{previewOf(replyTo)}</span>
           </div>
           <button onClick={() => setReplyTo(null)} className="p-1 shrink-0"><X size={16} color="var(--text-muted)" /></button>
@@ -28053,9 +28326,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         </div>
       ) : request ? (
         <div className="px-4 pt-3" style={{ borderTop: "1px solid var(--border-subtle)", paddingBottom: "calc(14px + env(safe-area-inset-bottom, 0px))" }}>
-          <p className="text-[12.5px] text-center mb-3" style={{ color: "var(--text-secondary)", lineHeight: 1.45 }}>
-            {isGroup ? "You were added to this group by someone you don't follow." : `${title} wants to send you a message.`} They won't know you've seen it until you accept.
-          </p>
+          <p className="text-[12.5px] text-center mb-3" style={{ color: "var(--text-secondary)", lineHeight: 1.45 }}>{trJoin("{0} They won't know you've seen it until you accept.", isGroup ? "You were added to this group by someone you don't follow." : `${title} wants to send you a message.`)}</p>
           <div className="flex gap-2">
             {!isGroup && otherUser?.id && (
               <button onClick={blockFromRequest} className="flex-1 h-11 rounded-xl text-sm" style={{ background: "var(--surface)", color: "var(--heart)", fontWeight: 700 }}>
@@ -28150,7 +28421,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           onClose={() => setScheduleOpen(false)}
           onScheduled={(at) => {
             setText("");
-            setChatToast(`Will send ${at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`);
+            setChatToast(`Will send ${at.toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" })}`);
             setTimeout(() => setChatToast(""), 2600);
           }}
         />
@@ -28500,7 +28771,7 @@ function NotificationsScreen({ onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Notifications
         </h1>
@@ -28632,7 +28903,7 @@ function ReportScreen({ postId, onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Report
         </h1>
@@ -28646,7 +28917,7 @@ function ReportScreen({ postId, onBack }) {
             key={reason}
             onClick={() => handleReport(reason)}
             disabled={submitting}
-            className="w-full text-left px-4 py-3.5 text-sm"
+            className="w-full text-start px-4 py-3.5 text-sm"
             style={{ color: "var(--text)", borderBottom: "1px solid var(--border-subtle)", opacity: submitting ? 0.6 : 1 }}
           >
             {reason}
@@ -28734,7 +29005,7 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
 
   const deleteComment = async (comment) => {
     if (comment.user_id !== userId) return;
-    if (!window.confirm("Delete this comment?")) return;
+    if (!window.confirm(trText("Delete this comment?"))) return;
     setComments((prev) => prev.filter((c) => c.id !== comment.id));
     await supabase.from("comments").delete().eq("id", comment.id);
   };
@@ -28745,7 +29016,7 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
         className="sticky top-0 z-10 flex items-center gap-3 px-4 pt-4 pb-3"
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
-        <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
+        <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
         <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
           Comments
         </h1>
@@ -28872,10 +29143,7 @@ function ForgotPasswordScreen({ onBack }) {
       <div className="flex-1 flex flex-col justify-center items-center px-6 text-center" style={{ background: "var(--bg)" }}>
         <Mail size={32} color="var(--accent-solid)" className="mb-3" />
         <p className="text-sm mb-2" style={{ color: "var(--text)", fontWeight: 600 }}>Check your email</p>
-        <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>
-          If an account uses {email.trim()}, a link to reset the password is on its way. Open it on this
-          device. Check spam if it doesn't arrive in a few minutes.
-        </p>
+        <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>{trJoin("If an account uses {0}, a link to reset the password is on its way. Open it on this device. Check spam if it doesn't arrive in a few minutes.", email.trim())}</p>
         <button onClick={onBack} className="text-sm" style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
           Back to log in
         </button>
@@ -29085,15 +29353,10 @@ function LoginScreen({ onLogin, onGoSignup, onForgot }) {
         Forgot password?
       </button>
 
-      <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
-        Don't have an account?{" "}
-        <button onClick={onGoSignup} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+      <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>{trJoin("Don't have an account? {0}", <button onClick={onGoSignup} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
           Sign Up
-        </button>
-      </p>
-      <button onClick={startDemo} className="text-center text-xs mt-4" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
-        Just looking? <span style={{ color: "var(--accent-solid)" }}>Try the demo</span>
-      </button>
+        </button>)}</p>
+      <button onClick={startDemo} className="text-center text-xs mt-4" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Just looking? {0}", <span style={{ color: "var(--accent-solid)" }}>Try the demo</span>)}</button>
     </div>
   );
 }
@@ -29138,9 +29401,7 @@ function SignupScreen({ onSignup, onGoLogin }) {
         <p className="text-sm mb-2" style={{ color: "var(--text)", fontWeight: 600 }}>
           Check your email
         </p>
-        <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>
-          A confirmation link was sent to {email}. Click the link to verify your account, then log in.
-        </p>
+        <p className="text-xs mb-6" style={{ color: "var(--text-muted)" }}>{trJoin("A confirmation link was sent to {0}. Click the link to verify your account, then log in.", email)}</p>
         <button onClick={onGoLogin} style={{ color: "var(--accent-start)", fontWeight: 600 }} className="text-sm">
           Back to Login
         </button>
@@ -29185,12 +29446,9 @@ function SignupScreen({ onSignup, onGoLogin }) {
         {loading ? "Please wait..." : "Sign Up"}
       </button>
 
-      <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>
-        Already have an account?{" "}
-        <button onClick={onGoLogin} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+      <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>{trJoin("Already have an account? {0}", <button onClick={onGoLogin} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
           Log In
-        </button>
-      </p>
+        </button>)}</p>
     </div>
   );
 }
@@ -29262,7 +29520,7 @@ function InterestsScreen({ onBack }) {
         style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
       >
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="-ml-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
+          <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
           <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
             Interests
           </h1>
@@ -29317,9 +29575,7 @@ function InterestsScreen({ onBack }) {
               onClick={() => setAdding(true)}
               className="flex items-center gap-1 rounded-full px-3.5 py-2 text-xs"
               style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)", color: "var(--text-secondary)" }}
-            >
-              <Plus size={13} /> Add
-            </button>
+            >{trJoin("{0} Add", <Plus size={13} />)}</button>
           )}
         </div>
 
@@ -29398,9 +29654,7 @@ function InterestsScreen({ onBack }) {
                 onClick={() => setAddingLess(true)}
                 className="flex items-center gap-1 rounded-full px-3.5 py-2 text-xs"
                 style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)", color: "var(--text-secondary)" }}
-              >
-                <Plus size={13} /> Add
-              </button>
+              >{trJoin("{0} Add", <Plus size={13} />)}</button>
             )}
           </div>
         </div>
@@ -29484,9 +29738,7 @@ function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 mt-2 rounded-lg px-3 h-8 text-[12px]"
               style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
-            >
-              <MapPin size={13} /> Open in Maps
-            </a>
+            >{trJoin("{0} Open in Maps", <MapPin size={13} />)}</a>
           )}
         </div>
       </div>
@@ -29504,7 +29756,7 @@ function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
             <button key={pp.id} onClick={() => setOpenAt(posts.indexOf(pp))} className="relative aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
               <MediaThumb src={pp.media_url} cover={pp.cover_url} isVideo={!isPhotoPost(pp)} />
               {!isPhotoPost(pp) && (
-                <span className="absolute top-1.5 right-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
+                <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
                   <Play size={13} color="#fff" fill="#fff" />
                 </span>
               )}
@@ -29580,7 +29832,7 @@ function ModerationScreen({ onBack }) {
   }, [tab, status]);
 
   const act = async (fn, args, done, confirmText) => {
-    if (confirmText && !window.confirm(confirmText)) return;
+    if (confirmText && !window.confirm(trText(confirmText))) return;
     setBusy(JSON.stringify(args));
     const { error: err } = await supabase.rpc(fn, args);
     setBusy(null);
@@ -29725,10 +29977,7 @@ function ModerationScreen({ onBack }) {
                 <Avatar username={rp.target_username || "?"} avatarUrl={rp.target_avatar} size={36} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{rp.target_username || "Unknown account"}</p>
-                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    {rp.reports_against_user} {Number(rp.reports_against_user) === 1 ? "report" : "reports"} in total
-                    {rp.target_banned ? " · Suspended" : ""}
-                  </p>
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} {1} in total{2}", rp.reports_against_user, Number(rp.reports_against_user) === 1 ? "report" : "reports", rp.target_banned ? " · Suspended" : "")}</p>
                 </div>
                 <span className="text-[11px] rounded-full px-2 py-0.5" style={{ background: "var(--bg)", color: "var(--text-secondary)", fontWeight: 600 }}>
                   {rp.comment_id ? "Comment" : rp.post_id ? "Post" : "Account"}
@@ -29739,9 +29988,7 @@ function ModerationScreen({ onBack }) {
                 <Flag size={13} color="var(--heart)" />
                 <span className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{rp.reason || "No reason given"}</span>
               </div>
-              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                Reported by {rp.reporter_username || "someone"} · {timeAgo(rp.created_at)} ago
-              </p>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("Reported by {0} · {1} ago", rp.reporter_username || "someone", timeAgo(rp.created_at))}</p>
 
               {rp.comment_id ? (
                 <div className="rounded-xl px-3 py-2 mt-2.5" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
@@ -29759,7 +30006,7 @@ function ModerationScreen({ onBack }) {
                         <video src={rp.post_media_url} className="w-full object-cover" style={{ maxHeight: 280 }} controls playsInline preload="metadata" />
                       )}
                       {rp.post_removed && (
-                        <span className="absolute top-2 left-2 rounded-full px-2 py-0.5 text-[11px]" style={{ background: "var(--heart)", color: "#fff", fontWeight: 700 }}>
+                        <span className="absolute top-2 start-2 rounded-full px-2 py-0.5 text-[11px]" style={{ background: "var(--heart)", color: "#fff", fontWeight: 700 }}>
                           Removed
                         </span>
                       )}
@@ -29814,7 +30061,7 @@ function ModerationScreen({ onBack }) {
               <div className="flex-1 min-w-0">
                 <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{b.username}</p>
                 <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-                  {b.until ? `Until ${new Date(b.until).toLocaleDateString()}` : "Permanent"} · {b.reason || "—"}
+                  {b.until ? `Until ${new Date(b.until).toLocaleDateString(I18N_LOCALE)}` : "Permanent"} · {b.reason || "—"}
                   {b.banned_by_username ? ` · by ${b.banned_by_username}` : ""}
                 </p>
               </div>
@@ -29852,9 +30099,7 @@ function ModerationScreen({ onBack }) {
                   </>
                 ) : null}
               </p>
-              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                {timeAgo(l.created_at)} ago{l.note ? ` · ${l.note}` : ""}
-              </p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} ago{1}", timeAgo(l.created_at), l.note ? ` · ${l.note}` : "")}</p>
             </div>
           ))
         )}
@@ -29881,10 +30126,7 @@ function PendingDeletionScreen({ deleteAfter, onKeep, onLogout }) {
         <Trash size={28} color="var(--heart)" />
       </div>
       <p className="text-lg" style={{ color: "var(--text)", fontWeight: 700 }}>Keep your account?</p>
-      <p className="text-sm mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
-        You asked to delete this account. It will be deleted for good on{" "}
-        <span style={{ fontWeight: 700 }}>{new Date(deleteAfter).toLocaleDateString(undefined, { dateStyle: "long" })}</span>.
-      </p>
+      <p className="text-sm mt-2" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{trJoin("You asked to delete this account. It will be deleted for good on {0}.", <span style={{ fontWeight: 700 }}>{new Date(deleteAfter).toLocaleDateString(I18N_LOCALE, { dateStyle: "long" })}</span>)}</p>
       <button
         onClick={async () => {
           setBusy(true);
@@ -29916,13 +30158,11 @@ function SuspendedScreen({ ban, onLogout }) {
       </p>
       <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>
         {ban.until
-          ? `You can use Loop again on ${new Date(ban.until).toLocaleString()}.`
+          ? `You can use Loop again on ${new Date(ban.until).toLocaleString(I18N_LOCALE)}.`
           : "This account broke Loop's Community Guidelines."}
       </p>
       {ban.reason && (
-        <p className="text-xs mt-3 rounded-xl px-3 py-2" style={{ background: "var(--surface)", color: "var(--text-muted)" }}>
-          Reason: {ban.reason}
-        </p>
+        <p className="text-xs mt-3 rounded-xl px-3 py-2" style={{ background: "var(--surface)", color: "var(--text-muted)" }}>{trJoin("Reason: {0}", ban.reason)}</p>
       )}
       <button onClick={onLogout} className="mt-6 rounded-xl px-6 h-11 text-sm" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}>
         Log out
@@ -29932,6 +30172,12 @@ function SuspendedScreen({ ban, onLogout }) {
 }
 
 export default function App() {
+  const ready = useLanguageReady();
+  if (!ready) return <div style={{ position: "fixed", inset: 0, background: "#000" }} />;
+  return <LoopApp />;
+}
+
+function LoopApp() {
   const [authScreen, setAuthScreen] = useState("login"); // "login" | "signup" | null
   const [checkingSession, setCheckingSession] = useState(true);
   const [active, setActive] = useState("feed");
