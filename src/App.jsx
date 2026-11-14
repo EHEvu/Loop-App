@@ -357,11 +357,24 @@ function trJoin(pat, ...args) {
   }
   return res;
 }
+// Raw browser messages for a dropped connection, said plainly instead.
+const NO_NET = "No internet connection. Check your connection and try again.";
+const RAW_ERRORS = new Map(
+  ["Failed to fetch", "Load failed", "NetworkError when attempting to fetch resource.", "Network request failed", "The Internet connection appears to be offline.", "fetch failed"].flatMap((m) => [
+    [m, NO_NET],
+    [`TypeError: ${m}`, NO_NET],
+    [`FetchError: ${m}`, NO_NET],
+  ])
+);
 const TR_PROPS = ["placeholder", "title", "aria-label", "alt"];
 const TEXT_INPUTS = new Set([undefined, "text", "search", "email", "tel", "url", "password"]);
 // Every element in this file is made through jsxT() (see the note at the top).
 function jsxT(type, props, ...children) {
   if (typeof type === "string") {
+    for (let i = 0; i < children.length; i++) {
+      const c = children[i];
+      if (typeof c === "string" && c.length < 70 && RAW_ERRORS.has(c)) children[i] = RAW_ERRORS.get(c);
+    }
     if (I18N_DICT && !(props && props.translate === "no")) {
       for (let i = 0; i < children.length; i++) {
         const c = children[i];
@@ -389,7 +402,7 @@ function jsxT(type, props, ...children) {
 }
 const LoopFragment = React.Fragment;
 // Native pop-ups (confirm, alert) are translated the same way.
-const alert = (msg) => window.alert(trText(String(msg)));
+const alert = (msg) => window.alert(trText(RAW_ERRORS.get(String(msg)) || String(msg)));
 async function fetchLanguagePack(code) {
   const res = await fetch(`/locales/${code}.json?v=${Date.now()}`, { cache: "no-store" });
   if (!res.ok) throw new Error("That language isn't available yet.");
@@ -1204,8 +1217,8 @@ function createDemoClient(mode) {
 
 const supabase = DEMO_MODE ? createDemoClient(DEMO_MODE) : liveSupabase;
 
-function IconMotions() {
-  useIconMotions();
+function AnimatedIcons() {
+  useAnimatedIcons();
   return null;
 }
 
@@ -1483,7 +1496,12 @@ const THEME_CSS = `
   [dir="rtl"] .lucide-chevrons-left, [dir="rtl"] .lucide-arrow-left, [dir="rtl"] .lucide-arrow-right,
   [dir="rtl"] .lucide-send-horizontal, [dir="rtl"] .lucide-send, [dir="rtl"] .lucide-reply,
   [dir="rtl"] .lucide-corner-up-left, [dir="rtl"] .lucide-corner-up-right, [dir="rtl"] .lucide-log-out,
-  [dir="rtl"] .lucide-undo-2, [dir="rtl"] .lucide-redo-2, [dir="rtl"] [data-motion="fly"] { scale: -1 1; }
+  [dir="rtl"] .lucide-undo-2, [dir="rtl"] .lucide-redo-2, [dir="rtl"] [data-mirror] { scale: -1 1; }
+  /* Animated icons (useAnimations): the still icon hides while its animation plays,
+     and the animation takes the icon's own colour. */
+  [data-ua-on] > svg.lucide { visibility: hidden; }
+  .loop-ua svg path[stroke^="rgb"]:not([stroke="rgb(255,255,255)"]) { stroke: currentColor; }
+  .loop-ua svg path[fill="rgb(0,0,0)"] { fill: currentColor; }
 `;
 
 class ErrorBoundary extends React.Component {
@@ -1687,6 +1705,65 @@ async function r2Put(base, bucket, path, body, contentType) {
     );
   return out;
 }
+// ---- Friendly errors, and old photos from R2 ----
+// Every answer from the database passes through here first:
+//  • When Supabase is restricted (free allowance used up) or paused, the
+//    technical message is replaced by a plain one people understand.
+//  • When an admin has switched on "Show old photos from R2", addresses of
+//    old Supabase files are swapped for the same file on the Worker. The
+//    stored data itself is never changed, so switching off undoes it.
+const LOOP_PAUSED = "Loop is taking a short break. Please try again in a little while.";
+const isPausedText = (t) => /restricted due to|exceed_[a-z_]*quota|overdue_payment|project (is )?paused|project is restricted/i.test(t || "");
+let SB_PUBLIC_PREFIX = ""; // https://<project>.supabase.co/storage/v1/object/public/
+function oldMediaBase() {
+  if (DEMO_MODE) return "";
+  const m = appConfig().media || {};
+  const w = cleanWorker(m.worker);
+  return m.old && isWorkerAddress(w) ? w : "";
+}
+function pausedAnswer() {
+  return new Response(JSON.stringify({ message: LOOP_PAUSED, msg: LOOP_PAUSED, error_description: LOOP_PAUSED, error: "loop_paused", code: "loop_paused" }), {
+    status: 402,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+function swapOldAddresses(text, base) {
+  if (!SB_PUBLIC_PREFIX || !text.includes(SB_PUBLIC_PREFIX)) return text;
+  let out = text;
+  for (const b of R2_BUCKETS) out = out.split(`${SB_PUBLIC_PREFIX}${b}/`).join(`${base}/${b}/`);
+  return out;
+}
+function wrapLoopFetch(orig, swapMedia) {
+  if (typeof orig !== "function" || orig.__loopWrapped) return orig;
+  const wrapped = async (input, init) => {
+    const res = await orig(input, init);
+    try {
+      if (res.status === 402 || res.status === 540) return pausedAnswer();
+      if (res.status >= 400) {
+        const peek = await res.clone().text();
+        return isPausedText(peek) ? pausedAnswer() : res;
+      }
+      const method = String((init && init.method) || "GET").toUpperCase();
+      if (!swapMedia || method === "HEAD" || res.status === 204 || res.status === 205) return res;
+      if (!/json/i.test(res.headers.get("content-type") || "")) return res;
+      const base = oldMediaBase();
+      if (!base || !SB_PUBLIC_PREFIX) return res;
+      const text = await res.clone().text();
+      const swapped = swapOldAddresses(text, base);
+      return swapped === text ? res : new Response(swapped, { status: res.status, statusText: res.statusText, headers: res.headers });
+    } catch {
+      return res;
+    }
+  };
+  wrapped.__loopWrapped = true;
+  return wrapped;
+}
+(function wrapSupabase() {
+  try {
+    if (liveSupabase.rest && typeof liveSupabase.rest.fetch === "function") liveSupabase.rest.fetch = wrapLoopFetch(liveSupabase.rest.fetch, true);
+    if (liveSupabase.auth && typeof liveSupabase.auth.fetch === "function") liveSupabase.auth.fetch = wrapLoopFetch(liveSupabase.auth.fetch, false);
+  } catch {}
+})();
 (function routeUploads() {
   try {
     // supabase.storage makes a fresh helper each time, so the change goes on
@@ -1696,6 +1773,10 @@ async function r2Put(base, bucket, path, body, contentType) {
     const upload = proto.upload;
     const publicUrl = proto.getPublicUrl;
     const remove = proto.remove;
+    try {
+      if (!DEMO_MODE && typeof publicUrl === "function")
+        SB_PUBLIC_PREFIX = String(publicUrl.call(liveSupabase.storage.from("posts"), "x").data.publicUrl || "").replace(/posts\/x$/, "");
+    } catch {}
     proto.upload = async function (path, body, opts) {
       if (!DEMO_MODE && !appConfigCache)
         try {
@@ -1718,11 +1799,16 @@ async function r2Put(base, bucket, path, body, contentType) {
     if (typeof publicUrl === "function")
       proto.getPublicUrl = function (path, o) {
         const hit = r2Urls.get(`${this.bucketId}/${path}`);
-        return hit ? { data: { publicUrl: hit } } : publicUrl.call(this, path, o);
+        if (hit) return { data: { publicUrl: hit } };
+        // "Show old photos from R2" on: every file is read through the Worker,
+        // which copies a file over from Supabase the first time it's needed.
+        const old = oldMediaBase();
+        if (old && R2_BUCKETS.has(this.bucketId) && !(o && o.transform)) return { data: { publicUrl: `${old}/${r2Path(this.bucketId, path)}` } };
+        return publicUrl.call(this, path, o);
       };
     if (typeof remove === "function")
       proto.remove = async function (paths) {
-        const base = mediaWorkerBase();
+        const base = mediaWorkerBase() || oldMediaBase();
         if (base && R2_BUCKETS.has(this.bucketId)) {
           const {
             data: { session },
@@ -2017,87 +2103,295 @@ const personMatches = (p, q) => {
   return !s || String(p.username || "").toLowerCase().includes(s) || String(p.full_name || "").toLowerCase().includes(s);
 };
 
-// ---- Icon animations ----
-// Every Lucide icon carries its name as a class (lucide-heart, lucide-bookmark…),
-// so one listener gives each kind of icon its own little motion when tapped,
-// the way Telegram's icons come alive.
-const ICON_MOTIONS = {
-  pop: [[1, 0], [1.32, -8], [0.9, 5], [1.06, -2], [1, 0]],
-  drop: "drop",
-  fly: "fly",
-  wiggle: [[1, 0], [1.08, -14], [1.08, 12], [1.04, -8], [1, 4], [1, 0]],
-  spin: "spin",
-  spin90: "spin90",
-  ring: [[1, 0], [1.06, 18], [1.06, -16], [1.04, 11], [1, -7], [1, 3], [1, 0]],
-  bounce: "bounce",
-  clap: [[1, 0], [1.1, -16], [0.96, 6], [1, 0]],
-  nudge: "nudge",
-  shake: "shake",
-  tap: [[1, 0], [0.86, 0], [1.08, 0], [1, 0]],
+// ---- Animated icons (useAnimations, MIT licence) ----
+// Loop draws its icons instantly with Lucide. When you tap one that
+// useAnimations (useanimations.com) also has, that icon's little animation
+// plays once on top of it and the normal icon comes back. The player
+// (lottie-web) and the small animation files load quietly in the
+// background and are kept on the phone. Without internet, with Data Saver
+// or with "reduce motion" on, the icons simply stay still.
+const UA_BASE = "https://useanimations.com/icons/";
+const LOTTIE_SRC = "https://cdn.jsdelivr.net/npm/lottie-web@5.13.0/build/player/lottie.min.js";
+// Lucide icon → [useAnimations icon, how it plays]
+//   once: plays one time · back: plays forward then back (lids, gears…)
+//   on/off: a two-state icon (filled = on); "2nd" means this Lucide icon
+//   shows the second state, so it plays backwards.
+const UA_ICONS = {
+  "chevron-left": ["chevron-left", "once"],
+  "chevron-right": ["chevron-right", "once"],
+  "chevron-down": ["chevron-down", "once"],
+  check: ["check", "once"],
+  shield: ["shield", "once"],
+  ellipsis: ["more-horizontal", "once"],
+  "more-horizontal": ["more-horizontal", "once"],
+  users: ["users", "once"],
+  pencil: ["edit-2", "once"],
+  trash: ["trash", "back"],
+  "trash-2": ["trash-v2", "back"],
+  "message-circle": ["message-circle", "once"],
+  copy: ["copy", "back"],
+  bell: ["notification-v3", "once"],
+  "bell-ring": ["notification-v3", "once"],
+  "user-plus": ["user-plus", "back"],
+  "user-minus": ["user-minus", "back"],
+  "user-check": ["user-check", "once"],
+  "user-x": ["user-x", "back"],
+  user: ["user", "once"],
+  "user-round": ["user", "once"],
+  clock: ["clock", "once"],
+  image: ["image", "once"],
+  flag: ["flag", "once"],
+  layers: ["layers", "once"],
+  link: ["link", "once"],
+  "link-2": ["link-2", "once"],
+  "map-pin": ["map-pin", "once"],
+  archive: ["archive", "back"],
+  music: ["music", "once"],
+  "music-2": ["music", "once"],
+  settings: ["settings", "back"],
+  mail: ["mail", "back"],
+  info: ["info", "back"],
+  hash: ["hash", "once"],
+  download: ["download", "once"],
+  "square-plus": ["plus-square", "once"],
+  "plus-square": ["plus-square", "once"],
+  "circle-plus": ["plus-circle", "once"],
+  "plus-circle": ["plus-circle", "once"],
+  "external-link": ["external-link", "once"],
+  phone: ["phone", "once"],
+  "refresh-cw": ["refresh", "once"],
+  forward: ["corner-up-right", "once"],
+  reply: ["corner-up-left", "once"],
+  "corner-up-left": ["corner-up-left", "once"],
+  radio: ["radio", "once"],
+  inbox: ["inbox", "once"],
+  film: ["film", "once"],
+  send: ["send", "once"],
+  "thumbs-down": ["thumbs-down", "once"],
+  "rotate-ccw": ["rotate-ccw", "once"],
+  "rotate-cw": ["rotate-cw", "once"],
+  crop: ["crop", "once"],
+  share: ["share", "back"],
+  smartphone: ["smartphone", "once"],
+  monitor: ["monitor", "once"],
+  "log-out": ["log-out", "once"],
+  cloud: ["cloud", "once"],
+  "arrow-up-right": ["arrow-up-right", "once"],
+  "zoom-in": ["zoom-in", "back"],
+  move: ["move", "once"],
+  house: ["home", "back"],
+  home: ["home", "back"],
+  wifi: ["wifi", "once"],
+  "trending-up": ["trending-up", "once"],
+  "bar-chart-3": ["bar-chart", "once"],
+  "chart-column": ["bar-chart", "once"],
+  "circle-help": ["help", "once"],
+  "help-circle": ["help", "once"],
+  "at-sign": ["at-sign", "once"],
+  smile: ["smile", "once"],
+  "key-round": ["key", "once"],
+  globe: ["globe", "once"],
+  "life-buoy": ["life-buoy", "once"],
+  "book-open": ["book-open", "once"],
+  headphones: ["headphones", "once"],
+  tv: ["tv", "once"],
+  camera: ["camera", "once"],
+  repeat: ["repeat", "once"],
+  "repeat-2": ["repeat", "once"],
+  "grid-3x3": ["grid", "once"],
+  heart: ["heart", "on/off"],
+  bookmark: ["bookmark", "on/off"],
+  star: ["star", "on/off"],
+  play: ["play-pause", "on/off"],
+  pause: ["play-pause", "on/off", "2nd"],
+  "volume-2": ["volume", "on/off"],
+  volume: ["volume", "on/off"],
+  "volume-x": ["volume", "on/off", "2nd"],
+  maximize: ["maximize-minimize", "on/off"],
+  minimize: ["maximize-minimize", "on/off", "2nd"],
 };
-const ICON_KIND = {
-  heart: "pop", "heart-handshake": "pop", star: "spin", sparkles: "spin",
-  bookmark: "drop", pin: "drop", "map-pin": "drop", download: "drop",
-  send: "fly", "send-horizontal": "fly", share: "fly", "share-2": "pop",
-  "message-circle": "wiggle", "messages-square": "wiggle", search: "wiggle", smile: "wiggle", sticker: "wiggle",
-  "volume-2": "wiggle", "volume-x": "wiggle", volume: "wiggle", music: "wiggle", "music-2": "wiggle",
-  "repeat-2": "spin", repeat: "spin", "refresh-cw": "spin", "rotate-cw": "spin", settings: "spin", "settings-2": "spin",
-  "sliders-horizontal": "wiggle", menu: "wiggle",
-  plus: "spin90", "plus-square": "spin90", "square-plus": "spin90", "circle-plus": "spin90", "plus-circle": "spin90", x: "spin90",
-  bell: "ring", "bell-ring": "ring", "bell-off": "ring",
-  home: "bounce", house: "bounce", user: "pop", "circle-user": "pop", "user-round": "pop", "user-circle": "pop", users: "pop",
-  clapperboard: "clap", film: "clap", camera: "pop", image: "pop", "image-plus": "pop", mic: "pop", video: "pop",
-  "chevron-left": "nudge", "arrow-left": "nudge",
-  trash: "shake", "trash-2": "shake", flag: "shake", ban: "shake",
-  copy: "pop", link: "pop", "link-2": "pop", check: "pop", "badge-check": "pop", gift: "bounce", "hand-heart": "pop",
-};
-function iconKindOf(svg) {
-  const cls = String(svg.getAttribute("class") || "");
-  const names = cls.split(/\s+/).filter((c) => c.startsWith("lucide-")).map((c) => c.slice(7));
-  for (const n of names) if (ICON_KIND[n]) return ICON_KIND[n];
-  return svg.dataset.motion || "tap";
-}
-function playIconMotion(svg, kind) {
-  if (!svg?.animate || prefersLessMotion()) return;
-  const k = kind || iconKindOf(svg);
-  let frames;
-  let opts = { duration: 560, easing: "cubic-bezier(.3,1.4,.5,1)" };
-  if (Array.isArray(ICON_MOTIONS[k])) frames = ICON_MOTIONS[k].map(([s, r]) => ({ transform: `scale(${s}) rotate(${r}deg)` }));
-  else if (k === "drop") frames = [{ transform: "translateY(0)" }, { transform: "translateY(-8px) scale(1.06)" }, { transform: "translateY(2px) scale(1.04,0.92)" }, { transform: "translateY(0)" }];
-  else if (k === "fly") {
-    frames = [
-      { transform: "translate(0,0) rotate(0)", opacity: 1 },
-      { transform: "translate(10px,-10px) rotate(-12deg) scale(0.8)", opacity: 0, offset: 0.4 },
-      { transform: "translate(-10px,10px) scale(0.8)", opacity: 0, offset: 0.41 },
-      { transform: "translate(0,0) scale(1)", opacity: 1 },
-    ];
-    opts = { duration: 620, easing: "ease-out" };
-  } else if (k === "spin") {
-    frames = [{ transform: "rotate(0) scale(1)" }, { transform: "rotate(200deg) scale(1.1)" }, { transform: "rotate(180deg) scale(1)" }];
-    opts = { duration: 600, easing: "cubic-bezier(.3,1.2,.5,1)" };
-  } else if (k === "spin90") frames = [{ transform: "rotate(0) scale(1)" }, { transform: "rotate(100deg) scale(1.15)" }, { transform: "rotate(90deg) scale(1)" }];
-  else if (k === "bounce") frames = [{ transform: "translateY(0) scale(1,1)" }, { transform: "translateY(-6px) scale(0.92,1.1)" }, { transform: "translateY(1px) scale(1.12,0.88)" }, { transform: "translateY(0) scale(0.97,1.03)" }, { transform: "translateY(0) scale(1,1)" }];
-  else if (k === "nudge") frames = [{ transform: "translateX(0)" }, { transform: "translateX(-5px)" }, { transform: "translateX(1px)" }, { transform: "translateX(0)" }];
-  else if (k === "shake") frames = [{ transform: "translateX(0)" }, { transform: "translateX(-3px) rotate(-6deg)" }, { transform: "translateX(3px) rotate(6deg)" }, { transform: "translateX(-2px) rotate(-3deg)" }, { transform: "translateX(0)" }];
-  else frames = ICON_MOTIONS.tap.map(([s, r]) => ({ transform: `scale(${s}) rotate(${r}deg)` }));
+const UA_FIRST = ["heart", "bookmark", "message-circle", "chevron-left", "home", "plus-square", "user", "more-horizontal", "notification-v3", "user-plus", "check", "settings", "star", "copy", "trash-v2"];
+const uaData = new Map(); // icon → animation (or the download in progress)
+let lottieLoading = null;
+function uaAllowed() {
   try {
-    svg.style.transformOrigin = "50% 50%";
-    svg.style.transformBox = "fill-box";
-    svg.animate(frames, opts);
+    if (navigator.connection && navigator.connection.saveData) return false;
   } catch {}
+  return !prefersLessMotion();
 }
-function useIconMotions() {
+function loadLottie() {
+  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
+  if (window.lottie && window.lottie.loadAnimation) return Promise.resolve(window.lottie);
+  if (!lottieLoading)
+    lottieLoading = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = window.__LOOP_LOTTIE_SRC || LOTTIE_SRC;
+      s.async = true;
+      s.crossOrigin = "anonymous";
+      s.onload = () => (window.lottie && window.lottie.loadAnimation ? resolve(window.lottie) : reject(new Error("no player")));
+      s.onerror = () => {
+        lottieLoading = null;
+        s.remove();
+        reject(new Error("player blocked"));
+      };
+      document.head.appendChild(s);
+    });
+  return lottieLoading;
+}
+function loadUaIcon(id) {
+  const have = uaData.get(id);
+  if (have) return Promise.resolve(have);
+  const job = (async () => {
+    const url = `${window.__LOOP_UA_BASE || UA_BASE}${id}.json`;
+    let box = null;
+    try {
+      box = await caches.open("loop-icons-v1");
+      const hit = await box.match(url);
+      if (hit) return await hit.json();
+    } catch {}
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) throw new Error(`icon ${res.status}`);
+    const copy = res.clone();
+    const data = await res.json();
+    if (!data || !Array.isArray(data.layers)) throw new Error("not an animation");
+    try {
+      await box?.put(url, copy);
+    } catch {}
+    return data;
+  })();
+  uaData.set(id, job);
+  job.then(
+    (d) => uaData.set(id, d),
+    () => uaData.delete(id)
+  );
+  return job;
+}
+// Gets the player and the animations ready, a few at a time.
+async function warmUa(ids) {
+  if (!uaAllowed()) return;
+  try {
+    await loadLottie();
+  } catch {
+    return;
+  }
+  const list = [...new Set(ids)];
+  for (let i = 0; i < list.length; i += 4) await Promise.allSettled(list.slice(i, i + 4).map(loadUaIcon));
+}
+const lucideNames = (svg) =>
+  String(svg.getAttribute("class") || "")
+    .split(/\s+/)
+    .filter((c) => c.startsWith("lucide-"))
+    .map((c) => c.slice(7));
+function uaEntryFor(svg) {
+  for (const n of lucideNames(svg)) if (UA_ICONS[n]) return [n, UA_ICONS[n]];
+  return null;
+}
+function playUaIcon(svg) {
+  const found = uaEntryFor(svg);
+  if (!found) return false;
+  const [name, [id, how, second]] = found;
+  const data = uaData.get(id);
+  if (!window.lottie || !data || typeof data.then === "function") {
+    warmUa([id]);
+    return false;
+  }
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width || !rect.height) return false;
+  const holderOf = svg.parentElement;
+  const wasOn = how === "on/off" && (second ? true : (svg.getAttribute("fill") || "none") !== "none");
+  const backwards = how === "on/off" && wasOn;
+  let color = svg.getAttribute("stroke");
+  if (!color || color === "currentColor") color = getComputedStyle(svg).color;
+  if (name === "heart" && !wasOn) color = svg.getAttribute("stroke") === "#FFFFFF" ? "#ED4956" : "var(--heart)";
+  const box = document.createElement("span");
+  box.className = "loop-ua";
+  box.setAttribute("aria-hidden", "true");
+  Object.assign(box.style, {
+    position: "fixed",
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+    color,
+    pointerEvents: "none",
+    zIndex: "2147483000",
+  });
+  // Arrows that point the other way in Arabic and Urdu stay mirrored.
+  try {
+    const sc = getComputedStyle(svg).scale;
+    if (sc && sc.startsWith("-1")) box.style.scale = "-1 1";
+  } catch {}
+  document.body.appendChild(box);
+  holderOf?.setAttribute("data-ua-on", "");
+  let anim = null;
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    try {
+      anim?.destroy();
+    } catch {}
+    box.remove();
+    holderOf?.removeAttribute("data-ua-on");
+  };
+  const timer = setTimeout(done, 2400);
+  try {
+    anim = window.lottie.loadAnimation({
+      container: box,
+      renderer: "svg",
+      loop: false,
+      autoplay: false,
+      animationData: JSON.parse(JSON.stringify(data)),
+      rendererSettings: { preserveAspectRatio: "xMidYMid meet" },
+    });
+    let leg = 0;
+    anim.addEventListener("complete", () => {
+      leg += 1;
+      if (how === "back" && leg === 1) {
+        anim.setDirection(-1);
+        anim.play();
+      } else done();
+    });
+    if (backwards) {
+      anim.setDirection(-1);
+      anim.goToAndStop(Math.max(0, (anim.totalFrames || 1) - 1), true);
+    } else {
+      anim.setDirection(1);
+      anim.goToAndStop(0, true);
+    }
+    anim.play();
+  } catch {
+    done();
+    return false;
+  }
+  return true;
+}
+function useAnimatedIcons() {
   useEffect(() => {
+    if (!uaAllowed()) return;
+    let warmed = false;
+    const warm = () => {
+      if (warmed) return;
+      warmed = true;
+      warmUa(UA_FIRST);
+    };
+    const idle = setTimeout(() => (window.requestIdleCallback ? window.requestIdleCallback(warm, { timeout: 4000 }) : warm()), 3500);
     const onClick = (e) => {
       const btn = e.target?.closest?.("button, [role=button], a");
       if (!btn || btn.dataset.noMotion !== undefined || !btn.closest(".loop-frame")) return;
-      const svg = btn.querySelector("svg");
+      const own = e.target?.closest?.("svg.lucide");
+      const svg = own && btn.contains(own) ? own : btn.querySelector("svg.lucide");
       // Only small icons: big pictures inside buttons stay still.
       if (!svg || svg.getBoundingClientRect().width > 44) return;
-      playIconMotion(svg);
+      warm();
+      playUaIcon(svg);
     };
     document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
+    return () => {
+      clearTimeout(idle);
+      document.removeEventListener("click", onClick, true);
+    };
   }, []);
 }
 
@@ -2699,7 +2993,7 @@ function AdjustPreviewEditor({ post, onBack, onSaved }) {
 }
 
 // ---- Terms, Privacy, Community Guidelines ----
-const LEGAL_UPDATED = "7 November 2026";
+const LEGAL_UPDATED = "13 November 2026";
 const LEGAL_DOCS = {
   terms: {
     title: "Terms of Use",
@@ -2708,16 +3002,17 @@ const LEGAL_DOCS = {
     sections: [
       ["Who can use Loop", [
         "You must be at least 13 years old.",
+        "If you are under 18, a parent or legal guardian must agree to you using Loop and to Loop keeping your information. By signing up you confirm that they have. Bangladeshi law treats everyone under 18 as a child, so we may ask for proof and close an account where this is missing.",
         "You must give true information when you sign up, and keep your password to yourself. You're responsible for what happens on your account.",
         "You can't use Loop if we have removed your account before for breaking these terms, or if the law doesn't allow you to.",
       ]],
       ["Your content", [
         "You own what you post — photos, videos, stories, messages, channel posts and comments.",
-        "To run Loop we need your permission to store, show, copy and resize what you share, to the people you choose. You give us that permission when you post. It ends when you delete the content or your account, except where someone else already shared it or we must keep it by law.",
+        "To run Loop we need your permission to store, show, copy, resize and translate what you share, to the people you choose. You give us that permission when you post. It ends when you delete the content or your account, except where someone else already shared it or the law makes us keep it.",
         "Only post what you have the right to post. Don't upload someone else's photos, music or videos without permission.",
       ]],
       ["What you can't do", [
-        "Break the Community Guidelines or the law.",
+        "Break the Community Guidelines or the law, including Bangladesh's Cyber Security Act — for example hacking, phishing, fraud, blackmail, sexual harassment, sharing private or sexual images of someone without consent, child sexual abuse material, or spreading religious or ethnic hatred that stirs up violence.",
         "Pretend to be someone else, or run fake or automated accounts.",
         "Try to get into other people's accounts, collect their data, or harm Loop's servers.",
         "Sell, buy or rent accounts, usernames or verified badges.",
@@ -2731,8 +3026,12 @@ const LEGAL_DOCS = {
         "Channel owners are responsible for what they and their admins post.",
       ]],
       ["When we remove things", [
-        "We may remove content or limit, suspend or ban an account that breaks these terms or the guidelines, or when the law requires it. You can see what happened in Settings → Account status.",
-        "You can delete your account any time in Settings. It is removed for good after 30 days.",
+        "We may remove content or limit, suspend or ban an account that breaks these terms or the guidelines.",
+        "We also remove or block content when a Bangladeshi court or an authority with legal power orders it. Where the law allows, we tell you what was removed and why, and we put it back if the order is withdrawn or not approved by the court.",
+        "You can see what happened in Settings → Account status. You can delete your account any time in Settings. It is removed for good after 30 days — unless a lawful order requires us to keep certain information longer.",
+      ]],
+      ["Requests from authorities", [
+        "We share information about an account only when Bangladeshi law requires it — for example a court order, a warrant, or a lawful request in a criminal investigation — and only what the request covers.",
       ]],
       ["Our service", [
         "Loop is free and built by a small team. We work hard to keep it running and safe, but we can't promise it will never go down or lose data. Keep copies of what matters to you.",
@@ -2740,54 +3039,68 @@ const LEGAL_DOCS = {
       ]],
       ["Changes and law", [
         "If we change these terms we'll update the date at the top and, for big changes, tell you in the app.",
-        "These terms follow the laws of Bangladesh.",
+        "These terms follow the laws of Bangladesh, and the courts and tribunals of Bangladesh decide any dispute.",
       ]],
     ],
   },
   privacy: {
     title: "Privacy Policy",
     intro:
-      "This explains what Loop keeps about you, why, and the choices you have. We don't sell your information, and Loop has no ads that track you.",
+      "This explains what Loop keeps about you, why, where it is kept, and the rights you have under Bangladesh's Personal Data Protection Act, 2026. We don't sell your information, and Loop has no ads that track you.",
     sections: [
+      ["Who is responsible", [
+        "Loop is run from Bangladesh by its founder, who decides how your information is used (the \"data fiduciary\" under the law). You can reach us any time through Settings → Help.",
+      ]],
       ["What we keep", [
-        "Account: username, name, email or phone, password (stored scrambled — we can't read it), and your birthday.",
+        "Account: username, name, email or phone, password (stored scrambled — we can't read it), your birthday and gender.",
         "Profile: photo, bio, links, category, banner and anything else you add.",
         "What you share: posts, reels, stories, comments, likes, saves, reposts and notes, channel posts, and messages.",
-        "How you use Loop: who you follow, block, mute or restrict; your settings; your time-management limits; login attempts, to protect your account.",
+        "How you use Loop: who you follow, block, mute or restrict; your settings; your time-management limits; login attempts and the devices you're logged in on, to protect your account.",
+        "Payments: if you buy a badge or send a gift, the number you paid from, the amount and the transaction ID, so we can match your payment. Only Loop's admins see these. We never ask for or keep your PIN or OTP.",
         "Your device: if you turn on push notifications, a code from your browser that lets us send them.",
+        "We don't collect national ID, passport or tax numbers, fingerprints or face data, and we don't track where you are. A place appears only when you type or pick one for a post. If you turn on unlock with fingerprint or face, that check happens on your phone and Loop never receives it.",
       ]],
-      ["Why we keep it", [
-        "To show your content to the people you choose and to run features like the feed, messages, notifications and channels.",
-        "To keep Loop safe: to find spam, stop break-ins, review reports and enforce the guidelines.",
-        "We don't use your information for advertising.",
+      ["Why we keep it, and our legal basis", [
+        "To provide the service you signed up for: showing your content to the people you choose and running the feed, messages, notifications, translations and channels.",
+        "With your consent, which you give when you sign up and when you turn on optional features. You can take it back at any time; anything done before that stays lawful.",
+        "To keep Loop safe and follow the law: to find spam, stop break-ins, review reports, enforce the guidelines and answer lawful requests.",
+        "We don't use your information for advertising, and we don't make automatic decisions about you that have legal effects.",
       ]],
       ["Who can see it", [
         "Public account: your posts and profile can be seen by anyone on Loop. Private account: only people you approve.",
         "Your birthday, login email/phone and profile contact details are private unless you choose otherwise. Your birth year is never shown.",
         "Messages are seen only by the people in the chat. Message requests don't show you've read them until you accept.",
         "Loop's moderators can see reported content, and an account's history when they review it.",
+        "Authorities, only when Bangladeshi law requires it (see the Terms of Use).",
       ]],
-      ["Services that help run Loop", [
-        "Supabase stores the database, photos and videos, and handles sign-in. Vercel serves the app.",
-        "Animated emoji pictures load from Google's servers. Push notifications go through your browser's push service (for example Google or Apple).",
-        "When a channel uses Auto-Translate, the post's text is sent to a translation service (your browser's built-in translator, or MyMemory) to translate it. Nothing else about you is sent.",
+      ["Where it is kept, and services that help run Loop", [
+        "Your information is kept on servers run by these companies, some of them outside Bangladesh. We only use services that protect it, and we transfer it to run the service you asked for, as the law allows.",
+        "Supabase stores the database and handles sign-in. Cloudflare stores photos, videos and voice notes (R2), and runs the address that delivers them. Vercel or Cloudflare serves the app itself.",
+        "Translation: when you tap See translation or Translate, or a channel uses Auto-Translate, only that text is sent to a translator — the one built into your browser (nothing leaves the phone), Cloudflare's AI translation, or MyMemory. Translated text may be stored so the next person gets it faster.",
+        "Animated emoji pictures load from Google's servers, and animated icons from useAnimations through jsDelivr. These services see your device's internet address, like any website you visit. Push notifications go through your browser's push service (for example Google or Apple).",
       ]],
       ["How long we keep it", [
-        "Until you delete it, or your account. A deleted account is kept for 30 days in case you change your mind, then erased. Copies in backups disappear soon after.",
+        "Until you delete it, or your account. A deleted account is kept for 30 days in case you change your mind, then erased — including the copies of your photos and videos in every storage we use. Backup copies disappear soon after.",
         "Vanish-mode messages are deleted once everyone has seen them and closed the chat.",
+        "Records the law requires (such as records of how data is processed) are kept for the period the law sets — at least 5 years — without your posts or messages in them.",
+        "If a court or a lawful order tells us to preserve information, we keep it for as long as the order says, even if you delete it.",
       ]],
-      ["Your choices", [
-        "Edit or delete your posts, profile and messages any time.",
-        "Make your account private, control who can message you, and turn notifications on or off.",
-        "Delete your account in Settings → Delete account.",
-        "Ask us what we hold about you, or to correct it, through Settings → Help.",
+      ["Your rights", [
+        "See and get a copy: Settings → Your activity → Download your information gives you a file with your profile, posts, comments, stories and more. You can also ask us what we hold, who we shared it with and why.",
+        "Correct or complete it: edit your profile any time, or ask us to fix anything you can't change yourself.",
+        "Delete it: delete posts, messages or your whole account in Settings, or ask us to erase information we no longer need.",
+        "Withdraw consent or object: turn off optional features, or ask us to stop.",
+        "Ask through Settings → Help. We reply as soon as we can and within 30 days. If you're not happy with our answer you can complain to the National Data Management Authority of Bangladesh.",
       ]],
       ["Children", [
-        "Loop is for people aged 13 and over. If we learn an account belongs to someone younger, we remove it.",
+        "Loop is for people aged 13 and over. Under Bangladeshi law anyone under 18 is a child, so a parent or legal guardian must agree to a child using Loop. If we learn an account belongs to someone under 13, or to a child without that permission, we remove it.",
         "Mature (18+) posts are hidden from anyone under 18 or without a birthday.",
       ]],
-      ["Security and changes", [
-        "Data travels encrypted (HTTPS) and the database only lets each account reach what it's allowed to. No system is perfect, so use a strong password.",
+      ["Security and breaches", [
+        "Data travels encrypted (HTTPS), passwords are scrambled, and the database only lets each account reach what it's allowed to. No system is perfect, so use a strong password and turn on unlock with fingerprint or face if your phone has it.",
+        "If a breach puts your information at risk, we report it to the National Data Management Authority and the national cyber emergency team as the law requires, and tell the people affected.",
+      ]],
+      ["Changes", [
         "If this policy changes we'll update the date at the top and tell you about big changes in the app.",
       ]],
     ],
@@ -2810,7 +3123,8 @@ const LEGAL_DOCS = {
         "No violence or threats, and no support for terrorist or violent groups.",
         "No nudity or sexual content. Content that is mature but allowed must be marked Mature (18+).",
         "Zero tolerance for anything that sexualises or endangers children. We remove it, ban the account and report it.",
-        "No selling of drugs, weapons, animals or other illegal goods.",
+        "No blackmail, sextortion, or sharing someone's private or sexual photos or videos without their consent — including fake ones made with AI.",
+        "No selling of drugs, weapons, animals or other illegal goods, and no promoting gambling or betting.",
       ]],
       ["No scams or spam", [
         "No fake giveaways, phishing links, pyramid schemes or asking for money under false pretences.",
@@ -2887,7 +3201,7 @@ const APP_CONFIG_DEFAULTS = {
   badge_pay: { bkash: "", nagad: "" },
   badge_prices: { ocean: 99, ruby: 499, gold: 899 },
   support_pay: { bkash: "", nagad: "" },
-  media: { worker: "", uploads: false },
+  media: { worker: "", uploads: false, old: false },
 };
 const APP_CONFIG_EVENT = "loop:config";
 const APP_CONFIG_KEY = "loop_app_config";
@@ -3428,7 +3742,7 @@ function VerificationRequestScreen({ onBack }) {
             {req?.status === "rejected" && (
               <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
                 <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Your last request wasn't approved</p>
-                {req.note && <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{req.note}</p>}
+                {req.note && <p translate="no" className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{req.note}</p>}
               </div>
             )}
 
@@ -3799,7 +4113,7 @@ function AdminAppSettings({ flash }) {
     setBusy(true);
     const jobs =
       which === "media"
-        ? [["media", { worker: cleanWorker(form.media_worker), uploads: !!form.media_on && isWorkerAddress(cleanWorker(form.media_worker)) }]]
+        ? [["media", { worker: cleanWorker(form.media_worker), uploads: !!form.media_on && isWorkerAddress(cleanWorker(form.media_worker)), old: !!(cfg.media || {}).old }]]
         : which === "gifts"
         ? [["support_pay", { bkash: form.gift_bkash.replace(/[^0-9+]/g, ""), nagad: form.gift_nagad.replace(/[^0-9+]/g, "") }]]
         : which === "pay"
@@ -3818,7 +4132,7 @@ function AdminAppSettings({ flash }) {
     }
     await loadAppConfig(true);
     setBusy(false);
-    flash("Saved");
+    flash("Changes saved");
     setOpen(null);
   };
   const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
@@ -3894,6 +4208,9 @@ function AdminAppSettings({ flash }) {
         </div>
       )}
       <div className="h-px" style={{ background: "var(--border)" }} />
+      {head("old", <Archive size={16} color="var(--text-muted)" />, "Old photos and videos", (cfg.media || {}).old ? "Shown from Cloudflare R2" : "Still shown from Supabase")}
+      {open === "old" && <OldFilesMover flash={flash} />}
+      <div className="h-px" style={{ background: "var(--border)" }} />
       {head("gifts", <HandHeart size={16} color="var(--text-muted)" />, "Support gifts", "Where Support Loop gifts are sent")}
       {open === "gifts" && form && (
         <div className="px-3.5 pb-3.5">
@@ -3929,6 +4246,278 @@ function AdminAppSettings({ flash }) {
           {saveBtn("uploads")}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- Moving old photos to R2 (admins only) ----
+// Copies every file still in Supabase Storage into Cloudflare R2 through
+// the Worker, which checks each copy against the original (size and
+// fingerprint) before it counts. Nothing is ever deleted from Supabase.
+// Progress is written down in the database (loop-step-20.sql), so it can be
+// paused, closed and continued later; files already copied are skipped.
+const fmtBytes = (n) => {
+  const v = Number(n) || 0;
+  if (v >= 1024 ** 3) return `${(v / 1024 ** 3).toFixed(2)} GB`;
+  if (v >= 1024 ** 2) return `${(v / 1024 ** 2).toFixed(1)} MB`;
+  if (v >= 1024) return `${Math.round(v / 1024)} KB`;
+  return `${v} B`;
+};
+async function workerCall(base, path, body) {
+  const {
+    data: { session },
+  } = await liveSupabase.auth.getSession();
+  const res = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${session?.access_token || ""}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error("Please log in again.");
+  if (res.status === 403) throw new Error("Only admins can do this.");
+  if (res.status === 404 || res.status === 405) throw new Error("Update the Worker first (loop-media-worker.js, version 3).");
+  if (!res.ok) throw new Error(trJoin("The Worker answered {0}.", String(res.status)));
+  return j;
+}
+// Splits files into calls of at most 10 files or about 80 MB.
+function importChunks(files) {
+  const out = [];
+  let cur = [];
+  let bytes = 0;
+  for (const f of files) {
+    const size = Number(f.size) || 0;
+    if (cur.length && (cur.length >= 10 || bytes + size > 80 * 1024 * 1024)) {
+      out.push(cur);
+      cur = [];
+      bytes = 0;
+    }
+    cur.push(f);
+    bytes += size;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+function OldFilesMover({ flash }) {
+  const cfg = useAppConfig();
+  const media = cfg.media || {};
+  const base = cleanWorker(media.worker);
+  const [summary, setSummary] = useState(null);
+  const [checkMsg, setCheckMsg] = useState("");
+  const [run, setRun] = useState(null); // { done, failed, bytes, total, note }
+  const [running, setRunning] = useState(false);
+  const [problems, setProblems] = useState(null);
+  const [switching, setSwitching] = useState(false);
+  const stopRef = React.useRef(false);
+  const totals = (summary || []).reduce((a, r) => ({ files: a.files + Number(r.files), bytes: a.bytes + Number(r.bytes), done: a.done + Number(r.done), failed: a.failed + Number(r.failed) }), { files: 0, bytes: 0, done: 0, failed: 0 });
+
+  const check = async () => {
+    setCheckMsg("Checking…");
+    setProblems(null);
+    if (!isWorkerAddress(base)) {
+      setCheckMsg("Save the Worker address above first.");
+      return;
+    }
+    const { data, error } = await supabase.rpc("r2_storage_summary");
+    if (error) {
+      setCheckMsg(/r2_storage_summary|function/.test(error.message) ? "Run loop-step-20.sql in Supabase first." : error.message);
+      return;
+    }
+    setSummary(data || []);
+    try {
+      const dry = await workerCall(base, "/admin/import", { files: [], dry: true });
+      setCheckMsg(
+        dry.supabase_files === 402
+          ? "Supabase is still restricted, so files can't be copied yet. Try again after the new month starts."
+          : dry.supabase_files === "unreachable"
+          ? "The Worker can't reach Supabase. Check SUPABASE_URL in the Worker settings."
+          : "✓ Ready. The Worker can reach Supabase and you are an admin."
+      );
+    } catch (e) {
+      setCheckMsg(e?.message || "The Worker check failed.");
+    }
+  };
+
+  const loadProblems = async () => {
+    const { data } = await supabase.rpc("r2_problems", { p_limit: 50 });
+    setProblems(data || []);
+  };
+
+  const copyAll = async (retry) => {
+    if (running) return;
+    setRunning(true);
+    stopRef.current = false;
+    let lock = null;
+    try {
+      lock = await navigator.wakeLock?.request?.("screen");
+    } catch {}
+    const state = { done: 0, failed: 0, bytes: 0, note: "" };
+    setRun({ ...state });
+    let after = "";
+    try {
+      for (;;) {
+        if (stopRef.current) {
+          state.note = "Paused. Press Continue to carry on — nothing is lost.";
+          break;
+        }
+        const { data: batch, error } = await supabase.rpc("r2_storage_batch", { p_after: after, p_limit: 40, p_retry: !!retry });
+        if (error) throw new Error(error.message);
+        if (!batch || !batch.length) {
+          state.note = "Finished.";
+          break;
+        }
+        for (const chunk of importChunks(batch)) {
+          if (stopRef.current) break;
+          let answer = null;
+          for (let attempt = 0; attempt < 3 && !answer; attempt++) {
+            try {
+              answer = await workerCall(base, "/admin/import", { files: chunk.map(({ bucket, name, size, etag, type }) => ({ bucket, name, size, etag, type })) });
+            } catch (e) {
+              if (/admins|log in|Update the Worker/.test(e?.message || "") || attempt === 2) throw e;
+              await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+            }
+          }
+          const results = (answer.results || []).filter((r) => r && r.key);
+          const { error: markErr } = await supabase.rpc("r2_mark", { p_results: results });
+          if (markErr) throw new Error(markErr.message);
+          for (const r of results) {
+            if (r.status === "copied" || r.status === "already") {
+              state.done += 1;
+              state.bytes += Number(r.size) || 0;
+            } else state.failed += 1;
+          }
+          setRun({ ...state });
+        }
+        after = batch[batch.length - 1].key;
+      }
+    } catch (e) {
+      state.note = trJoin("Stopped: {0} Press Continue to try again — copied files are kept.", e?.message || "");
+    }
+    try {
+      await lock?.release?.();
+    } catch {}
+    setRun({ ...state });
+    setRunning(false);
+    const { data } = await supabase.rpc("r2_storage_summary");
+    if (data) setSummary(data);
+    if (state.failed) loadProblems();
+  };
+
+  // Shows old files from R2 instead of Supabase (or goes back).
+  const switchOld = async (on) => {
+    if (on && !isWorkerAddress(base)) {
+      flash("Save the Worker address above first.");
+      return;
+    }
+    setSwitching(true);
+    if (on) {
+      // A real old file has to come back from the Worker before switching.
+      const { data: sums, error: sumErr } = await supabase.rpc("r2_storage_summary");
+      const copied = (sums || []).reduce((n, r) => n + Number(r.done), 0);
+      const files = (sums || []).reduce((n, r) => n + Number(r.files), 0);
+      if (sumErr || (!copied && files)) {
+        setSwitching(false);
+        flash("Copy the old files first.");
+        return;
+      }
+    }
+    const { error } = await supabase.rpc("admin_set_config", { p_key: "media", p_value: { worker: base, uploads: !!media.uploads, old: !!on } });
+    setSwitching(false);
+    if (error) {
+      flash(verifyErrorText(error.message));
+      return;
+    }
+    await loadAppConfig(true);
+    flash(on ? "Old photos now come from R2" : "Old photos come from Supabase again");
+  };
+
+  const doneNow = totals.done + (running && run ? run.done : 0);
+  const pct = totals.files ? Math.min(100, Math.round((doneNow / totals.files) * 100)) : 0;
+  const row = (label, value) => (
+    <div key={label} className="flex items-center justify-between text-[12px] py-0.5" style={{ color: "var(--text-secondary)" }}>
+      <span>{label}</span>
+      <span style={{ color: "var(--text)", fontWeight: 600 }}>{value}</span>
+    </div>
+  );
+  const btn = { background: "var(--bg-sunken)", color: "var(--text)", border: "1px solid var(--border)", fontWeight: 700 };
+  return (
+    <div className="px-3.5 pb-3.5">
+      <p className="text-[12px] mb-2.5 rounded-xl px-3 py-2" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)", lineHeight: 1.45 }}>
+        Copies the photos, videos and voice notes that are still in Supabase into Cloudflare R2. Each copy is checked against the original before it counts. Nothing is deleted from Supabase — the originals stay as a backup.
+      </p>
+      <button onClick={check} disabled={running} className="w-full rounded-xl h-10 text-sm mb-2" style={{ ...btn, opacity: running ? 0.6 : 1 }}>
+        1. Check
+      </button>
+      {checkMsg && (
+        <p className="text-[12px] mb-2" style={{ color: checkMsg.startsWith("✓") ? "#22C55E" : checkMsg === "Checking…" ? "var(--text-muted)" : "var(--heart)", lineHeight: 1.45 }}>
+          {checkMsg}
+        </p>
+      )}
+      {summary && (
+        <div className="rounded-xl px-3 py-2 mb-2" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          {summary.map((r) => row(r.bucket, trJoin("{0} of {1} files · {2}", String(r.done), String(r.files), fmtBytes(r.bytes))))}
+          <div className="h-px my-1.5" style={{ background: "var(--border)" }} />
+          {row("All", trJoin("{0} of {1} files · {2}", String(doneNow), String(totals.files), fmtBytes(totals.bytes)))}
+          <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: "var(--border)" }}>
+            <div className="h-full" style={{ width: `${pct}%`, background: ACCENT, transition: "width 0.3s" }} />
+          </div>
+          <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+            {trJoin("Copying downloads about {0} from Supabase once. Do it at the start of a new Supabase month, so it fits in the free allowance.", fmtBytes(Math.max(0, totals.bytes)))}
+          </p>
+        </div>
+      )}
+      {summary && (
+        <div className="flex gap-2 mb-2">
+          {running ? (
+            <button onClick={() => (stopRef.current = true)} className="flex-1 rounded-xl h-10 text-sm" style={btn}>
+              Pause
+            </button>
+          ) : (
+            <button onClick={() => copyAll(false)} className="flex-1 rounded-xl h-10 text-sm" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+              {totals.done ? "2. Continue copying" : "2. Start copying"}
+            </button>
+          )}
+          {!running && totals.failed > 0 && (
+            <button onClick={() => copyAll(true)} className="flex-1 rounded-xl h-10 text-sm" style={btn}>
+              Try failed again
+            </button>
+          )}
+        </div>
+      )}
+      {run && (
+        <div className="text-[12px] mb-2" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          {running && <p style={{ color: "var(--text)", fontWeight: 600 }}>Copying… keep this screen open.</p>}
+          <p>{trJoin("This round: {0} copied ({1}), {2} not copied", String(run.done), fmtBytes(run.bytes), String(run.failed))}</p>
+          {run.note && <p style={{ color: run.note === "Finished." ? "#22C55E" : "var(--text)" }}>{run.note}</p>}
+        </div>
+      )}
+      {problems && problems.length > 0 && (
+        <div className="rounded-xl px-3 py-2 mb-2 max-h-40 overflow-y-auto" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+          <p className="text-[11px] mb-1" style={{ color: "var(--text-muted)", fontWeight: 700 }}>
+            Not copied (these still work from Supabase)
+          </p>
+          {problems.map((p) => (
+            <p key={p.key} className="text-[11px] py-0.5" translate="no" style={{ color: "var(--text-secondary)", wordBreak: "break-all" }}>
+              {p.status} · {p.key} {p.detail ? `· ${p.detail}` : ""}
+            </p>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={() => switchOld(!media.old)}
+        disabled={switching || running}
+        className="w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 mt-1 text-start"
+        style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", opacity: switching || running ? 0.6 : 1 }}
+      >
+        <span>
+          <span className="block text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>3. Show old photos from R2</span>
+          <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>
+            Turn off any time to go back. A file that isn't in R2 yet is fetched from Supabase and copied on its first view.
+          </span>
+        </span>
+        <span className="rounded-full shrink-0" style={{ width: 38, height: 22, background: media.old ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+          <span className="rounded-full bg-white absolute" style={{ width: 18, height: 18, top: 2, left: media.old ? 18 : 2, transition: "left 0.15s" }} />
+        </span>
+      </button>
     </div>
   );
 }
@@ -4485,22 +5074,144 @@ function LowCopyChip() {
   );
 }
 
-// ---- Translation for channels ----
-// The phone's own translator when the browser has one (nothing leaves the
-// phone); otherwise the free MyMemory service gets the post's text only.
-const translateMemo = new Map();
-const hasBangla = (t) => /[ঀ-৿]/.test(t || "");
-function translateTarget() {
-  try {
-    const pick = localStorage.getItem("loop_translate_to");
-    if (pick === "bn" || pick === "en") return pick;
-  } catch {}
-  const lang = (typeof navigator !== "undefined" && (navigator.language || "")) || "";
-  return /^bn/i.test(lang) ? "bn" : "en";
+// ---- Translating what people write ----
+// "See translation" under posts, comments and bios, and "Translate" on a
+// message, turn someone else's words into your app language. Loop tries,
+// in order: the phone's own translator (Chrome on computers has one —
+// nothing leaves the device), Loop's own translator on Cloudflare (Workers
+// AI, set up on the media Worker), and the free MyMemory service. A text
+// translated once is remembered on this phone, and on Cloudflare for
+// everyone, so the next time it's instant.
+const TR_STORE_KEY = "loop_tr_cache_v1";
+const TR_STORE_MAX = 160;
+const trMemo = new Map();
+const langBase = (code) => String(code || "").toLowerCase().split("-")[0];
+// The app language is also the language Loop translates into.
+const translateTarget = () => I18N_CODE || "en";
+// Names shown in "Translated from …", in English (the app's word list
+// translates them like any other text).
+const LANG_LABEL = {
+  en: "English", bn: "Bangla", ar: "Arabic", ur: "Urdu", hi: "Hindi", ru: "Russian", tr: "Turkish", th: "Thai", ja: "Japanese", ko: "Korean", zh: "Chinese",
+  fa: "Persian", el: "Greek", fi: "Finnish", ro: "Romanian", pt: "Portuguese", fr: "French", es: "Spanish", de: "German", id: "Indonesian", af: "Afrikaans",
+  bg: "Bulgarian", sv: "Swedish", mr: "Marathi", gu: "Gujarati", ta: "Tamil", te: "Telugu", kn: "Kannada", ne: "Nepali", ms: "Malay", it: "Italian",
+  nl: "Dutch", pl: "Polish", uk: "Ukrainian", vi: "Vietnamese", he: "Hebrew", pa: "Punjabi", ml: "Malayalam", si: "Sinhala", my: "Burmese",
+};
+// Common little words, to tell Latin-letter languages apart — including
+// Bangla and Hindi typed in English letters.
+const LATIN_WORDS = {
+  en: "the and you are is to of in it that this for with my your have was not but what all be so me just do we can love like day good know get will your thanks thank one when time today they if no yes how why",
+  bn: "ami tumi tomake tomar amar apni apnar ki kemon acho achen valo bhalo hobe ache korbo korchi korcho kore koro na hoy keno kothay ekhon shob sob onek khub sathe jonno dhonnobad bhai vai apu kintu aj kal ar eta oita amra tomra tara mone hoise hoyeche dekho bolo jao asho khabo valobashi bhalobashi kichu ekta",
+  hi: "hai hain nahi nahin kya kaise kaisa mera meri tera teri tum aap hum main yaar accha acha theek thik bahut kyun kab kahan haan mujhe tujhe aur bhi kuch raha rahi gaya diya karo karna",
+  tr: "ve bir bu da de ne için ile çok ben sen var yok mi mı mu mü gibi ama daha olarak değil nasıl evet hayır teşekkürler merhaba güzel bugün",
+  es: "el la los las de que y en un una es por con para no se lo su al del muy pero como más gracias hola qué está estoy",
+  pt: "o a os as de que e em um uma é por com para não se do da no na muito mas como mais obrigado obrigada olá você está",
+  fr: "le la les de des et en un une est pour avec pas que qui dans sur ce je tu vous nous merci bonjour très mais c'est",
+  de: "der die das und ist nicht ich du sie wir mit für auf ein eine zu von den dem danke hallo sehr aber auch",
+  id: "dan yang di ke dari ini itu aku saya kamu anda tidak ada dengan untuk juga sudah akan bisa terima kasih apa",
+  sv: "och att det som en är på för med jag du inte har av till den tack hej mycket",
+  fi: "ja on ei se että mutta minä sinä kiitos hyvä mitä kun tämä olen oli",
+  ro: "și este nu pe la cu un o din să ce mai pentru mulțumesc foarte",
+  af: "die en is nie het van ek jy ons wat met vir dankie baie",
+  it: "il di che non per una sono con mi ti ma come grazie ciao molto",
+};
+const LATIN_SETS = Object.fromEntries(Object.entries(LATIN_WORDS).map(([k, v]) => [k, new Set(v.split(" "))]));
+const SCRIPTS = [
+  ["bn", /[ঀ-৿]/g],
+  ["ar", /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/g],
+  ["hi", /[ऀ-ॿ]/g],
+  ["gu", /[઀-૿]/g],
+  ["pa", /[਀-੿]/g],
+  ["ta", /[஀-௿]/g],
+  ["te", /[ఀ-౿]/g],
+  ["kn", /[ಀ-೿]/g],
+  ["ml", /[ഀ-ൿ]/g],
+  ["si", /[඀-෿]/g],
+  ["th", /[฀-๿]/g],
+  ["my", /[က-႟]/g],
+  ["ko", /[가-힯ᄀ-ᇿ㄰-㆏]/g],
+  ["ja", /[぀-ヿ]/g],
+  ["zh", /[一-鿿㐀-䶿]/g],
+  ["ru", /[Ѐ-ӿ]/g],
+  ["el", /[Ͱ-Ͽ]/g],
+  ["he", /[֐-׿]/g],
+  ["latin", /[A-Za-zÀ-ɏ]/g],
+];
+// What language is this? Returns a code like "bn", "bn-latn" (Bangla in
+// English letters), "latin" (English letters, can't tell which language)
+// or "" (no words at all).
+function detectLanguage(raw) {
+  const text = String(raw || "")
+    .replace(/https?:\/\/\S+|www\.\S+/gi, " ")
+    .replace(/[@#][\p{L}\p{N}_.]+/gu, " ");
+  let best = "";
+  let bestN = 0;
+  let total = 0;
+  const counts = {};
+  for (const [code, re] of SCRIPTS) {
+    const n = (text.match(re) || []).length;
+    counts[code] = n;
+    total += n;
+    if (n > bestN) {
+      best = code;
+      bestN = n;
+    }
+  }
+  if (total < 2) return "";
+  if (best === "zh" && counts.ja > 0) best = "ja";
+  if (best === "ar") {
+    if (/[ٹڈڑںھہےۓ]/.test(text)) return "ur";
+    if (/[پچژگکی]/.test(text) && !/[كية]/.test(text)) return "fa";
+    return "ar";
+  }
+  if (best === "ru" && /[ђјљњћџ]/i.test(text)) return "sr";
+  if (best === "ru" && /[ґєії]/i.test(text)) return "uk";
+  if (best !== "latin") return best;
+  if (/[ğışİ]/.test(text)) return "tr";
+  if (/[ăâîșțşţ]/i.test(text) && !/[ğı]/.test(text)) return "ro";
+  if (/[ñ¿¡]/i.test(text)) return "es";
+  if (/[ãõ]/i.test(text)) return "pt";
+  if (/[ß]/.test(text)) return "de";
+  if (/[åø]/i.test(text)) return "sv";
+  if (/[ơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹđ]/i.test(text)) return "vi";
+  const words = text.toLowerCase().match(/[a-zÀ-ɏ']+/g) || [];
+  if (!words.length) return "latin";
+  const score = {};
+  for (const w of words) for (const [code, set] of Object.entries(LATIN_SETS)) if (set.has(w)) score[code] = (score[code] || 0) + 1;
+  const ranked = Object.entries(score).sort((a, b) => b[1] - a[1]);
+  if (!ranked.length) return "latin";
+  const [top, n] = ranked[0];
+  const runnerUp = ranked[1] ? ranked[1][1] : 0;
+  const needed = words.length <= 3 ? 1 : 2;
+  if (n < needed || n === runnerUp) return "latin";
+  if (top === "bn") return "bn-latn";
+  if (top === "hi") return "hi-latn";
+  return top;
 }
-function needsTranslation(text, target) {
-  if (!text || !/[\p{L}]/u.test(text)) return false;
-  return (hasBangla(text) ? "bn" : "en") !== target;
+// Should "See translation" show for this text?
+function needsTranslation(text, to = translateTarget()) {
+  const lang = detectLanguage(text);
+  if (!lang) return false;
+  const target = langBase(to);
+  // English letters but no telling which language: offer it to everyone
+  // whose app isn't in English (an English post for a Bangla reader).
+  if (lang === "latin") return target !== "en";
+  return langBase(lang) !== target;
+}
+function readTrStore() {
+  try {
+    return JSON.parse(localStorage.getItem(TR_STORE_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+function rememberTranslation(key, value) {
+  try {
+    const all = readTrStore();
+    all[key] = { ...value, at: Date.now() };
+    const keys = Object.keys(all);
+    if (keys.length > TR_STORE_MAX) keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - TR_STORE_MAX).forEach((k) => delete all[k]);
+    localStorage.setItem(TR_STORE_KEY, JSON.stringify(all));
+  } catch {}
 }
 function splitForTranslation(text) {
   const enc = new TextEncoder();
@@ -4517,83 +5228,198 @@ function splitForTranslation(text) {
   if (cur) out.push(cur);
   return out.slice(0, 8);
 }
-function translateText(text, target) {
-  const source = hasBangla(text) ? "bn" : "en";
-  const key = `${target}|${text}`;
-  if (translateMemo.has(key)) return translateMemo.get(key);
-  const job = (async () => {
+const withTimeout = (ms) => {
+  const c = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const t = c ? setTimeout(() => c.abort(), ms) : null;
+  return { signal: c?.signal, clear: () => t && clearTimeout(t) };
+};
+async function translateOnPhone(text, from, to) {
+  const T = typeof self !== "undefined" ? self.Translator : null;
+  if (!T?.create || !from || from.includes("-latn") || from === "latin") return null;
+  const ok = await T.availability({ sourceLanguage: langBase(from), targetLanguage: to });
+  if (ok !== "available") return null;
+  const tr = await T.create({ sourceLanguage: langBase(from), targetLanguage: to });
+  const out = await tr.translate(text);
+  return out ? { text: out, from: langBase(from), via: "phone" } : null;
+}
+async function translateOnWorker(text, from, to) {
+  const m = appConfig().media || {};
+  const base = cleanWorker(m.worker);
+  if (DEMO_MODE || !isWorkerAddress(base)) return null;
+  const t = withTimeout(15000);
+  try {
+    const res = await fetch(`${base}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, to: to.toLowerCase(), from: from === "latin" ? "" : from }),
+      signal: t.signal,
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && typeof j.text === "string" && j.text ? { text: j.text, from: langBase(j.from || from), same: !!j.same, via: "loop" } : null;
+  } finally {
+    t.clear();
+  }
+}
+async function translateOnMyMemory(text, from, to) {
+  if (!from || from.includes("-latn")) return null;
+  const src = from === "latin" ? "en" : langBase(from);
+  const dst = /^zh-(tw|hk)/i.test(to) ? "zh-TW" : /^zh/i.test(to) ? "zh-CN" : langBase(to);
+  if (src === langBase(dst)) return null;
+  const pieces = [];
+  for (const chunk of splitForTranslation(text)) {
+    const t = withTimeout(12000);
     try {
-      const T = typeof self !== "undefined" ? self.Translator : null;
-      if (T?.create) {
-        const ok = await T.availability({ sourceLanguage: source, targetLanguage: target });
-        if (ok && ok !== "unavailable") {
-          const tr = await T.create({ sourceLanguage: source, targetLanguage: target });
-          return await tr.translate(text);
-        }
-      }
-    } catch {}
-    const pieces = [];
-    for (const chunk of splitForTranslation(text)) {
-      const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${source}|${target}`);
+      const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${src}|${dst}`, { signal: t.signal });
       const j = await r.json();
-      const t = j?.responseData?.translatedText;
-      if (!t || Number(j?.responseStatus) !== 200 || /MYMEMORY WARNING|QUERY LENGTH LIMIT/i.test(t)) throw new Error("no translation");
-      pieces.push(t);
+      const out = j?.responseData?.translatedText;
+      if (!out || Number(j?.responseStatus) !== 200 || /MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID LANGUAGE PAIR/i.test(out)) return null;
+      pieces.push(out);
+    } finally {
+      t.clear();
     }
-    return pieces.join(" ");
+  }
+  return pieces.length ? { text: pieces.join(" "), from: src, via: "mymemory" } : null;
+}
+// Translate someone's words into `to`. Resolves { text, from, same } or
+// throws when no translator could be reached.
+function translateText(text, to = translateTarget()) {
+  const clean = String(text || "").trim().slice(0, 2000);
+  const key = `${to}|${clean}`;
+  if (trMemo.has(key)) return trMemo.get(key);
+  const saved = readTrStore()[key];
+  if (saved && saved.text) {
+    const p = Promise.resolve({ text: saved.text, from: saved.from || "", same: !!saved.same });
+    trMemo.set(key, p);
+    return p;
+  }
+  const job = (async () => {
+    const from = detectLanguage(clean);
+    const tries = [translateOnPhone, translateOnWorker, translateOnMyMemory];
+    for (const run of tries) {
+      try {
+        const got = await run(clean, from, to);
+        if (got && got.text) {
+          const out = { text: got.text.trim(), from: got.from || langBase(from), same: !!got.same || got.text.trim() === clean };
+          rememberTranslation(key, out);
+          return out;
+        }
+      } catch {}
+    }
+    throw new Error("Couldn't translate right now");
   })();
-  translateMemo.set(key, job);
-  job.catch(() => translateMemo.delete(key));
+  trMemo.set(key, job);
+  job.catch(() => trMemo.delete(key));
   return job;
 }
 
+// "See translation" under a post, comment or bio.
+function SeeTranslation({ text, light = false, className = "mt-1", textSize = 14 }) {
+  const to = translateTarget();
+  const wanted = React.useMemo(() => needsTranslation(text, to), [text, to]);
+  const [state, setState] = useState(null); // null | "busy" | "failed" | "same" | { text, from }
+  useEffect(() => setState(null), [text, to]);
+  if (!wanted) return null;
+  const muted = light ? "rgba(255,255,255,0.78)" : "var(--text-muted)";
+  const shown = state && typeof state === "object";
+  const run = async (e) => {
+    e?.stopPropagation?.();
+    if (shown || state === "same") {
+      setState(null);
+      return;
+    }
+    if (state === "busy") return;
+    setState("busy");
+    try {
+      const r = await translateText(text, to);
+      setState(r.same ? "same" : r);
+    } catch {
+      setState("failed");
+    }
+  };
+  const from = shown && LANG_LABEL[langBase(state.from)];
+  return (
+    <div className={className} onClick={(e) => e.stopPropagation()}>
+      {shown && (
+        <p dir="auto" translate="no" style={{ color: light ? "#FFFFFF" : "var(--text)", fontSize: textSize, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+          {state.text}
+        </p>
+      )}
+      <button onClick={run} className="text-[12px] text-start" style={{ color: muted, fontWeight: 600 }}>
+        {state === "busy"
+          ? "Translating…"
+          : state === "failed"
+          ? "Couldn't translate. Tap to try again."
+          : state === "same"
+          ? "It's already in your language"
+          : shown
+          ? from
+            ? trJoin("Translated from {0} · See original", from)
+            : "See original"
+          : "See translation"}
+      </button>
+    </div>
+  );
+}
+
+// Channels: the whole post is shown translated (Auto-Translate, or
+// "Translate" from the post's menu).
 function TranslatedText({ text, children, force }) {
-  const [pickedTarget, setTarget] = useState(translateTarget);
-  // Asked to translate a post that's already in your language: use the other one.
-  const target = force && !needsTranslation(text, pickedTarget) ? (pickedTarget === "bn" ? "en" : "bn") : pickedTarget;
+  const to = translateTarget();
+  const wanted = !!force || needsTranslation(text, to);
   const [out, setOut] = useState(null);
+  const [same, setSame] = useState(false);
   const [failed, setFailed] = useState(false);
   const [original, setOriginal] = useState(false);
-  const wanted = needsTranslation(text, target);
+  const [round, setRound] = useState(0);
   useEffect(() => {
     let cancelled = false;
     setOut(null);
+    setSame(false);
     setFailed(false);
-    if (!wanted) return;
-    translateText(text, target).then(
-      (t) => !cancelled && setOut(t),
+    if (!wanted || !text) return;
+    translateText(text, to).then(
+      (r) => {
+        if (cancelled) return;
+        if (r.same) setSame(true);
+        else setOut(r.text);
+      },
       () => !cancelled && setFailed(true)
     );
     return () => {
       cancelled = true;
     };
-  }, [text, target, wanted]);
-  const switchTo = (t) => {
-    try {
-      localStorage.setItem("loop_translate_to", t);
-    } catch {}
-    setTarget(t);
-    setOriginal(false);
-  };
+  }, [text, to, wanted, round]);
   if (!wanted) return children;
   return (
     <>
       {out && !original ? (
-        <p className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>{out}</p>
+        <p dir="auto" translate="no" className="text-[15px]" style={{ color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>
+          {out}
+        </p>
       ) : (
         children
       )}
       <p className="flex flex-wrap items-center gap-1.5 text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
         <Languages size={12} />
-        {failed ? "Couldn't translate right now" : !out ? "Translating…" : original ? "Original" : `Translated to ${target === "bn" ? "বাংলা" : "English"}`}
+        {failed ? (
+          <button onClick={() => setRound((n) => n + 1)} style={{ color: "var(--text-muted)", textDecoration: "underline" }}>
+            Couldn't translate. Tap to try again.
+          </button>
+        ) : same ? (
+          "It's already in your language"
+        ) : !out ? (
+          "Translating…"
+        ) : original ? (
+          "Original"
+        ) : (
+          "Translated"
+        )}
         {out && (
           <button onClick={() => setOriginal((v) => !v)} style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
             {original ? "Show translation" : "Show original"}
           </button>
         )}
-        <button onClick={() => switchTo(target === "bn" ? "en" : "bn")} style={{ color: "var(--text-muted)", textDecoration: "underline" }}>
-          {target === "bn" ? "English" : "বাংলা"}
-        </button>
       </p>
     </>
   );
@@ -6174,7 +7000,7 @@ function ChannelRepliesSheet({ post, channel, me, isOwner, canReply, onClose, on
     <StorySheetShell title="Replies" onClose={onClose}>
       <div className="px-4 pb-2">
         <div className="rounded-2xl px-3 py-2 text-[13px]" style={{ background: "var(--bg-sunken)", color: "var(--text-secondary)" }}>
-          <span className="block text-[11px] mb-0.5" style={{ color: "var(--text-muted)", fontWeight: 700 }}>{channel?.name}</span>
+          <span translate="no" className="block text-[11px] mb-0.5" style={{ color: "var(--text-muted)", fontWeight: 700 }}>{channel?.name}</span>
           <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
             {post.content || "Photo"}
           </span>
@@ -6359,7 +7185,7 @@ function ChannelPeopleScreen({ channel, owner, me, onClose }) {
             <div key={c.id} className="flex items-center gap-3 px-4 py-2">
               <ChannelAvatar channel={c} size={52} />
               <span className="flex-1 min-w-0">
-                <span className="block text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{c.name}</span>
+                <span translate="no" className="block text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{c.name}</span>
                 <span className="flex items-center gap-1 text-[13px] truncate" style={{ color: "var(--text-muted)" }}>
                   {c.ownerName} {c.ownerVerified && <VerifiedBadge size={11} tier={c.ownerTier} />}
                 </span>
@@ -6418,7 +7244,7 @@ function ChannelInfoScreen({ channel, owner, me, isOwner, membership, members, p
       <div className="flex-1 overflow-y-auto pb-8">
         <div className="flex flex-col items-center px-6 text-center">
           <ChannelAvatar channel={channel} size={96} />
-          <p className="text-[22px] mt-3" style={{ color: "var(--text)", fontWeight: 800 }}>{channel.name}</p>
+          <p translate="no" className="text-[22px] mt-3" style={{ color: "var(--text)", fontWeight: 800 }}>{channel.name}</p>
           {owner && (
             <p className="flex items-center gap-1 text-[14px] mt-0.5" style={{ color: "var(--text-muted)" }}>
               {owner.username} {owner.is_verified && <VerifiedBadge size={13} tier={owner.badge_tier} />} · {formatCount(members)} {members === 1 ? "member" : "members"}
@@ -6468,7 +7294,7 @@ function ChannelInfoScreen({ channel, owner, me, isOwner, membership, members, p
                       <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>
                         {new Date(x.created_at).toLocaleDateString(I18N_LOCALE, { day: "numeric", month: "short", year: "numeric" })}
                       </span>
-                      <span className="block text-[13px]" style={{ color: "var(--text)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                      <span translate="no" className="block text-[13px]" style={{ color: "var(--text)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                         {x.content}
                       </span>
                     </button>
@@ -6935,7 +7761,7 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
         {channel && (
           <div className="flex flex-col items-center text-center px-6 pt-2 pb-5">
             <ChannelAvatar channel={channel} size={72} />
-            <p className="text-[17px] mt-2.5" style={{ color: "var(--text)", fontWeight: 800 }}>{channel.name}</p>
+            <p translate="no" className="text-[17px] mt-2.5" style={{ color: "var(--text)", fontWeight: 800 }}>{channel.name}</p>
             {owner && (
               <button
                 onClick={() => {
@@ -7473,7 +8299,7 @@ function ChannelsTab({ currentUserId }) {
     <button onClick={() => openChannelGlobal(ch.id)} className="w-full flex items-center gap-3 px-4 py-2.5 text-start transition-colors active:bg-[var(--active-highlight)]">
       <ChannelAvatar channel={ch} size={50} />
       <div className="flex-1 min-w-0">
-        <p className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{ch.name}</p>
+        <p translate="no" className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{ch.name}</p>
         <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
           {formatCount(counts[ch.id] || 0)} {(counts[ch.id] || 0) === 1 ? "member" : "members"}
           {ch.description ? ` · ${ch.description}` : ""}
@@ -7861,7 +8687,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
             </button>
             <div className="flex-1 min-w-0">
               <p className="text-[19px] flex items-center gap-2" style={{ color: "var(--text)", fontWeight: 800 }}>
-                <span className="truncate">{snd.title}</span>
+                <span translate="no" className="truncate">{snd.title}</span>
                 {me === snd.ownerId && (
                   <button onClick={rename} aria-label="Rename" className="shrink-0">
                     <Pencil size={14} color="var(--text-muted)" />
@@ -7959,7 +8785,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
             <div className="rounded-3xl p-4" style={{ background: "#FFFFFF" }}>
               <img src={qr} alt="QR code for this audio" style={{ width: 220, height: 220 }} />
             </div>
-            <p className="text-[15px] mt-3" style={{ color: "var(--text)", fontWeight: 700 }}>{snd?.title}</p>
+            <p translate="no" className="text-[15px] mt-3" style={{ color: "var(--text)", fontWeight: 700 }}>{snd?.title}</p>
             <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Scan with a phone camera to open this audio on Loop</p>
           </div>
         </StorySheetShell>
@@ -8098,7 +8924,7 @@ function SoundPickerSheet({ onPick, onClose }) {
                 </span>
               </button>
               <div className="flex-1 min-w-0">
-                <p className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{it.title}</p>
+                <p translate="no" className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{it.title}</p>
                 {it.ownerName && <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>@{it.ownerName}</p>}
               </div>
               <button
@@ -8493,17 +9319,19 @@ function InstallBanner() {
 
   return (
     <>
-      <div className="mx-4 mb-3 rounded-2xl px-3 py-3 flex items-center gap-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <img src="/icon-192.png" alt="" className="w-11 h-11 rounded-xl shrink-0" style={{ border: "1px solid var(--border)" }} />
-        <div className="flex-1 min-w-0">
-          <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Get the Loop app</p>
-          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Opens from your home screen, full screen. No store needed.</p>
+      <div className="mx-4 mb-3 rounded-2xl p-3.5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <div className="flex items-start gap-3">
+          <img src="/icon-192.png" alt="" className="w-12 h-12 rounded-xl shrink-0" style={{ border: "1px solid var(--border)" }} />
+          <div className="flex-1 min-w-0 pt-0.5">
+            <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700, lineHeight: 1.3 }}>Get the Loop app</p>
+            <p className="text-[12.5px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>Opens from your home screen, full screen. No store needed.</p>
+          </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button onClick={notNow} className="rounded-lg px-3 h-8 text-[13px] whitespace-nowrap" style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+        <div className="flex gap-2 mt-3">
+          <button onClick={notNow} className="flex-1 rounded-xl h-10 text-[14px]" style={{ background: "var(--bg-sunken)", color: "var(--text)", border: "1px solid var(--border)", fontWeight: 600 }}>
             Not now
           </button>
-          <button onClick={install} className="rounded-lg px-3.5 h-8 text-[13px] whitespace-nowrap" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+          <button onClick={install} className="flex-1 rounded-xl h-10 text-[14px]" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
             Install
           </button>
         </div>
@@ -8727,6 +9555,7 @@ function CaptionText({ username, caption, onOpenProfile, onMention, onTap, light
 
   if (expanded) {
     return (
+      <>
       <p className="text-sm" onClick={toggle} style={{ color: bodyColor, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.4 }}>
         {name}
         <MentionText text={caption} onMention={onMention} />{" "}
@@ -8734,23 +9563,28 @@ function CaptionText({ username, caption, onOpenProfile, onMention, onTap, light
           less
         </button>
       </p>
+      <SeeTranslation text={caption} light={light} />
+      </>
     );
   }
 
   const showMore = overflows || hasMoreLines;
   return (
-    <div className="flex items-baseline text-sm" style={{ lineHeight: 1.4 }} onClick={showMore || onTap ? toggle : undefined}>
-      <span ref={ref} className="min-w-0" style={{ color: bodyColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {name}
-        {firstLine}
-        {hasMoreLines && !overflows ? "…" : ""}
-      </span>
-      {showMore && (
-        <button onClick={toggle} className="shrink-0 ms-1" style={{ color: toggleColor, fontWeight: 500 }}>
-          more
-        </button>
-      )}
-    </div>
+    <>
+      <div className="flex items-baseline text-sm" style={{ lineHeight: 1.4 }} onClick={showMore || onTap ? toggle : undefined}>
+        <span ref={ref} className="min-w-0" translate="no" style={{ color: bodyColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {name}
+          {firstLine}
+          {hasMoreLines && !overflows ? "…" : ""}
+        </span>
+        {showMore && (
+          <button onClick={toggle} className="shrink-0 ms-1" style={{ color: toggleColor, fontWeight: 500 }}>
+            more
+          </button>
+        )}
+      </div>
+      <SeeTranslation text={caption} light={light} />
+    </>
   );
 }
 
@@ -8775,7 +9609,7 @@ function ShareIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, ...re
   if (!idRef.current) idRef.current = `loopShareMask${++iconMaskSeq}`;
   const id = idRef.current;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" data-motion="fly" {...rest}>
+    <svg width={size} height={size} viewBox="0 0 24 24" data-mirror="" {...rest}>
       <defs>
         <mask id={id} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
           <rect x="0" y="0" width="24" height="24" fill="#fff" />
@@ -8980,7 +9814,7 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
                     <Avatar username={p.username} avatarUrl={p.avatar_url} size={48} />
                     <div className="min-w-0">
                       <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{p.username}</p>
-                      {p.full_name && <p className="text-[13px] truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>}
+                      {p.full_name && <p translate="no" className="text-[13px] truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>}
                     </div>
                   </button>
                   {p.id !== me && <FollowPill following={following.has(p.id)} onClick={() => toggleFollow(p)} />}
@@ -9080,7 +9914,7 @@ function InThisPostSheet({ tags, isVideo, onClose, onOpenProfile }) {
                     {pp.username}
                     {pp.is_verified && <VerifiedBadge size={13} tier={pp.badge_tier} />}
                   </p>
-                  {pp.full_name && <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
+                  {pp.full_name && <p translate="no" className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
                 </div>
               </button>
               {pp.id !== me && <FollowPill following={following.has(pp.id)} onClick={() => toggle(pp)} />}
@@ -9180,7 +10014,7 @@ function PollBlock({ postId, currentUserId }) {
                 />
               )}
               <div className="relative flex items-center justify-between">
-                <span className="text-xs" style={{ color: "var(--text)" }}>{opt.option_text}</span>
+                <span translate="no" className="text-xs" style={{ color: "var(--text)" }}>{opt.option_text}</span>
                 {myVote && <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>{pct}%</span>}
               </div>
             </button>
@@ -10076,7 +10910,7 @@ function StickerEditorSheet({ type, onDone, onClose }) {
                 <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={36} />
                 <span className="min-w-0">
                   <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{pp.username}</span>
-                  {pp.full_name && <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</span>}
+                  {pp.full_name && <span translate="no" className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</span>}
                 </span>
               </button>
             ))}
@@ -10578,7 +11412,7 @@ function StoryHighlightSheet({ story, currentUserId, onClose, onDone }) {
                     <Star size={17} color="var(--text-muted)" />
                   )}
                 </div>
-                <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{h.title}</span>
+                <span translate="no" className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{h.title}</span>
                 {done && <Check size={17} color="var(--accent-solid)" />}
               </button>
             );
@@ -12128,7 +12962,7 @@ function AboutAccountSheet({ userId, onClose, onOpenProfile }) {
                 {info.username}
                 {info.is_verified && <VerifiedBadge size={15} tier={info.badge_tier} />}
               </span>
-              {info.full_name && <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{info.full_name}</span>}
+              {info.full_name && <span translate="no" className="text-[13px]" style={{ color: "var(--text-muted)" }}>{info.full_name}</span>}
               {info.category && <span className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>{info.category}</span>}
             </button>
             <p className="text-[12px] text-center mb-3" style={{ color: "var(--text-muted)" }}>
@@ -15153,6 +15987,7 @@ function CommentRow({
                 <MentionText text={comment.content} onMention={onMention} />
               </p>
             ) : null}
+            {comment.content ? <SeeTranslation text={comment.content} className="mt-0.5" textSize={13} /> : null}
             {comment.image_url && (
               <img
                 src={comment.image_url}
@@ -15376,7 +16211,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
                 )}
                 <div className="min-w-0">
                   <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{x.kind === "tag" ? `#${x.id}` : x.username}</p>
-                  {x.full_name && <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{x.full_name}</p>}
+                  {x.full_name && <p translate="no" className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{x.full_name}</p>}
                 </div>
               </button>
               <button onMouseDown={(e) => e.preventDefault()} onClick={() => forget(x)} aria-label="Remove">
@@ -15422,7 +16257,7 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</p>
                   {a.full_name && (
-                    <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{a.full_name}</p>
+                    <p translate="no" className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{a.full_name}</p>
                   )}
                 </div>
               </button>
@@ -15640,7 +16475,7 @@ function CaptionBox({ value, onChange, placeholder, rows = 3 }) {
               <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={30} />
               <div className="min-w-0">
                 <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{pp.username}</p>
-                {pp.full_name && <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
+                {pp.full_name && <p translate="no" className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
               </div>
             </button>
           ))}
@@ -15910,7 +16745,7 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
                 <Avatar username={p.username} avatarUrl={p.avatar_url} size={34} />
                 <div className="min-w-0">
                   <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</p>
-                  {p.full_name && <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>}
+                  {p.full_name && <p translate="no" className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>}
                 </div>
               </button>
             ))}
@@ -19100,7 +19935,7 @@ function FavouritesScreen({ onBack, onOpenProfile }) {
               <Avatar username={pp.username} avatarUrl={pp.avatar_url} size={46} />
               <div className="min-w-0">
                 <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{pp.username}</p>
-                {pp.full_name && <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
+                {pp.full_name && <p translate="no" className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{pp.full_name}</p>}
               </div>
             </button>
             <button onClick={() => remove(pp.id)} className="rounded-lg px-3.5 h-8 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}>
@@ -19136,7 +19971,7 @@ function HiddenWordsScreen({ onBack }) {
     const { error } = await supabase.from("profile_private").upsert({ user_id: user?.id, hidden_words: words }, { onConflict: "user_id" });
     setSaving(false);
     hiddenWordsPromise = null;
-    setNote(error ? error.message : "Saved");
+    setNote(error ? error.message : "Changes saved");
     setTimeout(() => setNote(""), 1800);
   };
   return (
@@ -19333,7 +20168,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
               className="w-full text-start px-4 py-3"
               style={{ borderBottom: "1px solid var(--border-subtle)" }}
             >
-              <p className="text-sm" style={{ color: "var(--text)", wordBreak: "break-word" }}>{c.content}</p>
+              <p translate="no" className="text-sm" style={{ color: "var(--text)", wordBreak: "break-word" }}>{c.content}</p>
               <span className="text-[11px] mt-1 block" style={{ color: "var(--text-muted)" }}>{trJoin("{0} ago", timeAgo(c.created_at))}</span>
             </button>
           ))
@@ -20159,7 +20994,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
               <Avatar username={m.username} avatarUrl={m.avatar_url} size={44} />
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{m.username}</p>
-                {m.full_name && <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{m.full_name}</p>}
+                {m.full_name && <p translate="no" className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{m.full_name}</p>}
               </div>
             </button>
             <button
@@ -21873,7 +22708,7 @@ function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
               )}
             </div>
           </div>
-          <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>{h.title}</span>
+          <span translate="no" className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>{h.title}</span>
         </button>
       ))}
       {isOwn && archivedItems.length > 0 && (
@@ -21956,7 +22791,7 @@ function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
                     <Star size={16} color="var(--text-muted)" />
                   )}
                 </div>
-                <span className="flex-1 min-w-0 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{h.title}</span>
+                <span translate="no" className="flex-1 min-w-0 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{h.title}</span>
                 <button
                   onClick={() => setArchived(h, false)}
                   className="rounded-lg px-3 h-8 text-xs shrink-0"
@@ -22387,7 +23222,7 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
             <div className="flex-1 min-w-0">
               <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</p>
               {p.full_name && (
-                <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>
+                <p translate="no" className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{p.full_name}</p>
               )}
             </div>
             {p.id === currentUserId && (
@@ -23241,12 +24076,14 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         )}
         {profile.bio && (
           <p
+            translate="no"
             className="text-[13px] mt-0.5"
             style={{ color: "var(--text)", whiteSpace: "pre-wrap", lineHeight: 1.4, ...(bioFont && bioFont !== "default" ? { fontFamily: fontOf(bioFont).stack, fontSize: 14.5 } : {}) }}
           >
             {profile.bio}
           </p>
         )}
+        {profile.bio && <SeeTranslation text={profile.bio} className="mt-0.5" textSize={13} />}
         {ownChannel && (
           <button
             onClick={() => openChannelGlobal(ownChannel.id)}
@@ -26418,7 +27255,7 @@ function AddToCollectionSheet({ postIds, currentUserId, onClose, onDone }) {
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
+                  <span translate="no" className="text-sm truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
                   {c.is_collaborative && (
                     <span className="flex items-center gap-1 text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} Collaborative{1}", <Users size={10} />, c.owner_id !== currentUserId ? " · shared with you" : "")}</span>
                   )}
@@ -27131,7 +27968,7 @@ function SavedScreen({ onBack, onOpenPost }) {
                     <Bookmark size={24} color="var(--toggle-off)" />
                   )}
                 </div>
-                <span className="text-[13px] truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
+                <span translate="no" className="text-[13px] truncate block" style={{ color: "var(--text)", fontWeight: 600 }}>{c.name}</span>
                 <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} post{1}{2}", c.count, c.count === 1 ? "" : "s", c.is_collaborative && (
                     <>
                       {" · "}
@@ -27332,7 +28169,7 @@ function ScheduleMessageSheet({ conversationId, currentUserId, presetText, onClo
               <div key={x.id} className="flex items-center gap-3 py-2" style={{ borderTop: "1px solid var(--border-subtle)" }}>
                 <Clock size={15} color="var(--text-muted)" className="shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] truncate" style={{ color: "var(--text)" }}>{x.content}</p>
+                  <p translate="no" className="text-[13px] truncate" style={{ color: "var(--text)" }}>{x.content}</p>
                   <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
                     {new Date(x.send_at).toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" })}
                   </p>
@@ -27853,6 +28690,26 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     onBack();
   };
 
+  // "Translate" on someone's message: the translation shows under it.
+  const [msgTr, setMsgTr] = useState({});
+  const toggleMsgTranslation = async (m) => {
+    if (msgTr[m.id] && msgTr[m.id] !== "failed") {
+      setMsgTr((t) => {
+        const n = { ...t };
+        delete n[m.id];
+        return n;
+      });
+      return;
+    }
+    setMsgTr((t) => ({ ...t, [m.id]: "busy" }));
+    try {
+      const r = await translateText(m.content);
+      setMsgTr((t) => ({ ...t, [m.id]: r.same ? "same" : r }));
+    } catch {
+      setMsgTr((t) => ({ ...t, [m.id]: "failed" }));
+    }
+  };
+
   // Vanish mode: new messages disappear once seen and the chat is closed.
   const toggleVanish = async () => {
     setSheet(null);
@@ -28239,6 +29096,16 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                           }}
                         >
                           <LinkifiedText text={m.content} light={mine} />
+                          {msgTr[m.id] && (
+                            <span className="block mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${mine ? "rgba(255,255,255,0.25)" : "var(--border)"}` }}>
+                              {typeof msgTr[m.id] === "object" ? (
+                                <span dir="auto" translate="no" className="block">{msgTr[m.id].text}</span>
+                              ) : null}
+                              <span className="block text-[11px] mt-0.5" style={{ opacity: 0.7 }}>
+                                {msgTr[m.id] === "busy" ? "Translating…" : msgTr[m.id] === "failed" ? "Couldn't translate right now" : msgTr[m.id] === "same" ? "It's already in your language" : "Translated"}
+                              </span>
+                            </span>
+                          )}
                         </div>
                       )}
                     </>
@@ -28468,6 +29335,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
             { label: "Reply", icon: <CornerUpLeft size={17} />, onClick: () => { closeCtx(); startReply(cm); } },
             ...(!cm.vanish ? [{ label: "Forward", icon: <Forward size={17} />, onClick: () => { closeCtx(); setForwardMsg(cm); } }] : []),
             ...(cm.content ? [{ label: "Copy", icon: <Copy size={17} />, onClick: () => { closeCtx(); copyMessage(cm); } }] : []),
+            ...(cm.content && !mineC && needsTranslation(cm.content) ? [{ label: msgTr[cm.id] && typeof msgTr[cm.id] === "object" ? "See original" : "Translate", icon: <Languages size={17} />, onClick: () => { closeCtx(); toggleMsgTranslation(cm); } }] : []),
             ...(mineC && cm.content && !cm.vanish ? [{ label: "Edit", icon: <Pencil size={17} />, onClick: () => { closeCtx(); startEdit(cm); } }] : []),
             ...(mineC ? [{ label: "Delete", icon: <Trash2 size={17} />, danger: true, onClick: () => { closeCtx(); deleteMessage(cm); } }] : []),
           ];
@@ -30668,7 +31536,7 @@ function LoopApp() {
     <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={shownTheme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
       <style>{THEME_CSS}</style>
       <FxLayer />
-      <IconMotions />
+      <AnimatedIcons />
       <DemoPill />
       <LowCopyChip />
       <div
