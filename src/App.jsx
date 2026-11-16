@@ -3792,7 +3792,7 @@ function VerificationRequestScreen({ onBack }) {
         ) : pending ? (
           <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
             <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>We're checking your payment</p>
-            <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{trJoin("{0}Sent {1} ago. You'll get a notification when it's decided. Loop will never ask for your password or PIN.", req.plan ? `${badgePlanOf(req.plan).name} · ৳${req.amount || ""} · TrxID ${req.trx_id || ""}. ` : "", timeAgo(req.created_at))}</p>
+            <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>{trJoin("{0}Sent {1} ago. You'll get a notification when it's decided. Loop will never ask for your password or PIN.", req.plan ? `${badgePlanOf(req.plan).name} · ৳${req.amount || ""} · TrxID ${req.trx_id || ""}. ` : "", timeAgo(req.created_at, true))}</p>
           </div>
         ) : lifetime ? (
           <div className="rounded-2xl p-4 mt-6 text-center" style={{ background: "var(--surface)" }}>
@@ -4730,9 +4730,9 @@ function BadgeQueue({ flash, switcher }) {
     const p = badgePlanOf(r.plan);
     if (approve) {
       const ask = r.plan
-        ? `Did ৳${r.amount} arrive by ${r.pay_method === "nagad" ? "Nagad" : "bKash"} with TrxID ${r.trx_id}?\n\nGive @${r.username} the ${p.name} badge for ${p.line}?`
-        : `Give @${r.username} the Ocean badge with no end date?`;
-      if (!window.confirm(trText(ask))) return;
+        ? trText(`Did ৳${r.amount} arrive by ${r.pay_method === "nagad" ? "Nagad" : "bKash"} with TrxID ${r.trx_id}?`) + "\n\n" + trText(`Give @${r.username} the ${p.name} badge for ${p.line}?`)
+        : trText(`Give @${r.username} the Ocean badge with no end date?`);
+      if (!window.confirm(ask)) return;
     } else {
       note = window.prompt(trText("Why isn't it approved? They will see this."), r.plan ? "We couldn't find a payment with that transaction ID." : "We couldn't confirm the account yet.");
       if (note === null) return;
@@ -8519,6 +8519,11 @@ function useBorrowedAudio(videoRef, audioRef, active, resetKey) {
   }, [active, resetKey]);
 }
 
+// Default sound names follow the app language; names people typed stay as typed.
+function soundTitle(t) {
+  return t === "Original sound" || t === "Original audio" ? trText(t) : t;
+}
+
 // The line under a reel's caption: ♫ Original sound · name
 function SoundLine({ sound, onOpen, light = true }) {
   if (!sound) return null;
@@ -8750,7 +8755,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
             </button>
             <div className="flex-1 min-w-0">
               <p className="text-[19px] flex items-center gap-2" style={{ color: "var(--text)", fontWeight: 800 }}>
-                <span translate="no" className="truncate">{snd.title}</span>
+                <span translate="no" className="truncate">{soundTitle(snd.title)}</span>
                 {me === snd.ownerId && (
                   <button onClick={rename} aria-label="Rename" className="shrink-0">
                     <Pencil size={14} color="var(--text-muted)" />
@@ -8987,7 +8992,7 @@ function SoundPickerSheet({ onPick, onClose }) {
                 </span>
               </button>
               <div className="flex-1 min-w-0">
-                <p translate="no" className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{it.title}</p>
+                <p translate="no" className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{soundTitle(it.title)}</p>
                 {it.ownerName && <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>@{it.ownerName}</p>}
               </div>
               <button
@@ -9809,7 +9814,7 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
           )}
         </div>
         {countHidden && (
-          <p className="text-[11px] text-center pt-2" style={{ color: "var(--text-muted)" }}>{trJoin("{0} the like count on this post.", post.username ? `${post.username} hid` : "The creator hid")}</p>
+          <p className="text-[11px] text-center pt-2" style={{ color: "var(--text-muted)" }}>{post.username ? trJoin("{0} hid the like count on this post.", post.username) : "The creator hid the like count on this post."}</p>
         )}
 
         <div className="px-4 pt-3 flex-1 min-h-0 flex flex-col">
@@ -11451,7 +11456,7 @@ function StoryActivitySheet({ story, onClose }) {
                   <p className="text-[13.5px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{v.username}</p>
                   {(v.fullName || (rank >= 1 && v.at)) && (
                     <p className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
-                      {rank >= 1 && v.at ? `Watched ${timeAgo(v.at)} ago` : v.fullName}
+                      {rank >= 1 && v.at ? `Watched ${timeAgo(v.at, true)} ago` : v.fullName}
                       {rank >= 3 && v.times > 1 ? ` · ${v.times} times` : ""}
                     </p>
                   )}
@@ -13750,7 +13755,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   style={{ color: "var(--text-muted)" }}
                 >{trJoin("View all {0} comments", formatCount(post.commentCount))}</button>
               )}
-              <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{trJoin("{0} ago", timeAgo(post.created_at))}</span>
+              <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{agoLabel(post.created_at)}</span>
             </div>
 
             <div className="h-px mx-4 mt-3" style={{ background: "var(--border-subtle)" }} />
@@ -15030,10 +15035,10 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
 // small additions in Supabase (see reels-comments-setup.sql):
 //   alter table comments add column parent_id uuid references comments(id);
 //   create table comment_reactions (... type text check (type in ('like','dislike')) ...);
-function timeAgo(dateStr) {
+function timeAgo(dateStr, atLeastMinute = false) {
   const diffMs = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return trText("now");
+  if (mins < 1) return atLeastMinute ? trJoin("{0}m", 1) : trText("now");
   if (mins < 60) return trJoin("{0}m", mins);
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return trJoin("{0}h", hrs);
@@ -15043,6 +15048,11 @@ function timeAgo(dateStr) {
   if (weeks < 5) return trJoin("{0}w", weeks);
   const months = Math.floor(days / 30);
   return trJoin("{0}mo", months);
+}
+
+// "5m ago" under a post, but a brand-new one just says "now" — never "now ago".
+function agoLabel(dateStr) {
+  return Date.now() - new Date(dateStr).getTime() < 60000 ? trText("now") : trJoin("{0} ago", timeAgo(dateStr));
 }
 
 function ReelCommentsSheet({
@@ -20348,7 +20358,7 @@ function DraftRow({ draft, onOpen, onDelete }) {
           <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>
             {draft.caption?.trim() || (draft.mode === "reel" ? "Reel" : "Post")}
           </p>
-          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · saved {1} ago{2}", draft.mode === "reel" ? "Reel" : `${count} item${count === 1 ? "" : "s"}`, timeAgo(new Date(draft.savedAt).toISOString()), draft.scheduleOn ? " · scheduled" : "")}</p>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · saved {1} ago{2}", draft.mode === "reel" ? "Reel" : `${count} item${count === 1 ? "" : "s"}`, timeAgo(new Date(draft.savedAt).toISOString(), true), draft.scheduleOn ? " · scheduled" : "")}</p>
         </div>
       </button>
       <button onClick={onDelete} className="p-1.5 shrink-0 transition-transform active:scale-90">
@@ -21345,8 +21355,9 @@ function SettingsScreen({
       return;
     }
     alert(
-      `Your account will be deleted on ${new Date(when).toLocaleDateString(I18N_LOCALE, { dateStyle: "long" })}. ` +
-        "Log in before then if you change your mind."
+      trJoin("Your account will be deleted on {0}.", new Date(when).toLocaleDateString(I18N_LOCALE, { dateStyle: "long" })) +
+        " " +
+        trJoin("{0}Log in before then if you change your mind.", "")
     );
     await supabase.auth.signOut();
   };
@@ -21855,7 +21866,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             style={{ color: "var(--text-muted)" }}
           >{trJoin("View all {0} comment{1}", formatCount(post.commentCount), post.commentCount === 1 ? "" : "s")}</button>
         )}
-        <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{trJoin("{0} ago", timeAgo(post.created_at))}</span>
+        <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{agoLabel(post.created_at)}</span>
       </div>
 
       {commentSheetOpen && (
@@ -22717,7 +22728,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
               style={{ borderBottom: "1px solid var(--border-subtle)" }}
             >
               <p translate="no" className="text-sm" style={{ color: "var(--text)", wordBreak: "break-word" }}>{c.content}</p>
-              <span className="text-[11px] mt-1 block" style={{ color: "var(--text-muted)" }}>{trJoin("{0} ago", timeAgo(c.created_at))}</span>
+              <span className="text-[11px] mt-1 block" style={{ color: "var(--text-muted)" }}>{agoLabel(c.created_at)}</span>
             </button>
           ))
         )}
@@ -25004,7 +25015,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                 {new Date(post.created_at).getTime() > Date.now() ? (
                   <span className="text-[10px] mt-1.5 flex items-center gap-1 uppercase" style={{ color: "var(--accent-solid)", letterSpacing: "0.3px", fontWeight: 600 }}>{trJoin("{0} Scheduled · {1}", <Clock size={10} />, new Date(post.created_at).toLocaleString(I18N_LOCALE, { dateStyle: "medium", timeStyle: "short" }))}</span>
                 ) : (
-                  <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{trJoin("{0} ago", timeAgo(post.created_at))}</span>
+                  <span className="text-[10px] mt-1.5 block uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.3px" }}>{agoLabel(post.created_at)}</span>
                 )}
               </div>
             </div>
@@ -32308,7 +32319,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         </div>
       ) : request ? (
         <div className="px-4 pt-3" style={{ borderTop: "1px solid var(--border-subtle)", paddingBottom: "calc(14px + env(safe-area-inset-bottom, 0px))" }}>
-          <p className="text-[12.5px] text-center mb-3" style={{ color: "var(--text-secondary)", lineHeight: 1.45 }}>{trJoin("{0} They won't know you've seen it until you accept.", isGroup ? "You were added to this group by someone you don't follow." : `${title} wants to send you a message.`)}</p>
+          <p className="text-[12.5px] text-center mb-3" style={{ color: "var(--text-secondary)", lineHeight: 1.45 }}>{trJoin("{0} They won't know you've seen it until you accept.", isGroup ? "You were added to this group by someone you don't follow." : trJoin("{0} wants to send you a message.", title))}</p>
           <div className="flex gap-2">
             {!isGroup && otherUser?.id && (
               <button onClick={blockFromRequest} className="flex-1 h-11 rounded-xl text-sm" style={{ background: "var(--surface)", color: "var(--heart)", fontWeight: 700 }}>
@@ -33983,7 +33994,7 @@ function ModerationScreen({ onBack }) {
                 <Flag size={13} color="var(--heart)" />
                 <span className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{rp.reason || "No reason given"}</span>
               </div>
-              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("Reported by {0} · {1} ago", rp.reporter_username || "someone", timeAgo(rp.created_at))}</p>
+              <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("Reported by {0} · {1} ago", rp.reporter_username || "someone", timeAgo(rp.created_at, true))}</p>
 
               {rp.comment_id ? (
                 <div className="rounded-xl px-3 py-2 mt-2.5" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
@@ -34094,7 +34105,7 @@ function ModerationScreen({ onBack }) {
                   </>
                 ) : null}
               </p>
-              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} ago{1}", timeAgo(l.created_at), l.note ? ` · ${l.note}` : "")}</p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} ago{1}", timeAgo(l.created_at, true), l.note ? ` · ${l.note}` : "")}</p>
             </div>
           ))
         )}
