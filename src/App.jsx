@@ -6,6 +6,26 @@ import React, { useState, useEffect } from "react";
 import { supabase as liveSupabase } from "./lib/supabaseClient";
 import {
   Home,
+  Sun,
+  Contrast,
+  Droplet,
+  Thermometer,
+  Blend,
+  SunDim,
+  Moon,
+  Aperture,
+  Focus,
+  CircleDot,
+  Type,
+  Eraser,
+  Highlighter,
+  Brush,
+  PenLine,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Undo2,
+  Bot,
   Wallet,
   Film,
   Wifi,
@@ -1217,10 +1237,6 @@ function createDemoClient(mode) {
 
 const supabase = DEMO_MODE ? createDemoClient(DEMO_MODE) : liveSupabase;
 
-function AnimatedIcons() {
-  useAnimatedIcons();
-  return null;
-}
 
 // A thin strip across the top while the demo is open; the app moves down
 // to make room for it.
@@ -1253,15 +1269,265 @@ function DemoPill() {
 
 const ACCENT = "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%)";
 
+// ---- Loop's look: the l∞p wordmark, the ∞ loader, and the few taps that move ----
+// One wordmark everywhere (top of Home, login, sign-up, settings, the
+// loading screen). The ∞ in the middle uses the accent colours, so it is
+// gold in Dark, blue in Light and red-green in the Bangladesh theme.
+const LOOP_INF_PATH = "M 24 12 C 27 6.5, 31 4.5, 34.5 4.5 C 39 4.5, 42 8, 42 12 C 42 16, 39 19.5, 34.5 19.5 C 31 19.5, 27 17.5, 24 12 C 21 6.5, 17 4.5, 13.5 4.5 C 9 4.5, 6 8, 6 12 C 6 16, 9 19.5, 13.5 19.5 C 17 19.5, 21 17.5, 24 12 Z";
+const LOOP_MARK_INF = "M 33 22 C 35.83 16.23, 39.61 14.12, 42.92 14.12 C 47.17 14.12, 50 17.8, 50 22 C 50 26.2, 47.17 29.88, 42.92 29.88 C 39.61 29.88, 35.83 27.77, 33 22 C 30.17 16.23, 26.39 14.12, 23.08 14.12 C 18.83 14.12, 16 17.8, 16 22 C 16 26.2, 18.83 29.88, 23.08 29.88 C 26.39 29.88, 30.17 27.77, 33 22 Z";
+let loopSvgSeq = 0;
+function useLoopSvgId(prefix) {
+  const ref = React.useRef(null);
+  if (!ref.current) ref.current = `${prefix}${++loopSvgSeq}`;
+  return ref.current;
+}
+function LoopGradient({ id }) {
+  return (
+    <linearGradient id={id} x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" style={{ stopColor: "var(--accent-start)" }} />
+      <stop offset="1" style={{ stopColor: "var(--accent-end)" }} />
+    </linearGradient>
+  );
+}
+
+// height = how tall the letters are on screen (the "l" to the tail of the "p").
+function LoopWordmark({ height = 26, color = "var(--wordmark)", style, className = "" }) {
+  const id = useLoopSvgId("loopMark");
+  return (
+    <svg
+      viewBox="0 0 80 40"
+      height={height}
+      width={height * 2}
+      role="img"
+      aria-label="Loop"
+      className={className}
+      style={{ display: "block", overflow: "visible", ...style }}
+    >
+      <defs>
+        <LoopGradient id={id} />
+      </defs>
+      <g fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 5 V30" />
+        <path d={LOOP_MARK_INF} stroke={`url(#${id})`} />
+        <path d="M59 15 V37" />
+        <circle cx="66.5" cy="22" r="7.5" />
+      </g>
+    </svg>
+  );
+}
+
+// The big logo on the login, sign-up and settings screens.
+function LoopLogo({ size = 72 }) {
+  return (
+    <span className="inline-flex items-center justify-center" style={{ height: size, width: size * 1.7 }}>
+      <LoopWordmark height={Math.round(size * 0.62)} />
+    </span>
+  );
+}
+
+// Loading: a short bright line runs round the ∞, over a faint ∞.
+function LoopSpinner({ size = 34, color = "var(--text-muted)", className = "", style }) {
+  const id = useLoopSvgId("loopSpin");
+  return (
+    <svg
+      viewBox="4 2 40 20"
+      width={size}
+      height={size / 2}
+      role="img"
+      aria-label="Loading"
+      className={`loop-spinner ${className}`}
+      style={{ display: "inline-block", verticalAlign: "middle", color, ...style }}
+    >
+      <defs>
+        <LoopGradient id={id} />
+      </defs>
+      <path d={LOOP_INF_PATH} pathLength="100" fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path className="loop-spinner-run" d={LOOP_INF_PATH} pathLength="100" fill="none" stroke={`url(#${id})`} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="24 76" />
+    </svg>
+  );
+}
+
+// ---- The only icon animations: like, save, repost ----
+// Replays a short, quick animation each time `on` turns true (liking,
+// saving, reposting). Turning it off is instant, like Instagram.
+function PopOnTrue({ on, kind = "like", children }) {
+  const prev = React.useRef(on);
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (on && !prev.current) setN((x) => x + 1);
+    prev.current = on;
+  }, [on]);
+  return (
+    <span key={n} className={n ? `loop-pop loop-pop-${kind}` : "loop-pop"}>
+      {children}
+    </span>
+  );
+}
+
+const BRAND_CSS = `
+  .loop-spinner-run { animation: loopInfRun 1.15s linear infinite; }
+  @keyframes loopInfRun { to { stroke-dashoffset: -100; } }
+  .loop-pop { display: inline-flex; align-items: center; justify-content: center; }
+  .loop-pop-like { animation: loopLikePop 0.42s cubic-bezier(.17,.89,.32,1.28); }
+  @keyframes loopLikePop {
+    0% { transform: scale(1); }
+    22% { transform: scale(0.72); }
+    62% { transform: scale(1.22); }
+    100% { transform: scale(1); }
+  }
+  .loop-pop-save { animation: loopSavePop 0.3s cubic-bezier(.2,.9,.3,1.2); }
+  @keyframes loopSavePop {
+    0% { transform: scale(1) translateY(0); }
+    40% { transform: scale(0.8) translateY(2px); }
+    75% { transform: scale(1.12) translateY(-1px); }
+    100% { transform: scale(1) translateY(0); }
+  }
+  .loop-pop-repost { animation: loopRepostSpin 0.5s cubic-bezier(.3,.85,.35,1.15); }
+  @keyframes loopRepostSpin {
+    0% { transform: rotate(0deg) scale(1); }
+    55% { transform: rotate(150deg) scale(1.14); }
+    100% { transform: rotate(180deg) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .loop-pop-like, .loop-pop-save, .loop-pop-repost { animation: none; }
+    .loop-spinner-run { animation-duration: 2.4s; }
+    .loop-heart-burst { animation-duration: 0.5s !important; }
+  }
+`;
+
+// ---- Swipe between the tabs (like Instagram) ----
+// Swipe left for the next tab, right for the one before; from Home,
+// swiping right opens New post. Anything that scrolls sideways itself
+// (a post with several photos, the stories row, a slider) keeps the swipe,
+// and so do sheets and pop-ups, and the first few pixels at the screen
+// edges, which belong to the phone's own Back gesture.
+const SWIPE_TAB_ORDER = ["upload", "feed", "reels", "messages", "search", "profile"];
+function swipeBlockedFrom(target, frame) {
+  let el = target;
+  while (el && el !== frame && el.nodeType === 1) {
+    if (el.matches?.("input, textarea, select, [contenteditable=''], [contenteditable='true'], [data-no-swipe]")) return true;
+    const cs = window.getComputedStyle(el);
+    if (cs.position === "fixed") return true;
+    if ((cs.overflowX === "auto" || cs.overflowX === "scroll") && el.scrollWidth > el.clientWidth + 2) return true;
+    if (el.tagName === "INPUT" && el.type === "range") return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+function useTabSwipe(frame, { enabled, active, onGo }) {
+  const st = React.useRef(null);
+  const live = React.useRef({ enabled, active, onGo });
+  live.current = { enabled, active, onGo };
+  useEffect(() => {
+    if (!frame) return;
+    const screen = () => frame.firstElementChild;
+    const reset = (animate) => {
+      const s = screen();
+      if (!s) return;
+      if (animate) {
+        s.style.transition = "transform 0.18s ease-out";
+        s.style.transform = "";
+        setTimeout(() => {
+          s.style.transition = "";
+          s.style.willChange = "";
+        }, 200);
+      } else {
+        s.style.transition = "";
+        s.style.transform = "";
+        s.style.willChange = "";
+      }
+    };
+    const onStart = (e) => {
+      st.current = null;
+      if (!live.current.enabled || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const w = window.innerWidth || 400;
+      if (t.clientX < 24 || t.clientX > w - 24) return;
+      if (swipeBlockedFrom(e.target, frame)) return;
+      st.current = { x: t.clientX, y: t.clientY, at: Date.now(), dir: 0, moved: false };
+    };
+    const onMove = (e) => {
+      const s0 = st.current;
+      if (!s0) return;
+      const t = e.touches[0];
+      const dx = t.clientX - s0.x;
+      const dy = t.clientY - s0.y;
+      if (!s0.dir) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        s0.dir = Math.abs(dx) > Math.abs(dy) * 1.4 ? 1 : -1; // 1 = sideways
+      }
+      if (s0.dir !== 1) return;
+      const order = SWIPE_TAB_ORDER;
+      const i = order.indexOf(live.current.active);
+      const canGo = dx < 0 ? i < order.length - 1 : i > 0;
+      const s = screen();
+      if (!s) return;
+      s0.moved = true;
+      s.style.willChange = "transform";
+      const pull = canGo ? dx * 0.35 : dx * 0.08;
+      s.style.transform = `translate3d(${Math.max(-60, Math.min(60, pull))}px,0,0)`;
+    };
+    const onEnd = (e) => {
+      const s0 = st.current;
+      st.current = null;
+      if (!s0 || s0.dir !== 1) {
+        if (s0?.moved) reset(true);
+        return;
+      }
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s0.x;
+      const dy = t.clientY - s0.y;
+      const fast = Date.now() - s0.at < 450;
+      const far = Math.abs(dx) > 90 || (fast && Math.abs(dx) > 50);
+      const order = SWIPE_TAB_ORDER;
+      const i = order.indexOf(live.current.active);
+      const next = dx < 0 ? order[i + 1] : order[i - 1];
+      if (far && Math.abs(dx) > Math.abs(dy) * 1.4 && next && i >= 0 && live.current.onGo(next) !== false) {
+        reset(false);
+        frame.setAttribute("data-swipe-in", dx < 0 ? "left" : "right");
+        setTimeout(() => frame.removeAttribute("data-swipe-in"), 260);
+      } else if (s0.moved) reset(true);
+    };
+    frame.addEventListener("touchstart", onStart, { passive: true });
+    frame.addEventListener("touchmove", onMove, { passive: true });
+    frame.addEventListener("touchend", onEnd, { passive: true });
+    const onCancel = () => {
+      if (st.current?.moved) reset(true);
+      st.current = null;
+    };
+    frame.addEventListener("touchcancel", onCancel, { passive: true });
+    return () => {
+      frame.removeEventListener("touchstart", onStart);
+      frame.removeEventListener("touchmove", onMove);
+      frame.removeEventListener("touchend", onEnd);
+      frame.removeEventListener("touchcancel", onCancel);
+    };
+  }, [frame]);
+}
+const NAV_CSS = `
+  /* Sideways swipes belong to Loop's tabs, not the browser's Back/Forward. */
+  html, body { overscroll-behavior-x: none; }
+  .loop-frame, .loop-frame * { overscroll-behavior-x: contain; }
+  .loop-frame[data-swipe-in="left"] > :first-child { animation: loopInFromRight 0.24s cubic-bezier(.2,.8,.3,1); }
+  .loop-frame[data-swipe-in="right"] > :first-child { animation: loopInFromLeft 0.24s cubic-bezier(.2,.8,.3,1); }
+  @keyframes loopInFromRight { from { transform: translate3d(44px,0,0); opacity: 0.4; } to { transform: none; opacity: 1; } }
+  @keyframes loopInFromLeft { from { transform: translate3d(-44px,0,0); opacity: 0.4; } to { transform: none; opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .loop-frame[data-swipe-in] > :first-child { animation: none; }
+  }
+`;
+
 // Instagram-exact color system. Three themes selectable in Settings:
 // dark (default), light, and "bangladesh" (flag green + red). Every component
 // reads these CSS custom properties, set via a data-theme attribute on the root.
 // --ring-* is the story-ring gradient, kept intentionally distinct from the
 // action accent: gold in dark, blue in light (per the user's brand direction).
 const THEME_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Cinzel+Decorative:wght@400;700;900&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap');
   /* Chat fonts. Phones only download a font when a chat actually uses it. */
   @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=Playfair+Display:wght@400;600&family=Space+Mono&family=Nunito:wght@400;700&family=Lora:wght@400;600&family=Montserrat:wght@400;600&family=Oswald:wght@400;600&family=Pacifico&family=Caveat:wght@400;700&display=swap');
+  /* Premium fonts (Elite / Supreme): also downloaded only when used. */
+  @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Lobster&family=Galada&family=Baloo+Da+2:wght@700&family=Great+Vibes&family=Righteous&family=Atma:wght@600&family=Tiro+Bangla&family=Bebas+Neue&family=Cinzel+Decorative:wght@700&display=swap');
   :root {
     /* ---- DARK: pure black, gold accent (premium) ---- */
     --bg: #000000;
@@ -1372,12 +1638,12 @@ const THEME_CSS = `
     }
   }
   @keyframes loopHeartBurst {
-    0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0; }
-    15% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
-    30% { transform: translate(-50%, -50%) scale(0.95); opacity: 1; }
-    45% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
-    80% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-    100% { transform: translate(-50%, -60%) scale(0.9); opacity: 0; }
+    0% { transform: translate(-50%, -50%) rotate(var(--tilt, 0deg)) scale(0.2); opacity: 0; }
+    14% { transform: translate(-50%, -50%) rotate(var(--tilt, 0deg)) scale(1.22); opacity: 1; }
+    28% { transform: translate(-50%, -50%) rotate(var(--tilt, 0deg)) scale(0.94); opacity: 1; }
+    40% { transform: translate(-50%, -50%) rotate(var(--tilt, 0deg)) scale(1.03); opacity: 1; }
+    75% { transform: translate(-50%, -50%) rotate(var(--tilt, 0deg)) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -78%) rotate(var(--tilt, 0deg)) scale(0.72); opacity: 0; }
   }
   @keyframes loopPop {
     0% { transform: scale(0.6); opacity: 0; }
@@ -1479,10 +1745,7 @@ const THEME_CSS = `
     80% { transform: rotate(3deg); }
   }
   .loop-bell-on { animation: loopBellRing 0.85s ease-in-out 1; transform-origin: 50% 12%; }
-  .loop-frame button > svg, .loop-frame button > span > svg { transition: transform 0.24s cubic-bezier(.3, 1.8, .5, 1); }
-  .loop-frame button:active > svg, .loop-frame button:active > span > svg { transform: scale(0.78); transition-duration: 0.06s; }
   @media (prefers-reduced-motion: reduce) {
-    .loop-frame button > svg, .loop-frame button > span > svg { transition: none; }
     .loop-bell-on { animation: none; }
   }
   .loop-heart-burst {
@@ -1497,11 +1760,7 @@ const THEME_CSS = `
   [dir="rtl"] .lucide-send-horizontal, [dir="rtl"] .lucide-send, [dir="rtl"] .lucide-reply,
   [dir="rtl"] .lucide-corner-up-left, [dir="rtl"] .lucide-corner-up-right, [dir="rtl"] .lucide-log-out,
   [dir="rtl"] .lucide-undo-2, [dir="rtl"] .lucide-redo-2, [dir="rtl"] [data-mirror] { scale: -1 1; }
-  /* Animated icons (useAnimations): the still icon hides while its animation plays,
-     and the animation takes the icon's own colour. */
-  [data-ua-on] > svg.lucide { visibility: hidden; }
-  .loop-ua svg path[stroke^="rgb"]:not([stroke="rgb(255,255,255)"]) { stroke: currentColor; }
-  .loop-ua svg path[fill="rgb(0,0,0)"] { fill: currentColor; }
+${BRAND_CSS}${NAV_CSS}
 `;
 
 class ErrorBoundary extends React.Component {
@@ -1616,6 +1875,7 @@ function formatCount(n) {
 
 async function compressImage(file, maxSide, quality) {
   try {
+    if (file && file.__loopReady && (!maxSide || maxSide >= uploadPhotoSpec().side)) return file;
     if (!maxSide) {
       const spec = uploadPhotoSpec();
       maxSide = spec.side;
@@ -1964,30 +2224,125 @@ function emojiCodes(emoji) {
   const bare = cps.filter((c) => c !== "fe0f").join("_");
   return full === bare ? [full] : [full, bare];
 }
-function AnimatedEmoji({ emoji, size = 64 }) {
-  const codes = React.useMemo(() => emojiCodes(emoji), [emoji]);
-  const [at, setAt] = useState(0);
-  useEffect(() => setAt(0), [emoji]);
-  if (at >= codes.length) {
+// ---- Animated emoji (like Telegram) ----
+// Google's Noto animated emoji (free to use, CC BY 4.0). They are big
+// files, so: the normal emoji shows at once, the moving one replaces it
+// only after it has fully loaded, at most two load at the same time, and
+// nothing loads while it is off screen. Once loaded, the phone keeps it.
+const NOTO_ANIM = (code) => `https://fonts.gstatic.com/s/e/notoemoji/latest/${code}/512.webp`;
+const emojiState = new Map(); // url -> "ok" | "bad" | Promise
+let emojiBusy = 0;
+const emojiWaiting = [];
+function emojiPump() {
+  while (emojiBusy < 2 && emojiWaiting.length) {
+    const job = emojiWaiting.shift();
+    emojiBusy++;
+    const img = new Image();
+    img.decoding = "async";
+    const done = (ok) => {
+      emojiBusy--;
+      emojiState.set(job.url, ok ? "ok" : "bad");
+      job.resolve(ok);
+      emojiPump();
+    };
+    img.onload = () => {
+      if (img.decode) img.decode().then(() => done(true), () => done(true));
+      else done(true);
+    };
+    img.onerror = () => done(false);
+    img.src = job.url;
+  }
+}
+function loadEmojiUrl(url, urgent) {
+  const s = emojiState.get(url);
+  if (s === "ok") return Promise.resolve(true);
+  if (s === "bad") return Promise.resolve(false);
+  if (s && typeof s.then === "function") return s;
+  const p = new Promise((resolve) => {
+    const job = { url, resolve };
+    if (urgent) emojiWaiting.unshift(job);
+    else emojiWaiting.push(job);
+  });
+  emojiState.set(url, p);
+  emojiPump();
+  return p;
+}
+// The animation that works for this emoji (some only exist without the
+// "emoji style" mark), or null.
+async function animatedEmojiUrl(emoji, urgent) {
+  for (const code of emojiCodes(emoji)) {
+    const url = NOTO_ANIM(code);
+    if (await loadEmojiUrl(url, urgent)) return url;
+  }
+  return null;
+}
+function knownEmojiUrl(emoji) {
+  for (const code of emojiCodes(emoji)) {
+    const url = NOTO_ANIM(code);
+    if (emojiState.get(url) === "ok") return url;
+  }
+  return null;
+}
+function warmAnimatedEmoji(list) {
+  try {
+    if (navigator.connection?.saveData) return;
+  } catch {}
+  list.forEach((e) => animatedEmojiUrl(e, false));
+}
+
+// still: never animate (used in long grids, so they stay smooth).
+function AnimatedEmoji({ emoji, size = 64, still = false }) {
+  const [url, setUrl] = useState(() => (still ? null : knownEmojiUrl(emoji)));
+  const ref = React.useRef(null);
+  useEffect(() => {
+    if (still) return;
+    const ready = knownEmojiUrl(emoji);
+    if (ready) {
+      setUrl(ready);
+      return;
+    }
+    setUrl(null);
+    let off = false;
+    let io = null;
+    const go = () => animatedEmojiUrl(emoji, true).then((u) => !off && u && setUrl(u));
+    const el = ref.current;
+    if (el && typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver((entries) => {
+        if (entries.some((en) => en.isIntersecting)) {
+          io.disconnect();
+          go();
+        }
+      });
+      io.observe(el);
+    } else go();
+    return () => {
+      off = true;
+      io?.disconnect();
+    };
+  }, [emoji, still]);
+  if (!url) {
     return (
-      <span style={{ fontSize: Math.round(size * 0.8), lineHeight: `${size}px`, width: size, height: size, display: "inline-block", textAlign: "center", flexShrink: 0 }}>
+      <span
+        ref={ref}
+        style={{ fontSize: Math.round(size * 0.8), lineHeight: `${size}px`, width: size, height: size, display: "inline-block", textAlign: "center", flexShrink: 0 }}
+      >
         {emoji}
       </span>
     );
   }
   return (
     <img
-      src={`https://fonts.gstatic.com/s/e/notoemoji/latest/${codes[at]}/512.webp`}
+      src={url}
       alt={emoji}
       width={size}
       height={size}
-      loading="lazy"
+      decoding="async"
       draggable={false}
-      onError={() => setAt((i) => i + 1)}
       style={{ width: size, height: size, display: "inline-block", maxWidth: "none", flexShrink: 0 }}
     />
   );
 }
+
 function BigEmojiMessage({ parts, onTap }) {
   const size = parts.length === 1 ? 96 : parts.length === 2 ? 72 : 58;
   return (
@@ -2102,298 +2457,6 @@ const personMatches = (p, q) => {
   const s = String(q || "").trim().toLowerCase();
   return !s || String(p.username || "").toLowerCase().includes(s) || String(p.full_name || "").toLowerCase().includes(s);
 };
-
-// ---- Animated icons (useAnimations, MIT licence) ----
-// Loop draws its icons instantly with Lucide. When you tap one that
-// useAnimations (useanimations.com) also has, that icon's little animation
-// plays once on top of it and the normal icon comes back. The player
-// (lottie-web) and the small animation files load quietly in the
-// background and are kept on the phone. Without internet, with Data Saver
-// or with "reduce motion" on, the icons simply stay still.
-const UA_BASE = "https://useanimations.com/icons/";
-const LOTTIE_SRC = "https://cdn.jsdelivr.net/npm/lottie-web@5.13.0/build/player/lottie.min.js";
-// Lucide icon → [useAnimations icon, how it plays]
-//   once: plays one time · back: plays forward then back (lids, gears…)
-//   on/off: a two-state icon (filled = on); "2nd" means this Lucide icon
-//   shows the second state, so it plays backwards.
-const UA_ICONS = {
-  "chevron-left": ["chevron-left", "once"],
-  "chevron-right": ["chevron-right", "once"],
-  "chevron-down": ["chevron-down", "once"],
-  check: ["check", "once"],
-  shield: ["shield", "once"],
-  ellipsis: ["more-horizontal", "once"],
-  "more-horizontal": ["more-horizontal", "once"],
-  users: ["users", "once"],
-  pencil: ["edit-2", "once"],
-  trash: ["trash", "back"],
-  "trash-2": ["trash-v2", "back"],
-  "message-circle": ["message-circle", "once"],
-  copy: ["copy", "back"],
-  bell: ["notification-v3", "once"],
-  "bell-ring": ["notification-v3", "once"],
-  "user-plus": ["user-plus", "back"],
-  "user-minus": ["user-minus", "back"],
-  "user-check": ["user-check", "once"],
-  "user-x": ["user-x", "back"],
-  user: ["user", "once"],
-  "user-round": ["user", "once"],
-  clock: ["clock", "once"],
-  image: ["image", "once"],
-  flag: ["flag", "once"],
-  layers: ["layers", "once"],
-  link: ["link", "once"],
-  "link-2": ["link-2", "once"],
-  "map-pin": ["map-pin", "once"],
-  archive: ["archive", "back"],
-  music: ["music", "once"],
-  "music-2": ["music", "once"],
-  settings: ["settings", "back"],
-  mail: ["mail", "back"],
-  info: ["info", "back"],
-  hash: ["hash", "once"],
-  download: ["download", "once"],
-  "square-plus": ["plus-square", "once"],
-  "plus-square": ["plus-square", "once"],
-  "circle-plus": ["plus-circle", "once"],
-  "plus-circle": ["plus-circle", "once"],
-  "external-link": ["external-link", "once"],
-  phone: ["phone", "once"],
-  "refresh-cw": ["refresh", "once"],
-  forward: ["corner-up-right", "once"],
-  reply: ["corner-up-left", "once"],
-  "corner-up-left": ["corner-up-left", "once"],
-  radio: ["radio", "once"],
-  inbox: ["inbox", "once"],
-  film: ["film", "once"],
-  send: ["send", "once"],
-  "thumbs-down": ["thumbs-down", "once"],
-  "rotate-ccw": ["rotate-ccw", "once"],
-  "rotate-cw": ["rotate-cw", "once"],
-  crop: ["crop", "once"],
-  share: ["share", "back"],
-  smartphone: ["smartphone", "once"],
-  monitor: ["monitor", "once"],
-  "log-out": ["log-out", "once"],
-  cloud: ["cloud", "once"],
-  "arrow-up-right": ["arrow-up-right", "once"],
-  "zoom-in": ["zoom-in", "back"],
-  move: ["move", "once"],
-  house: ["home", "back"],
-  home: ["home", "back"],
-  wifi: ["wifi", "once"],
-  "trending-up": ["trending-up", "once"],
-  "bar-chart-3": ["bar-chart", "once"],
-  "chart-column": ["bar-chart", "once"],
-  "circle-help": ["help", "once"],
-  "help-circle": ["help", "once"],
-  "at-sign": ["at-sign", "once"],
-  smile: ["smile", "once"],
-  "key-round": ["key", "once"],
-  globe: ["globe", "once"],
-  "life-buoy": ["life-buoy", "once"],
-  "book-open": ["book-open", "once"],
-  headphones: ["headphones", "once"],
-  tv: ["tv", "once"],
-  camera: ["camera", "once"],
-  repeat: ["repeat", "once"],
-  "repeat-2": ["repeat", "once"],
-  "grid-3x3": ["grid", "once"],
-  heart: ["heart", "on/off"],
-  bookmark: ["bookmark", "on/off"],
-  star: ["star", "on/off"],
-  play: ["play-pause", "on/off"],
-  pause: ["play-pause", "on/off", "2nd"],
-  "volume-2": ["volume", "on/off"],
-  volume: ["volume", "on/off"],
-  "volume-x": ["volume", "on/off", "2nd"],
-  maximize: ["maximize-minimize", "on/off"],
-  minimize: ["maximize-minimize", "on/off", "2nd"],
-};
-const UA_FIRST = ["heart", "bookmark", "message-circle", "chevron-left", "home", "plus-square", "user", "more-horizontal", "notification-v3", "user-plus", "check", "settings", "star", "copy", "trash-v2"];
-const uaData = new Map(); // icon → animation (or the download in progress)
-let lottieLoading = null;
-function uaAllowed() {
-  try {
-    if (navigator.connection && navigator.connection.saveData) return false;
-  } catch {}
-  return !prefersLessMotion();
-}
-function loadLottie() {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"));
-  if (window.lottie && window.lottie.loadAnimation) return Promise.resolve(window.lottie);
-  if (!lottieLoading)
-    lottieLoading = new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = window.__LOOP_LOTTIE_SRC || LOTTIE_SRC;
-      s.async = true;
-      s.crossOrigin = "anonymous";
-      s.onload = () => (window.lottie && window.lottie.loadAnimation ? resolve(window.lottie) : reject(new Error("no player")));
-      s.onerror = () => {
-        lottieLoading = null;
-        s.remove();
-        reject(new Error("player blocked"));
-      };
-      document.head.appendChild(s);
-    });
-  return lottieLoading;
-}
-function loadUaIcon(id) {
-  const have = uaData.get(id);
-  if (have) return Promise.resolve(have);
-  const job = (async () => {
-    const url = `${window.__LOOP_UA_BASE || UA_BASE}${id}.json`;
-    let box = null;
-    try {
-      box = await caches.open("loop-icons-v1");
-      const hit = await box.match(url);
-      if (hit) return await hit.json();
-    } catch {}
-    const res = await fetch(url, { mode: "cors" });
-    if (!res.ok) throw new Error(`icon ${res.status}`);
-    const copy = res.clone();
-    const data = await res.json();
-    if (!data || !Array.isArray(data.layers)) throw new Error("not an animation");
-    try {
-      await box?.put(url, copy);
-    } catch {}
-    return data;
-  })();
-  uaData.set(id, job);
-  job.then(
-    (d) => uaData.set(id, d),
-    () => uaData.delete(id)
-  );
-  return job;
-}
-// Gets the player and the animations ready, a few at a time.
-async function warmUa(ids) {
-  if (!uaAllowed()) return;
-  try {
-    await loadLottie();
-  } catch {
-    return;
-  }
-  const list = [...new Set(ids)];
-  for (let i = 0; i < list.length; i += 4) await Promise.allSettled(list.slice(i, i + 4).map(loadUaIcon));
-}
-const lucideNames = (svg) =>
-  String(svg.getAttribute("class") || "")
-    .split(/\s+/)
-    .filter((c) => c.startsWith("lucide-"))
-    .map((c) => c.slice(7));
-function uaEntryFor(svg) {
-  for (const n of lucideNames(svg)) if (UA_ICONS[n]) return [n, UA_ICONS[n]];
-  return null;
-}
-function playUaIcon(svg) {
-  const found = uaEntryFor(svg);
-  if (!found) return false;
-  const [name, [id, how, second]] = found;
-  const data = uaData.get(id);
-  if (!window.lottie || !data || typeof data.then === "function") {
-    warmUa([id]);
-    return false;
-  }
-  const rect = svg.getBoundingClientRect();
-  if (!rect.width || !rect.height) return false;
-  const holderOf = svg.parentElement;
-  const wasOn = how === "on/off" && (second ? true : (svg.getAttribute("fill") || "none") !== "none");
-  const backwards = how === "on/off" && wasOn;
-  let color = svg.getAttribute("stroke");
-  if (!color || color === "currentColor") color = getComputedStyle(svg).color;
-  if (name === "heart" && !wasOn) color = svg.getAttribute("stroke") === "#FFFFFF" ? "#ED4956" : "var(--heart)";
-  const box = document.createElement("span");
-  box.className = "loop-ua";
-  box.setAttribute("aria-hidden", "true");
-  Object.assign(box.style, {
-    position: "fixed",
-    left: `${rect.left}px`,
-    top: `${rect.top}px`,
-    width: `${rect.width}px`,
-    height: `${rect.height}px`,
-    color,
-    pointerEvents: "none",
-    zIndex: "2147483000",
-  });
-  // Arrows that point the other way in Arabic and Urdu stay mirrored.
-  try {
-    const sc = getComputedStyle(svg).scale;
-    if (sc && sc.startsWith("-1")) box.style.scale = "-1 1";
-  } catch {}
-  document.body.appendChild(box);
-  holderOf?.setAttribute("data-ua-on", "");
-  let anim = null;
-  let finished = false;
-  const done = () => {
-    if (finished) return;
-    finished = true;
-    clearTimeout(timer);
-    try {
-      anim?.destroy();
-    } catch {}
-    box.remove();
-    holderOf?.removeAttribute("data-ua-on");
-  };
-  const timer = setTimeout(done, 2400);
-  try {
-    anim = window.lottie.loadAnimation({
-      container: box,
-      renderer: "svg",
-      loop: false,
-      autoplay: false,
-      animationData: JSON.parse(JSON.stringify(data)),
-      rendererSettings: { preserveAspectRatio: "xMidYMid meet" },
-    });
-    let leg = 0;
-    anim.addEventListener("complete", () => {
-      leg += 1;
-      if (how === "back" && leg === 1) {
-        anim.setDirection(-1);
-        anim.play();
-      } else done();
-    });
-    if (backwards) {
-      anim.setDirection(-1);
-      anim.goToAndStop(Math.max(0, (anim.totalFrames || 1) - 1), true);
-    } else {
-      anim.setDirection(1);
-      anim.goToAndStop(0, true);
-    }
-    anim.play();
-  } catch {
-    done();
-    return false;
-  }
-  return true;
-}
-function useAnimatedIcons() {
-  useEffect(() => {
-    if (!uaAllowed()) return;
-    let warmed = false;
-    const warm = () => {
-      if (warmed) return;
-      warmed = true;
-      warmUa(UA_FIRST);
-    };
-    const idle = setTimeout(() => (window.requestIdleCallback ? window.requestIdleCallback(warm, { timeout: 4000 }) : warm()), 3500);
-    const onClick = (e) => {
-      const btn = e.target?.closest?.("button, [role=button], a");
-      if (!btn || btn.dataset.noMotion !== undefined || !btn.closest(".loop-frame")) return;
-      const own = e.target?.closest?.("svg.lucide");
-      const svg = own && btn.contains(own) ? own : btn.querySelector("svg.lucide");
-      // Only small icons: big pictures inside buttons stay still.
-      if (!svg || svg.getBoundingClientRect().width > 44) return;
-      warm();
-      playUaIcon(svg);
-    };
-    document.addEventListener("click", onClick, true);
-    return () => {
-      clearTimeout(idle);
-      document.removeEventListener("click", onClick, true);
-    };
-  }, []);
-}
 
 function wobble(el) {
   try {
@@ -2691,7 +2754,7 @@ function ReactionContextOverlay({ anchor, align = "left", quick = [], more = [],
   const gridRows = Math.ceil((gridList.length + (onMoreEmoji ? 1 : 0)) / 7);
   const gridH = Math.min(5, gridRows) * cell + 16;
 
-  const emo = (e) => (
+  const emo = (e, still) => (
     <button
       key={e}
       onClick={(ev) => {
@@ -2702,7 +2765,7 @@ function ReactionContextOverlay({ anchor, align = "left", quick = [], more = [],
       style={{ width: cell - 2, height: cell - 2, background: current === e ? "var(--active-highlight)" : "transparent" }}
       aria-label={`React ${e}`}
     >
-      <AnimatedEmoji emoji={e} size={30} />
+      <AnimatedEmoji emoji={e} size={30} still={still} />
     </button>
   );
 
@@ -2735,7 +2798,7 @@ function ReactionContextOverlay({ anchor, align = "left", quick = [], more = [],
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center flex-1 min-w-0 overflow-x-auto">
-            {quick.map(emo)}
+            {quick.map((e) => emo(e))}
           </div>
           {hasMore && (
             <button
@@ -2766,7 +2829,7 @@ function ReactionContextOverlay({ anchor, align = "left", quick = [], more = [],
           onClick={(e) => e.stopPropagation()}
         >
           <div className="grid" style={{ gridTemplateColumns: `repeat(7, ${cell - 2}px)`, justifyContent: "space-between", rowGap: 2 }}>
-            {gridList.map(emo)}
+            {gridList.map((e) => emo(e, true))}
             {onMoreEmoji && (
               <button
                 onClick={onMoreEmoji}
@@ -3354,7 +3417,7 @@ function LanguageScreen({ onBack }) {
       )}
       {!list ? (
         <div className="py-12 flex justify-center">
-          <Loader2 size={22} className="animate-spin" color="var(--text-muted)" />
+          <LoopSpinner size={40} />
         </div>
       ) : (
         <div className="pb-10">
@@ -3369,7 +3432,7 @@ function LanguageScreen({ onBack }) {
                 </span>
               </span>
               {busy === l.code ? (
-                <Loader2 size={20} className="animate-spin shrink-0" color="var(--text-muted)" />
+                <LoopSpinner size={30} className="shrink-0" />
               ) : I18N_CODE === l.code ? (
                 <Check size={20} className="shrink-0" color={ACCENT} />
               ) : null}
@@ -3484,7 +3547,7 @@ const badgePerks = (p) => {
     "See when each person watched your story, and search your viewers",
     "Peek at a chat's newest messages without them seeing you read it",
     ...(r >= 2
-      ? ["Your stories stay up for 48 hours instead of 24", "Write your bio in a special font", "Send Super hearts on stories", "Share a post to your profile only, not to feeds"]
+      ? ["Your stories stay up for 48 hours instead of 24", "Write your bio in a special font", "Send Super hearts on stories", "Share a post to your profile only, not to feeds", r >= 3 ? "Every premium chat theme and font" : "Premium chat themes and fonts"]
       : []),
     ...(r >= 3 ? ["See how many times each person rewatched your story", "Your story shows first in your followers' story row"] : []),
   ];
@@ -3725,7 +3788,7 @@ function VerificationRequestScreen({ onBack }) {
         {state?.verified && (!state.until || new Date(state.until).getTime() > Date.now()) && <BadgePerksCard tier={state.tier} />}
 
         {!state ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : pending ? (
           <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
             <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>We're checking your payment</p>
@@ -3972,7 +4035,7 @@ function SupportLoopScreen({ onBack, Header }) {
       </div>
 
       {pay === null ? (
-        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : open.length === 0 ? (
         <div className="mx-4 rounded-2xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Gifts are closed right now</p>
@@ -4579,7 +4642,7 @@ function SupportQueue({ flash }) {
       {err ? (
         <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{err}</p>
       ) : rows === null ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center py-12">
           <HandHeart size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -4709,7 +4772,7 @@ function BadgeQueue({ flash, switcher }) {
       {err ? (
         <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{err}</p>
       ) : rows === null ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center py-12">
           <BadgeCheck size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -6519,7 +6582,7 @@ function SavedAudioList() {
       );
     })();
   }, []);
-  if (rows === null) return <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading…</p>;
+  if (rows === null) return <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>;
   if (err) return <p className="text-xs text-center py-10 px-8" style={{ color: "var(--heart)" }}>{err}</p>;
   if (!rows.length)
     return (
@@ -7008,7 +7071,7 @@ function ChannelRepliesSheet({ post, channel, me, isOwner, canReply, onClose, on
       </div>
       <div ref={listRef} className="px-4" style={{ maxHeight: "42vh", overflowY: "auto" }}>
         {rows === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : rows.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No replies yet</p>
         ) : (
@@ -7177,7 +7240,7 @@ function ChannelPeopleScreen({ channel, owner, me, onClose }) {
         )}
         <Section>Creators with channels</Section>
         {others === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : others.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No other channels yet</p>
         ) : (
@@ -8327,7 +8390,7 @@ function ChannelsTab({ currentUserId }) {
       </div>
       {error && <p className="text-xs text-center py-4 px-8" style={{ color: "var(--heart)" }}>{error}</p>}
       {mine === null ? (
-        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : (
         <>
           {mine.length > 0 && (
@@ -8646,7 +8709,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
       {error ? (
         <p className="text-xs text-center py-12 px-8" style={{ color: "var(--text-muted)" }}>{error}</p>
       ) : !snd ? (
-        <p className="text-xs text-center py-12" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-12" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : (
         <div className="flex-1 overflow-y-auto pb-8">
           {snd.sourceUrl && (
@@ -8713,7 +8776,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
               className="w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90"
               style={{ background: "var(--surface)" }}
             >
-              <Bookmark size={19} color="var(--text)" fill={saved ? "var(--text)" : "none"} />
+              <PopOnTrue on={saved} kind="save"><Bookmark size={19} color="var(--text)" fill={saved ? "var(--text)" : "none"} /></PopOnTrue>
             </button>
             <button onClick={share} aria-label="Share audio" className="w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90" style={{ background: "var(--surface)" }}>
               <ShareIcon size={18} color="var(--text)" style={{ marginLeft: 1 }} />
@@ -8900,7 +8963,7 @@ function SoundPickerSheet({ onPick, onClose }) {
       <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · tap ▶ to listen", query.trim() ? "Results" : "New on Loop")}</p>
       <div className="pb-6" style={{ maxHeight: "55vh", overflowY: "auto" }}>
         {items === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : items.length === 0 ? (
           <p className="text-xs text-center py-8 px-8" style={{ color: "var(--text-muted)" }}>
             No sounds yet. Every video posted on Loop becomes a sound others can use.
@@ -9147,7 +9210,7 @@ function LoginActivityScreen({ onBack }) {
       {error ? (
         <p className="text-xs text-center py-10 px-8" style={{ color: "var(--heart)" }}>{error}</p>
       ) : rows === null ? (
-        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : (
         <>
           <p className="px-4 pt-4 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>This device</p>
@@ -9461,35 +9524,6 @@ async function healMissingCovers(posts, userId, onFixed) {
   }
 }
 
-function LoopLogo({ size = 72 }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) {
-    return (
-      <span
-        style={{
-          fontFamily: "'Sora', sans-serif",
-          fontWeight: 800,
-          fontSize: size * 0.55,
-          background: ACCENT,
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          backgroundClip: "text",
-        }}
-      >
-        Loop
-      </span>
-    );
-  }
-  return (
-    <img
-      src="/logo.png"
-      alt="Loop"
-      onError={() => setFailed(true)}
-      style={{ height: size, width: "auto", objectFit: "contain" }}
-    />
-  );
-}
-
 // Shared avatar: shows the uploaded photo if present, else the first letter
 // of the username on the accent ring. size is the outer diameter in px.
 function Avatar({ username, avatarUrl, size = 40 }) {
@@ -9792,7 +9826,7 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
           </div>
           <div className="overflow-y-auto pb-6" style={{ minHeight: 120 }}>
             {likers === null ? (
-              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
             ) : likers.length === 0 ? (
               <div className="flex flex-col items-center py-8">
                 <Heart size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -9895,7 +9929,7 @@ function InThisPostSheet({ tags, isVideo, onClose, onOpenProfile }) {
     <StorySheetShell title={isVideo ? "In this video" : "In this photo"} onClose={onClose}>
       <div className="px-4 pb-6">
         {people === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : people.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Nobody is tagged here</p>
         ) : (
@@ -10380,210 +10414,9 @@ const STICKER_Y_MIN = 14;
 const STICKER_Y_MAX = 72;
 
 // Composer: preview the picked file, optionally add a caption, publish.
-function StoryComposer({ file, onCancel, onPublished }) {
-  const [caption, setCaption] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [stickers, setStickers] = useState([]);
-  const [tray, setTray] = useState(false);
-  const [editing, setEditing] = useState(null); // sticker type being filled in
-  const stageRef = React.useRef(null);
-  const dragRef = React.useRef(null); // { id }
-
-  const addSticker = (type, data) => {
-    setEditing(null);
-    setStickers((prev) =>
-      prev.length >= MAX_STICKERS ? prev : [...prev, { id: newStickerId(), type, x: 50, y: 40 + (prev.length % 3) * 8, ...data }]
-    );
-  };
-  const moveSticker = (e) => {
-    const d = dragRef.current;
-    const box = stageRef.current?.getBoundingClientRect();
-    if (!d || !box) return;
-    const x = Math.max(STICKER_X_MIN, Math.min(STICKER_X_MAX, ((e.clientX - box.left) / box.width) * 100));
-    const y = Math.max(STICKER_Y_MIN, Math.min(STICKER_Y_MAX, ((e.clientY - box.top) / box.height) * 100));
-    setStickers((prev) => prev.map((st) => (st.id === d.id ? { ...st, x, y } : st)));
-  };
-  const isVideo = file.type.startsWith("video");
-  const previewUrl = React.useMemo(() => URL.createObjectURL(file), [file]);
-
-  useEffect(() => () => URL.revokeObjectURL(previewUrl), [previewUrl]);
-
-  const publish = async () => {
-    setBusy(true);
-    setError("");
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      setBusy(false);
-      setError("Not logged in");
-      return;
-    }
-    if ((file.type || "").startsWith("video") && file.size > maxVideoBytes()) {
-      setBusy(false);
-      setError(`That video is over ${maxVideoMb()} MB — pick a shorter one.`);
-      return;
-    }
-    const upFile = await compressImage(file, 1920);
-    const safeName = upFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const path = `${user.id}/${Date.now()}-${safeName}`;
-    const { error: upErr } = await supabase.storage.from("stories").upload(path, upFile);
-    if (upErr) {
-      setBusy(false);
-      setError(upErr.message);
-      return;
-    }
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("stories").getPublicUrl(path);
-    const prefs = getStoryPrefs();
-    const { error: insErr } = await supabase.from("stories").insert({
-      user_id: user.id,
-      media_url: publicUrl,
-      media_type: isVideo ? "video" : "photo",
-      caption: caption.trim() || null,
-      comments_disabled: !prefs.allowReplies,
-      ...(stickers.length ? { stickers: stickers.map((st) => ({ ...st, x: Math.round(st.x * 10) / 10, y: Math.round(st.y * 10) / 10 })) } : {}),
-    });
-    setBusy(false);
-    if (insErr) {
-      setError(
-        insErr.message.includes("stickers") ? "Stickers need the latest Loop SQL — run it in Supabase, or remove the stickers." : insErr.message
-      );
-      return;
-    }
-    // Tell anyone mentioned on it, the way Instagram does.
-    const mentioned = [...new Set(stickers.filter((st) => st.type === "mention" && st.user_id !== user.id).map((st) => st.user_id))];
-    if (mentioned.length) {
-      try {
-        await supabase.from("notifications").insert(mentioned.map((id) => ({ user_id: id, actor_id: user.id, type: "story_mention" })));
-      } catch {}
-    }
-    onPublished();
-  };
-
-  return (
-    <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "#000000" }}>
-      <div className="flex items-center justify-between px-4 pt-4 pb-3">
-        <button onClick={onCancel} className="p-1 -ms-1 transition-transform active:scale-90">
-          <X size={24} color="#FFFFFF" />
-        </button>
-        <span className="text-sm" style={{ color: "#FFFFFF", fontWeight: 700 }}>Your story</span>
-        <button
-          onClick={() => setTray(true)}
-          disabled={stickers.length >= MAX_STICKERS}
-          aria-label="Stickers"
-          className="p-1 -me-1 transition-transform active:scale-90"
-          style={{ opacity: stickers.length >= MAX_STICKERS ? 0.4 : 1 }}
-        >
-          <Sticker size={24} color="#FFFFFF" />
-        </button>
-      </div>
-
-      <div className="flex-1 flex items-center justify-center overflow-hidden px-3">
-        <div
-          ref={stageRef}
-          className="relative rounded-2xl overflow-hidden"
-          style={{ height: "100%", aspectRatio: "9 / 16", maxWidth: "100%", background: "#111", touchAction: "none" }}
-          onPointerMove={moveSticker}
-          onPointerUp={() => (dragRef.current = null)}
-          onPointerCancel={() => (dragRef.current = null)}
-        >
-          {isVideo ? (
-            <video src={previewUrl} className="w-full h-full object-contain" autoPlay loop muted playsInline />
-          ) : (
-            <img src={previewUrl} alt="" className="w-full h-full object-contain" />
-          )}
-          {stickers.map((st) => (
-            <div
-              key={st.id}
-              className="absolute"
-              style={{ left: `${st.x}%`, top: `${st.y}%`, transform: "translate(-50%, -50%)", touchAction: "none", cursor: "grab" }}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                dragRef.current = { id: st.id };
-                try {
-                  stageRef.current?.setPointerCapture?.(e.pointerId);
-                } catch {}
-              }}
-            >
-              <div style={{ pointerEvents: "none" }}>
-                <StickerBody st={st} mode="compose" />
-              </div>
-              <button
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => setStickers((prev) => prev.filter((x) => x.id !== st.id))}
-                aria-label="Remove sticker"
-                className="absolute -top-2.5 -end-2.5 w-6 h-6 rounded-full flex items-center justify-center"
-                style={{ background: "rgba(0,0,0,0.75)", border: "1.5px solid #fff" }}
-              >
-                <X size={12} color="#fff" />
-              </button>
-            </div>
-          ))}
-          {stickers.length > 0 && (
-            <>
-              <div
-                className="absolute pointer-events-none rounded-2xl"
-                style={{ left: "4%", right: "4%", top: "5%", bottom: "19%", border: "1.5px dashed rgba(255,255,255,0.55)" }}
-              />
-              <span
-                className="absolute left-1/2 -translate-x-1/2 text-[11px] px-2.5 py-1 rounded-full pointer-events-none whitespace-nowrap"
-                style={{ bottom: "12%", background: "rgba(0,0,0,0.55)", color: "#fff" }}
-              >
-                Drag stickers — they stay inside the dotted box
-              </span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {tray && (
-        <StorySheetShell title="Stickers" onClose={() => setTray(false)}>
-          <div className="grid grid-cols-3 gap-2.5 px-4 pb-7">
-            {STICKER_TYPES.map(({ type, label, icon: Icon }) => (
-              <button
-                key={type}
-                onClick={() => {
-                  setTray(false);
-                  setEditing(type);
-                }}
-                className="flex flex-col items-center justify-center gap-1.5 rounded-2xl py-4 transition-transform active:scale-95"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-              >
-                <Icon size={22} color="var(--text)" />
-                <span className="text-[12px]" style={{ color: "var(--text)", fontWeight: 700 }}>{label}</span>
-              </button>
-            ))}
-          </div>
-        </StorySheetShell>
-      )}
-      {editing && <StickerEditorSheet type={editing} onDone={(data) => addSticker(editing, data)} onClose={() => setEditing(null)} />}
-
-      <div className="px-4 pt-3 pb-6">
-        {error && (
-          <p className="text-xs mb-2" style={{ color: "var(--heart)" }}>{error}</p>
-        )}
-        <input
-          value={caption}
-          onChange={(e) => setCaption(e.target.value)}
-          placeholder="Add a caption..."
-          maxLength={200}
-          className="w-full rounded-full px-4 h-11 text-sm outline-none mb-3"
-          style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "#FFFFFF" }}
-        />
-        <button
-          onClick={publish}
-          disabled={busy}
-          className="w-full rounded-full h-12 text-sm transition-transform active:scale-95"
-          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
-        >
-          {busy ? "Sharing..." : "Share to story"}
-        </button>
-      </div>
-    </div>
-  );
+// The story editor itself is further down (StoryEditor).
+function StoryComposer(props) {
+  return <StoryEditor {...props} />;
 }
 
 // ---- Story stickers ----
@@ -11046,18 +10879,23 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
   };
 
   if (stickers.length === 0) return null;
+  const layers = stickers.filter((st) => st.type === "layer" && st.url);
+  const tappable = stickers.filter((st) => st.type !== "layer" && st.type !== "fx");
 
   return (
     <>
       <StickerFrame>
-        {stickers.map((st) => (
+        {layers.map((st) => (
+          <img key={st.id} src={st.url} alt="" draggable={false} className="absolute inset-0 w-full h-full pointer-events-none" style={{ objectFit: "fill" }} />
+        ))}
+        {tappable.map((st) => (
           <div
             key={st.id}
             className="absolute"
             style={{
               left: `${Math.min(STICKER_X_MAX, Math.max(STICKER_X_MIN, st.x))}%`,
               top: `${Math.min(STICKER_Y_MAX, Math.max(STICKER_Y_MIN, st.y))}%`,
-              transform: "translate(-50%, -50%)",
+              transform: `translate(-50%, -50%) rotate(${Number(st.r) || 0}deg) scale(${Math.min(4, Math.max(0.3, Number(st.s) || 1))})`,
               pointerEvents: "auto",
               zIndex: 15,
             }}
@@ -11257,7 +11095,7 @@ function StorySendSheet({ story, currentUserId, onClose }) {
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : filtered.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No one to send to yet</p>
         ) : (
@@ -11387,7 +11225,7 @@ function StoryHighlightSheet({ story, currentUserId, onClose, onDone }) {
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : highlights.length === 0 ? (
           <p className="text-xs text-center py-6 px-8" style={{ color: "var(--text-muted)" }}>
             No highlights yet. Name one above to make your first.
@@ -11511,7 +11349,7 @@ function StoryRepliesList({ story }) {
   return (
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : replies.length === 0 ? (
           <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No replies yet</p>
         ) : (
@@ -11593,7 +11431,7 @@ function StoryActivitySheet({ story, onClose }) {
       ) : (
         <div className="pb-6">
           {viewers === null ? (
-            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
           ) : viewers.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No one has watched yet</p>
           ) : (
@@ -11933,6 +11771,7 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
             ref={videoRef}
             src={story.media_url}
             className="w-full h-full object-contain"
+            style={{ filter: storyVideoFilter(story) }}
             playsInline
             autoPlay
             onLoadedMetadata={(e) => {
@@ -12032,6 +11871,12 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
           <span className="text-[11px] shrink-0" style={{ color: "rgba(255,255,255,0.7)" }}>
             {timeAgo(story.created_at)}
           </span>
+          {story.audience === "close_friends" && (
+            <span className="flex items-center gap-1 rounded-full px-2 h-5 text-[10px] shrink-0" style={{ background: "#1CD14F", color: "#FFFFFF", fontWeight: 700 }}>
+              <Star size={9} color="#FFFFFF" fill="#FFFFFF" />
+              Close friends
+            </span>
+          )}
         </button>
         <div className="flex-1" />
         {story.comments_disabled && isOwner && (
@@ -12309,33 +12154,16 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
   );
 }
 
-function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNotificationsClick, unreadCount = 0, hasNotifications = false }) {
+function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNotificationsClick, unreadCount = 0, hasNotifications = false, showCreate = false, onCreateClick }) {
   return (
-    <div className="relative flex items-center justify-center px-4 pt-4 pb-3">
-      {showNotifications && (
-        <button onClick={onNotificationsClick} aria-label="Notifications" className="absolute start-4 top-1/2 -translate-y-1/2">
-          <Bell size={21} color="var(--text)" />
-          {hasNotifications && (
-            <span
-              className="absolute -top-0.5 -end-0.5 rounded-full"
-              style={{ width: 9, height: 9, background: "#FF3040", border: "1.5px solid var(--bg)" }}
-            />
-          )}
+    <div className="relative flex items-center justify-center px-4 pt-3 pb-2.5" style={{ minHeight: 54 }}>
+      {showCreate && (
+        <button onClick={onCreateClick} aria-label="New post" className="absolute start-3 top-1/2 -translate-y-1/2 p-1.5">
+          <PlusSquare size={25} color="var(--text)" strokeWidth={1.9} />
         </button>
       )}
       {title === "Loop" ? (
-        <span
-          style={{
-            fontFamily: "'Cinzel Decorative', 'Sora', serif",
-            fontWeight: 700,
-            fontSize: 24,
-            letterSpacing: "0.5px",
-            color: "var(--wordmark)",
-            lineHeight: 1,
-          }}
-        >
-          Loop
-        </span>
+        <LoopWordmark height={34} />
       ) : (
         <h1
           className="text-xl tracking-tight"
@@ -12344,19 +12172,32 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
           {title}
         </h1>
       )}
-      {showMessages && (
-        <button onClick={onMessagesClick} aria-label="Messages" className="absolute end-4 top-1/2 -translate-y-1/2">
-          <ChatsIcon size={24} color="var(--text)" />
-          {unreadCount > 0 && (
-            <span
-              className="absolute -top-1.5 -end-1.5 rounded-full flex items-center justify-center text-[9px]"
-              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
-            >
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
-        </button>
-      )}
+      <div className="absolute end-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+        {showNotifications && (
+          <button onClick={onNotificationsClick} aria-label="Notifications" className="relative p-1.5">
+            <Bell size={24} color="var(--text)" strokeWidth={1.9} />
+            {hasNotifications && (
+              <span
+                className="absolute top-1 end-1 rounded-full"
+                style={{ width: 9, height: 9, background: "#FF3040", border: "1.5px solid var(--bg)" }}
+              />
+            )}
+          </button>
+        )}
+        {showMessages && (
+          <button onClick={onMessagesClick} aria-label="Messages" className="relative p-1.5">
+            <ChatsIcon size={24} color="var(--text)" />
+            {unreadCount > 0 && (
+              <span
+                className="absolute top-0 end-0 rounded-full flex items-center justify-center text-[9px]"
+                style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, minWidth: 16, height: 16, padding: "0 4px" }}
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -12364,7 +12205,7 @@ function TopBar({ title, showMessages, onMessagesClick, showNotifications, onNot
 // Story ring + face are defined at module scope on purpose: nesting them
 // inside StoriesBar would remount the <img> on every re-render and make
 // avatars visibly flicker.
-function StoryRing({ seen, children }) {
+function StoryRing({ seen, close = false, children }) {
   return (
     <div
       className="rounded-full flex items-center justify-center"
@@ -12373,6 +12214,8 @@ function StoryRing({ seen, children }) {
         height: 62,
         background: seen
           ? "var(--toggle-off)"
+          : close
+          ? "linear-gradient(135deg, #3BE06B 0%, #12B03C 100%)"
           : "linear-gradient(135deg, var(--ring-start) 0%, var(--ring-end) 100%)",
         padding: 2.5,
       }}
@@ -12464,6 +12307,7 @@ function StoriesBar({ onOpenProfile }) {
         avatarUrl: p?.avatar_url || null,
         items,
         allSeen: items.every((st) => seen.has(st.id)),
+        close: items.some((st) => st.audience === "close_friends" && !seen.has(st.id)),
         isSelf: uid === user.id,
         // Supreme perk: shown first among people you haven't caught up with.
         first: badgeIsActive(p) && p?.badge_tier === "gold",
@@ -12508,7 +12352,7 @@ function StoriesBar({ onOpenProfile }) {
               className="block transition-transform active:scale-95"
             >
               {myGroup ? (
-                <StoryRing seen={myGroup.allSeen}>
+                <StoryRing seen={myGroup.allSeen} close={myGroup.close}>
                   <StoryFace username={me?.username} avatarUrl={me?.avatar_url} />
                 </StoryRing>
               ) : (
@@ -12547,7 +12391,7 @@ function StoriesBar({ onOpenProfile }) {
                 className="flex flex-col items-center gap-1.5 shrink-0 transition-transform active:scale-95"
                 style={{ width: 62 }}
               >
-                <StoryRing seen={g.allSeen}>
+                <StoryRing seen={g.allSeen} close={g.close}>
                   <StoryFace username={g.username} avatarUrl={g.avatarUrl} />
                 </StoryRing>
                 <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>
@@ -12646,7 +12490,7 @@ function StandaloneStoryViewer({ profileId, highlight, currentUserId, onClose, o
   if (group === undefined) {
     return (
       <div className="fixed inset-0 z-[90] flex items-center justify-center" style={{ background: "#000" }}>
-        <span className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}>Loading…</span>
+        <span className="text-xs" style={{ color: "rgba(255,255,255,0.7)" }}><LoopSpinner /></span>
       </div>
     );
   }
@@ -12698,10 +12542,10 @@ function PostMediaCarousel({ media }) {
         ref={trackRef}
         onScroll={onScroll}
         className="w-full h-full flex overflow-x-auto"
-        style={{ scrollSnapType: "x mandatory", scrollbarWidth: "none" }}
+        style={{ scrollSnapType: "x mandatory", scrollbarWidth: "none", overscrollBehaviorX: "contain" }}
       >
         {media.map((m) => (
-          <div key={m.id} className="w-full h-full shrink-0" style={{ scrollSnapAlign: "start" }}>
+          <div key={m.id} className="w-full h-full shrink-0" style={{ scrollSnapAlign: "start", scrollSnapStop: "always" }}>
             {m.media_type === "photo" ? (
               <img src={m.media_url} alt="" className="w-full h-full object-cover" draggable={false} />
             ) : (
@@ -12886,6 +12730,7 @@ function PostAuthorLine({ post, onOpenProfile, light = false, className = "text-
       <button onClick={() => onOpenProfile?.(post.user_id)} className="truncate text-start">{post.username}</button>
       {post.verified && <VerifiedBadge size={13} tier={post.tier} />}
       {post.isFavorite && <Star size={12} color="#F5B800" fill="#F5B800" className="shrink-0" />}
+      <AiInfoChip postId={post.id} light={light} />
       {collabs.length > 0 && (
         <>
           <span style={{ fontWeight: 400, opacity: 0.85 }}>and</span>
@@ -12945,7 +12790,7 @@ function AboutAccountSheet({ userId, onClose, onOpenProfile }) {
     <StorySheetShell title="About this account" onClose={onClose}>
       <div className="px-4 pb-6">
         {!info ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : info.error ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>{info.error}</p>
         ) : (
@@ -13169,7 +13014,7 @@ function FeedPhotoTap({ onLike, children }) {
   );
 }
 
-function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport, onOpenProfile, onOpenReel }) {
+function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpenReport, onOpenProfile, onOpenReel, onCreate }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -13678,8 +13523,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     <div className="flex-1 overflow-y-auto pb-4">
       <TopBar
         title="Loop"
-        showMessages
-        onMessagesClick={onOpenMessages}
+        showCreate={!!onCreate}
+        onCreateClick={onCreate}
         showNotifications
         onNotificationsClick={onOpenNotifications}
         unreadCount={unreadCount}
@@ -13697,7 +13542,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
 
       {loading ? (
         <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
-          Loading...
+          <LoopSpinner />
         </p>
       ) : loadError ? (
         <p className="text-center text-xs py-10 px-6" style={{ color: "var(--accent-start)" }}>
@@ -13828,7 +13673,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                     }}
                     className="h-7 flex items-center justify-center transition-transform active:scale-90"
                   >
-                    <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
+                    <PopOnTrue on={post.saved} kind="save"><Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} /></PopOnTrue>
                   </button>
                   <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                     {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
@@ -13846,7 +13691,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                   onTouchMove={() => clearTimeout(pressTimers.current[post.id])}
                   className="h-8 flex items-center justify-center transition-transform active:scale-90"
                 >
-                  <Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} />
+                  <PopOnTrue on={post.liked} kind="like"><Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} /></PopOnTrue>
                 </button>
                 <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                   {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
@@ -13868,7 +13713,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
                 </div>
                 <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                   <button onClick={() => toggleRepost(post)} className="h-7 flex items-center justify-center">
-                    <RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} />
+                    <PopOnTrue on={post.reposted} kind="repost"><RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} /></PopOnTrue>
                   </button>
                   <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                     {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
@@ -13922,7 +13767,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       {!loading && posts.length > 0 && (
         <div ref={sentinelRef} className="flex justify-center py-6">
           {loadingMore ? (
-            <div className="w-6 h-6 rounded-full animate-spin" style={{ border: "2px solid var(--border)", borderTopColor: "var(--text)" }} />
+            <LoopSpinner />
           ) : feedRef.current.done ? (
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>You've seen everything for now</span>
           ) : null}
@@ -14066,7 +13911,7 @@ function useTapDetector(onSingle, onDouble, delay = 260) {
 function HeartBurst({ burstKey, size = 96 }) {
   if (!burstKey) return null;
   return (
-    <div key={burstKey} className="loop-heart-burst">
+    <div key={burstKey} className="loop-heart-burst" style={{ "--tilt": `${((burstKey % 7) - 3) * 4}deg` }}>
       <Heart size={size} color="#FFFFFF" fill="#FFFFFF" strokeWidth={0} />
     </div>
   );
@@ -14507,7 +14352,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg-sunken)" }}>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       </div>
     );
   }
@@ -14912,16 +14757,15 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
           {reel.user_id !== userId && (
             <button
               onClick={toggleFollow}
-              className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] shrink-0 transition-transform active:scale-95"
+              className="flex items-center rounded-lg px-3 h-[30px] text-[13px] shrink-0 transition-transform active:scale-95"
               style={{
-                background: isFollowing ? "rgba(255,255,255,0.14)" : "#FFFFFF",
-                border: isFollowing ? "1px solid rgba(255,255,255,0.55)" : "none",
-                color: isFollowing ? "#FFFFFF" : "#000000",
-                fontWeight: 700,
-                backdropFilter: isFollowing ? "blur(8px)" : "none",
+                background: "transparent",
+                border: `1px solid ${isFollowing ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.92)"}`,
+                color: "#FFFFFF",
+                fontWeight: 600,
+                textShadow: "0 1px 3px rgba(0,0,0,0.5)",
               }}
             >
-              {isFollowing ? <UserCheck size={12} /> : <UserPlus size={12} />}
               {isFollowing ? "Following" : "Follow"}
             </button>
           )}
@@ -14970,7 +14814,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       >
         <div className="relative flex flex-col items-center">
           {expanded && (
-            <div className="absolute bottom-[100px] flex flex-col items-center gap-4" style={{ animation: "loopSheetUp 0.18s ease-out" }}>
+            <div className="flex flex-col items-center gap-[18px] mb-[18px]" style={{ animation: "loopSheetUp 0.18s ease-out" }}>
               <button
                 onClick={toggleLike}
                 onTouchStart={(e) => {
@@ -14980,7 +14824,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                 className="flex flex-col items-center transition-transform active:scale-90"
                 style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
               >
-                <Heart size={30} color={reel.liked ? "#ED4956" : "#FFFFFF"} fill={reel.liked ? "#ED4956" : "none"} strokeWidth={2} />
+                <PopOnTrue on={reel.liked} kind="like"><Heart size={30} color={reel.liked ? "#ED4956" : "#FFFFFF"} fill={reel.liked ? "#ED4956" : "none"} strokeWidth={2} /></PopOnTrue>
                 <RailCount show={countPrefs.likes && !reel.hide_likes} n={reel.likeCount} />
               </button>
               {!reel.comments_disabled ? (
@@ -15003,7 +14847,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                 className="flex flex-col items-center transition-transform active:scale-90"
                 style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
               >
-                <RepostIcon size={30} color={reel.reposted ? "var(--accent-end)" : "#FFFFFF"} strokeWidth={2} active={reel.reposted} />
+                <PopOnTrue on={reel.reposted} kind="repost"><RepostIcon size={30} color={reel.reposted ? "var(--accent-end)" : "#FFFFFF"} strokeWidth={2} active={reel.reposted} /></PopOnTrue>
                 <RailCount show={countPrefs.reposts && !reel.hide_reposts} n={reel.repostCount} />
               </button>
               <button
@@ -15041,7 +14885,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                 className="flex flex-col items-center transition-transform active:scale-90"
                 style={{ filter: "drop-shadow(0 1px 4px rgba(0,0,0,0.7))" }}
               >
-                <Bookmark size={28} color="#FFFFFF" fill={reel.saved ? "#FFFFFF" : "none"} strokeWidth={2} />
+                <PopOnTrue on={reel.saved} kind="save"><Bookmark size={28} color="#FFFFFF" fill={reel.saved ? "#FFFFFF" : "none"} strokeWidth={2} /></PopOnTrue>
                 <RailCount show={countPrefs.saves && !reel.hide_saves} n={reel.saveCount} />
               </button>
             </div>
@@ -15058,7 +14902,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
               <button
                 onClick={() => (reel.sound ? setSoundOpen(reel.sound.id) : showToast(`Original audio · ${reel.username}`))}
                 aria-label={reel.sound ? `${reel.sound.title} · ${reel.sound.ownerName}` : "Original audio"}
-                className="relative w-10 h-10 rounded-xl mb-3 overflow-hidden transition-transform active:scale-90"
+                className="relative w-10 h-10 rounded-xl mb-4 overflow-hidden transition-transform active:scale-90"
                 style={{ border: "2px solid rgba(255,255,255,0.92)", boxShadow: "0 2px 10px rgba(0,0,0,0.45)", background: "rgba(0,0,0,0.45)" }}
               >
                 {pic && <img src={pic} alt="" className="absolute inset-0 w-full h-full object-cover" />}
@@ -15224,7 +15068,8 @@ function ReelCommentsSheet({
   const [menuFor, setMenuFor] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
-  const [attachment, setAttachment] = useState(null); // { file, url }
+  const [attachment, setAttachment] = useState(null); // { file, url } or { gif: { id, url }, url }
+  const [gifOpen, setGifOpen] = useState(false);
   const attachRef = React.useRef(null);
   const inputRef = React.useRef(null);
   const [expanded, setExpanded] = useState(new Set()); // threads with replies open
@@ -15335,7 +15180,10 @@ function ReelCommentsSheet({
     setPosting(true);
 
     let imageUrl = null;
-    if (attachment) {
+    if (attachment?.gif) {
+      imageUrl = attachment.gif.url;
+      if (attachment.gif.id) Promise.resolve(supabase.rpc("gif_use", { p_id: attachment.gif.id })).catch(() => {});
+    } else if (attachment) {
       const upFile = await compressImage(attachment.file, 1080);
       const safeName = upFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const path = `${currentUserId}/${Date.now()}-${safeName}`;
@@ -15593,7 +15441,7 @@ function ReelCommentsSheet({
 
         <div className="flex-1 overflow-y-auto px-4 pt-3">
           {loading ? (
-            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
           ) : topLevel.length === 0 ? (
             <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No comments yet</p>
           ) : (
@@ -15748,6 +15596,29 @@ function ReelCommentsSheet({
                 />
                 <button
                   disabled={posting}
+                  onClick={() => setGifOpen(true)}
+                  aria-label="GIF"
+                  className="pb-2 transition-transform active:scale-90"
+                >
+                  <span
+                    className="inline-flex items-center justify-center rounded-[5px] text-[9px] px-1"
+                    style={{ height: 18, border: `1.7px solid ${attachment?.gif ? "var(--accent-solid)" : "var(--text-muted)"}`, color: attachment?.gif ? "var(--accent-solid)" : "var(--text-muted)", fontWeight: 800, letterSpacing: 0.3 }}
+                  >
+                    GIF
+                  </span>
+                </button>
+                {gifOpen && (
+                  <GifPickerSheet
+                    onClose={() => setGifOpen(false)}
+                    onPick={(g) => {
+                      if (attachment && !attachment.gif) URL.revokeObjectURL(attachment.url);
+                      setAttachment({ gif: g, url: g.url });
+                      setGifOpen(false);
+                    }}
+                  />
+                )}
+                <button
+                  disabled={posting}
                   onClick={() => attachRef.current?.click()}
                   title="Add a photo or GIF"
                   className="pb-2 transition-transform active:scale-90"
@@ -15768,6 +15639,306 @@ function ReelCommentsSheet({
         </div>
       </div>
     </>
+  );
+}
+
+// ---- GIFs in comments ----
+// Anyone can add a GIF from their phone; it then joins Loop's shared GIF
+// library so everyone can use it. A GIF can be reported, and admins or
+// moderators can take a bad one down everywhere at once.
+const GIF_MAX_BYTES = 8 * 1024 * 1024;
+const isLibraryGif = (url) => /\/comments\/[0-9a-f-]{36}\/gifs\//i.test(String(url || ""));
+const GIF_REASONS = ["Nudity or sexual content", "Violence or gore", "Hate or bullying", "Spam", "Something else"];
+async function reportGifByUrl(url, reason = "Reported from a comment") {
+  const { error } = await supabase.rpc("gif_report_url", { p_url: url, p_reason: reason });
+  if (error) return /gif_report_url|function/i.test(error.message) ? "GIF reports start working once loop-step-21.sql has been run." : error.message;
+  return "Thanks — a moderator will look at it.";
+}
+function gifSize(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const i = new Image();
+    i.onload = () => {
+      resolve({ w: i.naturalWidth, h: i.naturalHeight });
+      URL.revokeObjectURL(url);
+    };
+    i.onerror = () => {
+      resolve(null);
+      URL.revokeObjectURL(url);
+    };
+    i.src = url;
+  });
+}
+
+function GifPickerSheet({ onPick, onClose }) {
+  const [tab, setTab] = useState("popular");
+  const [list, setList] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState("");
+  const [reporting, setReporting] = useState(null);
+  const fileRef = React.useRef(null);
+  const hold = React.useRef(null);
+  const held = React.useRef(false);
+
+  useEffect(() => {
+    let off = false;
+    setList(null);
+    setError("");
+    supabase.rpc("gif_list", { p_sort: tab, p_limit: 45 }).then(({ data, error: err }) => {
+      if (off) return;
+      if (err) {
+        setError(/gif_list|function/i.test(err.message) ? "GIFs start working once loop-step-21.sql has been run." : err.message);
+        setList([]);
+        return;
+      }
+      setList(data || []);
+    });
+    return () => {
+      off = true;
+    };
+  }, [tab]);
+
+  const flashNote = (m) => {
+    setNote(m);
+    setTimeout(() => setNote(""), 2400);
+  };
+
+  const upload = async (file) => {
+    setError("");
+    if (!file) return;
+    if (file.type !== "image/gif") {
+      setError("Pick a GIF file (it ends in .gif).");
+      return;
+    }
+    if (file.size > GIF_MAX_BYTES) {
+      setError("That GIF is over 8 MB — pick a smaller one.");
+      return;
+    }
+    setBusy("Adding your GIF…");
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not logged in");
+      const dims = (await gifSize(file)) || { w: 0, h: 0 };
+      const path = `${user.id}/gifs/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.gif`;
+      const { error: upErr } = await supabase.storage.from("comments").upload(path, file, { contentType: "image/gif" });
+      if (upErr) throw new Error(upErr.message);
+      const url = supabase.storage.from("comments").getPublicUrl(path).data.publicUrl;
+      const { data, error: addErr } = await supabase.rpc("gif_add", { p_url: url, p_width: dims.w, p_height: dims.h, p_size: file.size });
+      setBusy("");
+      if (addErr) {
+        // Not in the library yet (old database) — still usable in this comment.
+        if (/gif_add|function/i.test(addErr.message)) {
+          onPick({ id: null, url });
+          return;
+        }
+        throw new Error(/too_many_gifs/.test(addErr.message) ? "You've added a lot of GIFs today — try again tomorrow." : addErr.message);
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      onPick({ id: row?.id || null, url });
+    } catch (e) {
+      setBusy("");
+      setError(e.message || "That GIF didn't upload");
+    }
+  };
+
+  const report = async (g, reason) => {
+    setReporting(null);
+    const { error: err } = await supabase.rpc("gif_report", { p_id: g.id, p_reason: reason });
+    flashNote(err ? err.message : "Thanks — a moderator will look at it.");
+    if (!err) setList((prev) => (prev || []).filter((x) => x.id !== g.id));
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[72]" style={{ background: "rgba(0,0,0,0.6)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
+      <div
+        className="fixed start-0 end-0 bottom-0 z-[73] rounded-t-3xl flex flex-col"
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", height: "min(68dvh, 560px)", animation: "loopSheetUp 0.2s ease-out", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        data-no-swipe=""
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1 shrink-0">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        <div className="flex items-center justify-between px-4 pb-2 shrink-0">
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>GIFs</span>
+          <button onClick={onClose} aria-label="Close">
+            <X size={18} color="var(--text-muted)" />
+          </button>
+        </div>
+        <div className="flex items-center gap-1.5 px-4 pb-2.5 shrink-0">
+          {[
+            ["popular", "Popular"],
+            ["new", "New"],
+            ["mine", "Yours"],
+          ].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className="rounded-full px-3 h-8 text-xs"
+              style={{ background: tab === k ? ACCENT : "var(--bg-sunken)", color: tab === k ? "var(--on-accent)" : "var(--text-muted)", border: tab === k ? "none" : "1px solid var(--border)", fontWeight: 600 }}
+            >
+              {label}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <input ref={fileRef} type="file" accept="image/gif" className="hidden" onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            upload(f);
+          }} />
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={!!busy}
+            className="flex items-center gap-1.5 rounded-full px-3 h-8 text-xs transition-transform active:scale-95"
+            style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 700 }}
+          >
+            <Plus size={14} /> Add GIF
+          </button>
+        </div>
+        {(error || note) && (
+          <p className="px-4 pb-2 text-[12px] shrink-0" style={{ color: error ? "var(--heart)" : "var(--text-muted)", fontWeight: 600 }}>{error || note}</p>
+        )}
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3" style={{ overscrollBehavior: "contain" }}>
+          {list === null ? (
+            <div className="flex justify-center py-10">
+              <LoopSpinner />
+            </div>
+          ) : list.length === 0 && !error ? (
+            <div className="text-center py-10 px-6">
+              <p className="text-[13px] mb-1" style={{ color: "var(--text)", fontWeight: 700 }}>{tab === "mine" ? "You haven't added any GIFs" : "No GIFs yet"}</p>
+              <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Add one from your phone — everyone on Loop can use it after that.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-1.5">
+              {list.map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => {
+                    if (held.current) {
+                      held.current = false;
+                      return;
+                    }
+                    onPick(g);
+                  }}
+                  onPointerDown={() => {
+                    held.current = false;
+                    clearTimeout(hold.current);
+                    hold.current = setTimeout(() => {
+                      held.current = true;
+                      setReporting(g);
+                    }, 500);
+                  }}
+                  onPointerUp={() => clearTimeout(hold.current)}
+                  onPointerLeave={() => clearTimeout(hold.current)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setReporting(g);
+                  }}
+                  className="relative rounded-xl overflow-hidden"
+                  style={{ aspectRatio: "1 / 1", background: "var(--bg-sunken)", WebkitTouchCallout: "none" }}
+                >
+                  <img src={g.url} alt="" loading="lazy" decoding="async" draggable={false} className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="text-center text-[11px] mt-3" style={{ color: "var(--text-muted)" }}>Press and hold a GIF to report it.</p>
+        </div>
+        {busy && (
+          <div className="absolute inset-0 rounded-t-3xl flex flex-col items-center justify-center gap-3" style={{ background: "rgba(0,0,0,0.55)" }}>
+            <LoopSpinner size={44} color="rgba(255,255,255,0.7)" />
+            <p className="text-[13px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{busy}</p>
+          </div>
+        )}
+      </div>
+      {reporting && (
+        <>
+        <div className="fixed inset-0 z-[75]" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setReporting(null)} />
+        <div className="fixed start-0 end-0 bottom-0 z-[76] rounded-t-3xl" style={{ background: "var(--bg)", border: "1px solid var(--border)", animation: "loopSheetUp 0.2s ease-out" }}>
+          <div className="flex items-center justify-between px-4 pt-4 pb-2">
+            <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Report this GIF</span>
+            <button onClick={() => setReporting(null)} aria-label="Close">
+              <X size={18} color="var(--text-muted)" />
+            </button>
+          </div>
+          <div className="px-4 pb-2">
+            <img src={reporting.url} alt="" className="w-24 h-24 rounded-xl object-cover mx-auto mb-2" />
+            <p className="text-[12px] text-center mb-1" style={{ color: "var(--text-muted)" }}>Why are you reporting it? The person who added it won't know it was you.</p>
+          </div>
+          <div className="pb-6">
+            {GIF_REASONS.map((r) => (
+              <StoryMenuRow key={r} icon={<Flag size={16} color="var(--text-muted)" />} label={r} onClick={() => report(reporting, r)} />
+            ))}
+          </div>
+        </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// Moderation → GIFs: reported GIFs, most-reported first.
+function GifModeration({ flash }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(null);
+  const load = async () => {
+    setRows(null);
+    const { data, error: err } = await supabase.rpc("mod_list_gif_reports");
+    if (err) {
+      setError(/mod_list_gif_reports|function/i.test(err.message) ? "GIF moderation starts working once loop-step-21.sql has been run." : err.message);
+      setRows([]);
+      return;
+    }
+    setError("");
+    setRows(data || []);
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const act = async (fn, g, done, confirmText) => {
+    if (confirmText && !window.confirm(trText(confirmText))) return;
+    setBusy(g.gif_id);
+    const { error: err } = await supabase.rpc(fn, { p_id: g.gif_id });
+    setBusy(null);
+    flash?.(err ? err.message : done);
+    if (!err) load();
+  };
+  if (rows === null)
+    return (
+      <div className="flex justify-center py-10">
+        <LoopSpinner />
+      </div>
+    );
+  return (
+    <div>
+      {error && <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>{error}</p>}
+      {rows.length === 0 && !error && <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No reported GIFs</p>}
+      {rows.map((g) => (
+        <div key={g.gif_id} className="flex gap-3 rounded-2xl p-3 mb-2.5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <img src={g.url} alt="" className="w-20 h-20 rounded-xl object-cover shrink-0" style={{ opacity: g.hidden ? 0.5 : 1 }} />
+          <div className="flex-1 min-w-0">
+            <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>
+              {trJoin("{0} reports", g.reports)}
+              {g.hidden && <span className="ms-1.5 text-[11px]" style={{ color: "var(--heart)" }}>· hidden</span>}
+            </p>
+            <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>{(g.reasons || []).join(" · ")}</p>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("Added by {0}", "@" + (g.uploader || "?"))} · {trJoin("Used {0} times", g.uses || 0)}</p>
+            <div className="flex gap-2 mt-2">
+              <button disabled={busy === g.gif_id} onClick={() => act("mod_remove_gif", g, "GIF removed everywhere", "Remove this GIF from Loop and from every comment that uses it?")} className="rounded-lg px-3 h-8 text-xs" style={{ color: "var(--heart)", border: "1px solid var(--heart)", fontWeight: 700 }}>
+                Remove
+              </button>
+              <button disabled={busy === g.gif_id} onClick={() => act("mod_keep_gif", g, "Kept — reports cleared")} className="rounded-lg px-3 h-8 text-xs" style={{ background: "var(--bg-sunken)", color: "var(--text)", border: "1px solid var(--border)", fontWeight: 700 }}>
+                Keep
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -16029,6 +16200,7 @@ function CommentRow({
 // Long-press sheet for a comment.
 function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onCopy, onEdit, onDelete, onReport, onPin }) {
   const editable = isOwn && canEditComment(comment);
+  const [gifNote, setGifNote] = useState("");
   return (
     <StorySheetShell title="Comment" onClose={onClose}>
       <div className="px-4 pb-2">
@@ -16052,6 +16224,10 @@ function CommentActionSheet({ comment, isOwn, isPostOwner, onClose, onReply, onC
         )}
         {(isOwn || isPostOwner) && <StoryMenuRow icon={<Trash2 size={17} color="var(--heart)" />} label="Delete" danger onClick={onDelete} />}
         {!isOwn && <StoryMenuRow icon={<Flag size={17} color="var(--heart)" />} label="Report" danger onClick={onReport} />}
+        {!isOwn && isLibraryGif(comment.image_url) && (
+          <StoryMenuRow icon={<Flag size={17} color="var(--heart)" />} label="Report GIF" danger onClick={async () => setGifNote(await reportGifByUrl(comment.image_url))} />
+        )}
+        {gifNote && <p className="px-4 pt-1 text-[12px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{gifNote}</p>}
       </div>
     </StorySheetShell>
   );
@@ -16759,6 +16935,2314 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
   );
 }
 
+// ---- Photo filters and adjustments ----
+// One small WebGL program does every filter and adjustment in a single
+// pass, so sliders move smoothly even on modest phones. If a phone has no
+// WebGL, the same edits are drawn with the browser's own canvas filters.
+const FX_TOOLS = [
+  { key: "brightness", name: "Brightness", min: -100, max: 100 },
+  { key: "contrast", name: "Contrast", min: -100, max: 100 },
+  { key: "saturation", name: "Saturation", min: -100, max: 100 },
+  { key: "warmth", name: "Warmth", min: -100, max: 100 },
+  { key: "fade", name: "Fade", min: 0, max: 100 },
+  { key: "highlights", name: "Highlights", min: -100, max: 100 },
+  { key: "shadows", name: "Shadows", min: -100, max: 100 },
+  { key: "vignette", name: "Vignette", min: 0, max: 100 },
+  { key: "sharpen", name: "Sharpen", min: 0, max: 100 },
+  { key: "grain", name: "Grain", min: 0, max: 100 },
+];
+// Loop's own looks, named after places and things from home.
+const FX_FILTERS = [
+  { key: "normal", name: "Normal", p: {} },
+  { key: "dhaka", name: "Dhaka", p: { contrast: 18, saturation: 14, warmth: 8, vignette: 16 } },
+  { key: "sylhet", name: "Sylhet", p: { saturation: 22, warmth: -8, shadows: 14, lift: [0, 0.035, 0.01] } },
+  { key: "coxs", name: "Cox's", p: { brightness: 12, warmth: -16, fade: 12, saturation: 8, gain: [0.98, 1.0, 1.05] } },
+  { key: "padma", name: "Padma", p: { warmth: 20, fade: 18, contrast: -8, lift: [0.05, 0.025, 0] } },
+  { key: "monsoon", name: "Monsoon", p: { saturation: -28, warmth: -20, contrast: 12, fade: 10 } },
+  { key: "golden", name: "Golden", p: { warmth: 32, brightness: 6, highlights: -12, saturation: 10, gain: [1.04, 1.0, 0.94] } },
+  { key: "shapla", name: "Shapla", p: { brightness: 8, saturation: -6, fade: 14, gain: [1.05, 0.98, 1.03] } },
+  { key: "jamdani", name: "Jamdani", p: { contrast: 22, saturation: -14, sepia: 0.22, vignette: 24 } },
+  { key: "rickshaw", name: "Rickshaw", p: { saturation: 42, contrast: 14, brightness: 4 } },
+  { key: "sundarban", name: "Sundarban", p: { saturation: 16, warmth: -6, shadows: -12, vignette: 30, lift: [0, 0.03, 0.015] } },
+  { key: "kuakata", name: "Kuakata", p: { warmth: 24, highlights: 14, fade: 8, lift: [0.05, 0.015, 0.04] } },
+  { key: "boishakh", name: "Boishakh", p: { saturation: 30, warmth: 10, contrast: 12, gain: [1.06, 0.99, 0.95] } },
+  { key: "noir", name: "Noir", p: { mono: 1, contrast: 30, vignette: 26 } },
+  { key: "mono", name: "Mono", p: { mono: 1, fade: 12 } },
+];
+const FX_EMPTY = { filter: "normal", strength: 100, adj: {}, crop: { k: 0, angle: 0, z: 1, tx: 0, ty: 0 } };
+function fxIsDefault(ed) {
+  if (!ed) return true;
+  const adjOn = Object.values(ed.adj || {}).some((v) => Math.abs(Number(v) || 0) > 0.01);
+  const c = ed.crop || {};
+  const cropOn = (c.k || 0) % 4 !== 0 || Math.abs(c.angle || 0) > 0.01 || Math.abs((c.z || 1) - 1) > 0.001 || Math.abs(c.tx || 0) > 0.0005 || Math.abs(c.ty || 0) > 0.0005;
+  return !adjOn && !cropOn && (ed.filter || "normal") === "normal";
+}
+// The numbers the drawing uses: the filter (at its strength) plus your own sliders.
+function fxParams(ed, { skipLook = false } = {}) {
+  const f = FX_FILTERS.find((x) => x.key === (ed?.filter || "normal")) || FX_FILTERS[0];
+  const k = skipLook ? 0 : Math.max(0, Math.min(1, (ed?.strength ?? 100) / 100));
+  const adj = skipLook ? {} : ed?.adj || {};
+  const val = (key) => (Number(adj[key]) || 0) + k * (Number(f.p[key]) || 0);
+  const mixv = (v, d) => (v ? v.map((x, i) => d[i] + (x - d[i]) * k) : d);
+  return {
+    brightness: val("brightness") / 100,
+    contrast: val("contrast") / 100,
+    saturation: val("saturation") / 100,
+    warmth: val("warmth") / 100,
+    fade: Math.max(0, val("fade") / 100),
+    highlights: val("highlights") / 100,
+    shadows: val("shadows") / 100,
+    vignette: Math.max(0, val("vignette") / 100),
+    sharpen: Math.max(0, val("sharpen") / 100),
+    grain: Math.max(0, val("grain") / 100),
+    mono: k * (f.p.mono || 0),
+    sepia: k * (f.p.sepia || 0),
+    lift: mixv(f.p.lift, [0, 0, 0]),
+    gain: mixv(f.p.gain, [1, 1, 1]),
+  };
+}
+
+// ---- Crop: where the frame sits on the (turned) photo ----
+// The frame is aspect × 1 units; the photo is scaled so it always covers
+// the frame, whatever the zoom, turn and straightening.
+function fxCropGeom(srcW, srcH, aspect, crop) {
+  const k = (((crop?.k || 0) % 4) + 4) % 4;
+  const rw = k % 2 ? srcH : srcW;
+  const rh = k % 2 ? srcW : srcH;
+  const ar = rw / rh;
+  const th = ((crop?.angle || 0) * Math.PI) / 180;
+  const c = Math.abs(Math.cos(th));
+  const s = Math.abs(Math.sin(th));
+  const wb = aspect * c + s;
+  const hb = aspect * s + c;
+  const base = Math.max(wb / ar, hb);
+  const scale = base * Math.max(1, crop?.z || 1);
+  return { k, ar, th, scale, rw, rh };
+}
+// Output point (u, v in 0–1) → photo point (0–1 of the original file).
+function fxMapPoint(g, aspect, tx, ty, u, v) {
+  const fx = (u - 0.5) * aspect - tx;
+  const fy = v - 0.5 - ty;
+  const cs = Math.cos(-g.th);
+  const sn = Math.sin(-g.th);
+  const px = fx * cs - fy * sn;
+  const py = fx * sn + fy * cs;
+  const gx = px / (g.ar * g.scale) + 0.5;
+  const gy = py / g.scale + 0.5;
+  if (g.k === 1) return [gy, 1 - gx];
+  if (g.k === 2) return [1 - gx, 1 - gy];
+  if (g.k === 3) return [1 - gy, gx];
+  return [gx, gy];
+}
+function fxCropFits(g, aspect, tx, ty) {
+  for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+    const [x, y] = fxMapPoint(g, aspect, tx, ty, u, v);
+    if (x < -1e-4 || x > 1 + 1e-4 || y < -1e-4 || y > 1 + 1e-4) return false;
+  }
+  return true;
+}
+// Keep the frame on the photo when it is dragged too far.
+function fxClampPan(srcW, srcH, aspect, crop) {
+  const g = fxCropGeom(srcW, srcH, aspect, crop);
+  let { tx = 0, ty = 0 } = crop;
+  if (fxCropFits(g, aspect, tx, ty)) return { ...crop, tx, ty };
+  const fit = (a, b, test) => {
+    let lo = a;
+    let hi = b;
+    for (let i = 0; i < 18; i++) {
+      const mid = (lo + hi) / 2;
+      if (test(mid)) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const x2 = fit(0, 1, (t) => fxCropFits(g, aspect, tx * t, 0));
+  tx = tx * x2;
+  const y2 = fit(0, 1, (t) => fxCropFits(g, aspect, tx, ty * t));
+  ty = ty * y2;
+  if (!fxCropFits(g, aspect, tx, ty)) {
+    tx = 0;
+    ty = 0;
+  }
+  return { ...crop, tx, ty };
+}
+function fxAffine(srcW, srcH, aspect, crop) {
+  const g = fxCropGeom(srcW, srcH, aspect, crop);
+  const o = fxMapPoint(g, aspect, crop?.tx || 0, crop?.ty || 0, 0, 0);
+  const x = fxMapPoint(g, aspect, crop?.tx || 0, crop?.ty || 0, 1, 0);
+  const y = fxMapPoint(g, aspect, crop?.tx || 0, crop?.ty || 0, 0, 1);
+  return { o, ux: [x[0] - o[0], x[1] - o[1]], vy: [y[0] - o[0], y[1] - o[1]], scale: g.scale, rh: g.rh };
+}
+
+const FX_VERT = `
+attribute vec2 a_pos;
+uniform mat3 u_map;
+varying vec2 v_uv;
+varying vec2 v_out;
+void main() {
+  v_out = vec2((a_pos.x + 1.0) * 0.5, (1.0 - a_pos.y) * 0.5);
+  v_uv = (u_map * vec3(v_out, 1.0)).xy;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+const FX_FRAG = `
+precision highp float;
+varying vec2 v_uv;
+varying vec2 v_out;
+uniform sampler2D u_img;
+uniform vec2 u_px;
+uniform vec2 u_size;
+uniform float u_bright, u_contrast, u_sat, u_warm, u_fade, u_high, u_shadow, u_vig, u_sharp, u_grain, u_mono, u_sepia;
+uniform vec3 u_lift, u_gain;
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+void main() {
+  vec3 c = texture2D(u_img, v_uv).rgb;
+  if (u_sharp > 0.001) {
+    vec3 n = texture2D(u_img, v_uv + vec2(u_px.x, 0.0)).rgb + texture2D(u_img, v_uv - vec2(u_px.x, 0.0)).rgb
+           + texture2D(u_img, v_uv + vec2(0.0, u_px.y)).rgb + texture2D(u_img, v_uv - vec2(0.0, u_px.y)).rgb;
+    c = c + (c - n * 0.25) * u_sharp * 1.6;
+  }
+  c = clamp(c, 0.0, 1.0);
+  if (u_bright > 0.0) c = mix(c, 1.0 - (1.0 - c) * (1.0 - c), u_bright * 0.85);
+  else c = mix(c, c * c, -u_bright * 0.85);
+  c = (c - 0.5) * (1.0 + u_contrast * 0.65) + 0.5;
+  float L = clamp(luma(c), 0.0, 1.0);
+  c += u_high * 0.24 * smoothstep(0.45, 1.0, L);
+  c += u_shadow * 0.24 * (1.0 - smoothstep(0.0, 0.55, L));
+  c.r += u_warm * 0.075;
+  c.g += u_warm * 0.012;
+  c.b -= u_warm * 0.075;
+  L = luma(c);
+  c = mix(vec3(L), c, 1.0 + u_sat);
+  vec3 sep = vec3(dot(c, vec3(0.393, 0.769, 0.189)), dot(c, vec3(0.349, 0.686, 0.168)), dot(c, vec3(0.272, 0.534, 0.131)));
+  c = mix(c, sep, u_sepia);
+  c = mix(c, vec3(luma(c)), u_mono);
+  L = clamp(luma(c), 0.0, 1.0);
+  c += u_lift * (1.0 - L);
+  c *= mix(vec3(1.0), u_gain, L);
+  c = mix(c, c * 0.84 + 0.12, u_fade);
+  vec2 d = (v_out - 0.5) * 2.0 * vec2(u_size.x, u_size.y) / max(u_size.x, u_size.y);
+  c *= 1.0 - u_vig * 0.78 * smoothstep(0.42, 1.38, length(d));
+  if (u_grain > 0.001) {
+    float r = fract(sin(dot(floor(v_out * u_size), vec2(12.9898, 78.233))) * 43758.5453);
+    c += (r - 0.5) * u_grain * 0.17;
+  }
+  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`;
+
+// A drawing surface for one canvas.
+function createFxRenderer(canvas) {
+  let gl = null;
+  try {
+    gl = canvas.getContext("webgl", { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false }) || canvas.getContext("experimental-webgl", { preserveDrawingBuffer: true });
+  } catch {
+    gl = null;
+  }
+  if (!gl) return createFx2dRenderer(canvas);
+  const sh = (type, code) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, code);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || "shader");
+    return s;
+  };
+  let prog;
+  try {
+    prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, FX_VERT));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FX_FRAG));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("link");
+  } catch {
+    return createFx2dRenderer(canvas);
+  }
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, "a_pos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  const U = {};
+  ["u_map", "u_img", "u_px", "u_size", "u_bright", "u_contrast", "u_sat", "u_warm", "u_fade", "u_high", "u_shadow", "u_vig", "u_sharp", "u_grain", "u_mono", "u_sepia", "u_lift", "u_gain"].forEach(
+    (n) => (U[n] = gl.getUniformLocation(prog, n))
+  );
+  const tex = gl.createTexture();
+  let srcW = 0;
+  let srcH = 0;
+  const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 4096;
+  return {
+    kind: "webgl",
+    maxTex,
+    setSource(src) {
+      srcW = src.width || src.naturalWidth;
+      srcH = src.height || src.naturalHeight;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    },
+    render(ed, aspect, w, h, opts = {}) {
+      if (!srcW) return;
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+      gl.viewport(0, 0, w, h);
+      const a = fxAffine(srcW, srcH, aspect, ed?.crop || FX_EMPTY.crop);
+      gl.uniformMatrix3fv(U.u_map, false, new Float32Array([a.ux[0], a.ux[1], 0, a.vy[0], a.vy[1], 0, a.o[0], a.o[1], 1]));
+      gl.uniform1i(U.u_img, 0);
+      // sharpen samples about one output pixel apart
+      const step = Math.max(1 / srcW, Math.hypot(a.ux[0], a.ux[1]) / w);
+      gl.uniform2f(U.u_px, step, step * (srcW / srcH));
+      gl.uniform2f(U.u_size, w, h);
+      const p = fxParams(ed, opts);
+      gl.uniform1f(U.u_bright, p.brightness);
+      gl.uniform1f(U.u_contrast, p.contrast);
+      gl.uniform1f(U.u_sat, p.saturation);
+      gl.uniform1f(U.u_warm, p.warmth);
+      gl.uniform1f(U.u_fade, p.fade);
+      gl.uniform1f(U.u_high, p.highlights);
+      gl.uniform1f(U.u_shadow, p.shadows);
+      gl.uniform1f(U.u_vig, p.vignette);
+      gl.uniform1f(U.u_sharp, p.sharpen);
+      gl.uniform1f(U.u_grain, p.grain);
+      gl.uniform1f(U.u_mono, p.mono);
+      gl.uniform1f(U.u_sepia, p.sepia);
+      gl.uniform3f(U.u_lift, p.lift[0], p.lift[1], p.lift[2]);
+      gl.uniform3f(U.u_gain, p.gain[0], p.gain[1], p.gain[2]);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    },
+    size: () => [srcW, srcH],
+    dispose() {
+      try {
+        gl.deleteTexture(tex);
+        gl.deleteBuffer(buf);
+        gl.deleteProgram(prog);
+        gl.getExtension("WEBGL_lose_context")?.loseContext();
+      } catch {}
+    },
+  };
+}
+
+// Without WebGL: canvas filters plus a few washes give nearly the same look.
+function createFx2dRenderer(canvas) {
+  const ctx = canvas.getContext("2d");
+  let src = null;
+  return {
+    kind: "2d",
+    maxTex: 4096,
+    setSource(s) {
+      src = s;
+    },
+    render(ed, aspect, w, h, opts = {}) {
+      if (!src) return;
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+      const sw = src.width || src.naturalWidth;
+      const shh = src.height || src.naturalHeight;
+      const a = fxAffine(sw, shh, aspect, ed?.crop || FX_EMPTY.crop);
+      // output px -> source px:  s = A·o + b ; draw needs the inverse.
+      const A = [a.ux[0] * sw / w, a.ux[1] * shh / w, a.vy[0] * sw / h, a.vy[1] * shh / h];
+      const bx = a.o[0] * sw;
+      const by = a.o[1] * shh;
+      const det = A[0] * A[3] - A[2] * A[1];
+      const ia = A[3] / det;
+      const ib = -A[1] / det;
+      const ic = -A[2] / det;
+      const id = A[0] / det;
+      const p = fxParams(ed, opts);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+      const parts = [];
+      parts.push(`brightness(${(1 + p.brightness * 0.45).toFixed(3)})`);
+      parts.push(`contrast(${(1 + p.contrast * 0.65).toFixed(3)})`);
+      parts.push(`saturate(${Math.max(0, 1 + p.saturation).toFixed(3)})`);
+      if (p.sepia) parts.push(`sepia(${p.sepia.toFixed(3)})`);
+      if (p.mono) parts.push(`grayscale(${p.mono.toFixed(3)})`);
+      ctx.filter = parts.join(" ");
+      ctx.setTransform(ia, ib, ic, id, -(ia * bx + ic * by), -(ib * bx + id * by));
+      ctx.drawImage(src, 0, 0);
+      ctx.restore();
+      ctx.save();
+      if (Math.abs(p.warmth) > 0.01) {
+        ctx.globalCompositeOperation = "soft-light";
+        ctx.fillStyle = p.warmth > 0 ? `rgba(255,150,40,${Math.min(0.5, p.warmth * 0.45)})` : `rgba(40,120,255,${Math.min(0.5, -p.warmth * 0.45)})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (p.fade > 0.01) {
+        ctx.globalCompositeOperation = "lighten";
+        ctx.fillStyle = `rgba(40,40,40,${Math.min(0.6, p.fade * 0.5)})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (p.vignette > 0.01) {
+        ctx.globalCompositeOperation = "multiply";
+        const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.max(w, h) * 0.75);
+        g.addColorStop(0, "rgba(0,0,0,0)");
+        g.addColorStop(1, `rgba(0,0,0,${Math.min(0.85, p.vignette * 0.75)})`);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      }
+      ctx.restore();
+    },
+    size: () => [src?.width || 0, src?.height || 0],
+    dispose() {},
+  };
+}
+
+// Open a photo the right way up, shrunk so its long side is at most maxSide.
+async function fxLoadSource(file, maxSide) {
+  let bmp = null;
+  try {
+    if (typeof createImageBitmap === "function") bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    bmp = null;
+  }
+  let w;
+  let h;
+  let draw;
+  if (bmp) {
+    w = bmp.width;
+    h = bmp.height;
+    draw = bmp;
+  } else {
+    const url = URL.createObjectURL(file);
+    try {
+      draw = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error("decode"));
+        i.src = url;
+      });
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+    w = draw.naturalWidth;
+    h = draw.naturalHeight;
+  }
+  if (!w || !h) throw new Error("decode");
+  const sc = Math.min(1, maxSide / Math.max(w, h));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * sc));
+  c.height = Math.max(1, Math.round(h * sc));
+  const x = c.getContext("2d");
+  x.imageSmoothingQuality = "high";
+  x.drawImage(draw, 0, 0, c.width, c.height);
+  try {
+    bmp?.close?.();
+  } catch {}
+  return c;
+}
+
+// The finished photo, ready to upload: cropped, turned and coloured.
+async function fxExport(file, ed, aspectValue, { side, quality } = {}) {
+  const spec = uploadPhotoSpec();
+  side = side || spec.side;
+  quality = quality || Math.max(spec.quality, 0.86);
+  const probe = document.createElement("canvas");
+  const r0 = createFxRenderer(probe);
+  const cap = Math.min(r0.maxTex || 4096, 4096);
+  r0.dispose();
+  const src = await fxLoadSource(file, cap);
+  const g = fxCropGeom(src.width, src.height, aspectValue, ed?.crop || FX_EMPTY.crop);
+  // as many pixels as the photo really has inside the frame, up to `side`
+  const frameH = g.rh / g.scale;
+  let outH = Math.round(frameH);
+  let outW = Math.round(frameH * aspectValue);
+  const big = Math.max(outW, outH);
+  if (big > side) {
+    outW = Math.round((outW * side) / big);
+    outH = Math.round((outH * side) / big);
+  }
+  outW = Math.max(16, outW);
+  outH = Math.max(16, outH);
+  const canvas = document.createElement("canvas");
+  const r = createFxRenderer(canvas);
+  r.setSource(src);
+  r.render(ed, aspectValue, outW, outH);
+  let out = canvas;
+  if (r.kind === "webgl") {
+    // copy to a 2D canvas so toBlob is reliable everywhere
+    out = document.createElement("canvas");
+    out.width = outW;
+    out.height = outH;
+    out.getContext("2d").drawImage(canvas, 0, 0);
+  }
+  const blob = await new Promise((resolve) => out.toBlob(resolve, "image/jpeg", quality));
+  r.dispose();
+  src.width = 1;
+  src.height = 1;
+  if (!blob) throw new Error("export");
+  const base = (file.name || "photo").replace(/\.[^.]+$/, "");
+  const f = new File([blob], `${base}-loop.jpg`, { type: "image/jpeg" });
+  f.__loopReady = true;
+  return f;
+}
+
+// ---- Edit photos before posting: Filter, Edit, Crop (like Instagram) ----
+const FX_TOOL_ICONS = {
+  brightness: Sun,
+  contrast: Contrast,
+  saturation: Droplet,
+  warmth: Thermometer,
+  fade: Blend,
+  highlights: SunDim,
+  shadows: Moon,
+  vignette: Aperture,
+  sharpen: Focus,
+  grain: CircleDot,
+};
+const fxClone = (ed) => JSON.parse(JSON.stringify(ed || FX_EMPTY));
+let fxThumbCache = new Map(); // "fileKey|k" -> [dataUrl per filter]
+const fxFileKey = (f) => (f ? `${f.name}|${f.size}|${f.lastModified}` : "");
+
+function FxSlider({ value, min, max, onChange, onRelease, ticks = false }) {
+  const pct = ((value - min) / (max - min)) * 100;
+  const zero = ((0 - min) / (max - min)) * 100;
+  const from = Math.min(pct, Math.max(0, zero));
+  const to = Math.max(pct, Math.max(0, zero));
+  return (
+    <div className="relative w-full h-9 flex items-center" data-no-swipe="">
+      <div className="absolute inset-x-0 h-[3px] rounded-full" style={{ background: "rgba(255,255,255,0.22)" }} />
+      <div className="absolute h-[3px] rounded-full" style={{ left: `${from}%`, width: `${to - from}%`, background: "#FFFFFF" }} />
+      {min < 0 && <div className="absolute w-[2px] h-3 rounded-full" style={{ left: `calc(${zero}% - 1px)`, background: "rgba(255,255,255,0.5)" }} />}
+      {ticks &&
+        Array.from({ length: 19 }).map((_, i) => (
+          <div key={i} className="absolute w-px h-2" style={{ left: `${(i / 18) * 100}%`, top: 26, background: "rgba(255,255,255,0.3)" }} />
+        ))}
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={max - min > 100 ? 1 : 0.5}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onPointerUp={onRelease}
+        onTouchEnd={onRelease}
+        className="loop-fx-range absolute inset-0 w-full"
+        aria-valuetext={String(Math.round(value))}
+      />
+    </div>
+  );
+}
+const FX_CSS = `
+  .loop-fx-range { -webkit-appearance: none; appearance: none; background: transparent; height: 36px; margin: 0; }
+  .loop-fx-range::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .loop-fx-range::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 0; }
+  .loop-fx-range::-webkit-slider-runnable-track { background: transparent; }
+`;
+
+function PhotoEditor({ items, startIndex = 0, aspect, onAspect, onClose, onDone }) {
+  const aspectValue = (POST_ASPECTS.find((a) => a.key === aspect) || POST_ASPECTS[0]).value;
+  const firstPhoto = Math.max(0, items.findIndex((it, i) => i >= startIndex && it.type === "photo"));
+  const [idx, setIdx] = useState(items[startIndex]?.type === "photo" ? startIndex : firstPhoto);
+  const [edits, setEdits] = useState(() => items.map((it) => fxClone(it.edit)));
+  const [tab, setTab] = useState("filter");
+  const [tool, setTool] = useState(null); // { key, before }
+  const [strengthOpen, setStrengthOpen] = useState(null); // value before, while open
+  const [thumbs, setThumbs] = useState(null);
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [comparing, setComparing] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [boxSize, setBoxSize] = useState({ w: 0, h: 0 });
+  const canvasRef = React.useRef(null);
+  const rendererRef = React.useRef(null);
+  const sourcesRef = React.useRef(new Map());
+  const stageRef = React.useRef(null);
+  const ptrs = React.useRef(new Map());
+  const gesture = React.useRef(null);
+  const holdTimer = React.useRef(null);
+  const item = items[idx];
+  const isPhoto = item?.type === "photo";
+  const ed = edits[idx] || FX_EMPTY;
+  const editedCount = edits.filter((e, i) => items[i]?.type === "photo" && !fxIsDefault(e)).length;
+
+  const setEd = (fn) => setEdits((prev) => prev.map((e, i) => (i === idx ? fn(fxClone(e)) : e)));
+
+  // the drawing surface
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    rendererRef.current = createFxRenderer(c);
+    return () => {
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
+      sourcesRef.current.forEach((s) => {
+        s.width = 1;
+        s.height = 1;
+      });
+      sourcesRef.current.clear();
+    };
+  }, []);
+
+  // how big the picture can be on screen
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      const maxW = r.width - 24;
+      const maxH = r.height - 24;
+      let w = maxW;
+      let h = w / aspectValue;
+      if (h > maxH) {
+        h = maxH;
+        w = h * aspectValue;
+      }
+      setBoxSize({ w: Math.max(40, Math.floor(w)), h: Math.max(40, Math.floor(h)) });
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [aspectValue]);
+
+  // open the photo being edited
+  useEffect(() => {
+    if (!isPhoto) return;
+    let off = false;
+    setReady(false);
+    setThumbs(null);
+    setError("");
+    const file = item.orig || item.file;
+    const have = sourcesRef.current.get(idx);
+    const go = async () => {
+      try {
+        const src = have || (await fxLoadSource(file, 1440));
+        if (off) return;
+        sourcesRef.current.set(idx, src);
+        rendererRef.current?.setSource(src);
+        setReady(true);
+      } catch {
+        if (!off) setError("This photo can't be edited here, but it will still be posted.");
+      }
+    };
+    go();
+    return () => {
+      off = true;
+    };
+  }, [idx, isPhoto]);
+
+  // filter previews for this photo
+  useEffect(() => {
+    if (!ready || !isPhoto || tab !== "filter") return;
+    const src = sourcesRef.current.get(idx);
+    if (!src) return;
+    const key = `${fxFileKey(item.orig || item.file)}|${ed.crop?.k || 0}`;
+    if (fxThumbCache.has(key)) {
+      setThumbs(fxThumbCache.get(key));
+      return;
+    }
+    let off = false;
+    const t = setTimeout(() => {
+      const c = document.createElement("canvas");
+      const r = createFxRenderer(c);
+      r.setSource(src);
+      const out = [];
+      const copy = document.createElement("canvas");
+      copy.width = 120;
+      copy.height = 120;
+      const cx = copy.getContext("2d");
+      for (const f of FX_FILTERS) {
+        r.render({ filter: f.key, strength: 100, adj: {}, crop: { k: ed.crop?.k || 0, angle: 0, z: 1, tx: 0, ty: 0 } }, 1, 120, 120);
+        cx.drawImage(c, 0, 0);
+        out.push(copy.toDataURL("image/jpeg", 0.72));
+      }
+      r.dispose();
+      if (fxThumbCache.size > 12) fxThumbCache = new Map();
+      fxThumbCache.set(key, out);
+      if (!off) setThumbs(out);
+    }, 60);
+    return () => {
+      off = true;
+      clearTimeout(t);
+    };
+  }, [ready, idx, tab, ed.crop?.k]);
+
+  // draw (at most once per frame)
+  const frame = React.useRef(0);
+  useEffect(() => {
+    if (!ready || !isPhoto || !boxSize.w) return;
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.min(1600, Math.round(boxSize.w * dpr));
+      const h = Math.round(w / aspectValue);
+      rendererRef.current?.render(ed, aspectValue, w, h, comparing ? { skipLook: true } : {});
+    });
+  }, [ready, ed, aspectValue, boxSize.w, comparing, idx]);
+
+  // ---- crop gestures: drag to move, pinch to zoom ----
+  const srcSize = () => {
+    const s = sourcesRef.current.get(idx);
+    return s ? [s.width, s.height] : [1, 1];
+  };
+  const onDown = (e) => {
+    if (!isPhoto || !ready) return;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (tab !== "crop") {
+      // hold to see the photo before edits
+      clearTimeout(holdTimer.current);
+      holdTimer.current = setTimeout(() => setComparing(true), 260);
+      return;
+    }
+    setDragging(true);
+    const list = [...ptrs.current.values()];
+    gesture.current = {
+      start: list.map((p) => ({ ...p })),
+      crop: { ...ed.crop },
+      dist: list.length > 1 ? Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y) : 0,
+    };
+  };
+  const onMove = (e) => {
+    if (!ptrs.current.has(e.pointerId)) return;
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (tab !== "crop" || !gesture.current) return;
+    const list = [...ptrs.current.values()];
+    const g = gesture.current;
+    const unit = boxSize.h || 1;
+    const [sw, sh] = srcSize();
+    if (list.length > 1 && g.start.length > 1) {
+      const d = Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y);
+      const z = Math.max(1, Math.min(5, (g.crop.z || 1) * (d / (g.dist || d))));
+      const cx = (list[0].x + list[1].x) / 2 - (g.start[0].x + g.start[1].x) / 2;
+      const cy = (list[0].y + list[1].y) / 2 - (g.start[0].y + g.start[1].y) / 2;
+      setEd((x) => ({ ...x, crop: fxClampPan(sw, sh, aspectValue, { ...g.crop, z, tx: (g.crop.tx || 0) + cx / unit, ty: (g.crop.ty || 0) + cy / unit }) }));
+    } else if (list.length === 1) {
+      const dx = (list[0].x - g.start[0].x) / unit;
+      const dy = (list[0].y - g.start[0].y) / unit;
+      setEd((x) => ({ ...x, crop: fxClampPan(sw, sh, aspectValue, { ...g.crop, tx: (g.crop.tx || 0) + dx, ty: (g.crop.ty || 0) + dy }) }));
+    }
+  };
+  const onUp = (e) => {
+    ptrs.current.delete(e.pointerId);
+    clearTimeout(holdTimer.current);
+    if (comparing) setComparing(false);
+    if (ptrs.current.size === 0) {
+      gesture.current = null;
+      setDragging(false);
+    } else if (tab === "crop") {
+      const list = [...ptrs.current.values()];
+      gesture.current = { start: list.map((p) => ({ ...p })), crop: { ...ed.crop }, dist: 0 };
+    }
+  };
+
+  const setAspectKeepCrop = (key) => {
+    onAspect(key);
+    // a new frame shape: keep zoom and turn, recentre
+    setEdits((prev) => prev.map((e) => ({ ...e, crop: { ...e.crop, tx: 0, ty: 0 } })));
+  };
+
+  const finish = async () => {
+    setBusy(trJoin("Saving {0} of {1}…", 1, Math.max(1, editedCount)));
+    setError("");
+    const out = [];
+    let n = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const e = edits[i];
+      if (it.type !== "photo" || fxIsDefault(e)) {
+        // unchanged: give back the original file (an earlier edit undone)
+        if (it.type === "photo" && it.orig) {
+          out.push({ ...it, file: it.orig, url: URL.createObjectURL(it.orig), orig: null, edit: null, oldUrl: it.url });
+        } else out.push({ ...it, edit: it.type === "photo" ? null : it.edit });
+        continue;
+      }
+      n++;
+      setBusy(trJoin("Saving {0} of {1}…", n, editedCount));
+      try {
+        const orig = it.orig || it.file;
+        const f = await fxExport(orig, e, aspectValue);
+        out.push({ ...it, file: f, url: URL.createObjectURL(f), orig, edit: fxClone(e), oldUrl: it.url });
+      } catch {
+        out.push({ ...it });
+        setError("One photo couldn't be edited — it will be posted as it was.");
+      }
+    }
+    setBusy("");
+    onDone(out);
+  };
+
+  const filterName = (FX_FILTERS.find((f) => f.key === ed.filter) || FX_FILTERS[0]).name;
+  const toolDef = tool ? FX_TOOLS.find((t) => t.key === tool.key) : null;
+  const pill = (active) => ({
+    color: active ? "#FFFFFF" : "rgba(255,255,255,0.55)",
+    fontWeight: active ? 700 : 600,
+  });
+
+  return (
+    <div className="fixed inset-0 z-[95] flex flex-col" style={{ background: "#000000", color: "#FFFFFF" }} data-no-swipe="">
+      <style>{FX_CSS}</style>
+      {/* top bar */}
+      <div className="flex items-center justify-between px-3 shrink-0" style={{ height: 54, paddingTop: "env(safe-area-inset-top, 0px)" }}>
+        <button onClick={onClose} aria-label="Back" className="p-2 -ms-1">
+          <ChevronLeft size={26} color="#FFFFFF" />
+        </button>
+        <span className="text-[16px]" style={{ fontWeight: 700 }}>
+          {tool ? trText(toolDef?.name || "") : tab === "crop" ? "Crop" : "Edit"}
+        </span>
+        <button onClick={finish} disabled={!!busy} className="px-3 h-9 text-[15px]" style={{ color: "#4FA3FF", fontWeight: 700 }}>
+          Next
+        </button>
+      </div>
+
+      {/* the picture */}
+      <div ref={stageRef} className="flex-1 min-h-0 flex items-center justify-center relative overflow-hidden">
+        {isPhoto ? (
+          <div
+            className="relative overflow-hidden"
+            style={{ width: boxSize.w, height: boxSize.h, touchAction: "none", background: "#111" }}
+            onPointerDown={onDown}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+            onPointerCancel={onUp}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" style={{ opacity: ready ? 1 : 0, transition: "opacity .15s" }} />
+            {!ready && !error && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <LoopSpinner size={44} color="rgba(255,255,255,0.6)" />
+              </div>
+            )}
+            {(tab === "crop" || dragging) && ready && (
+              <div className="absolute inset-0 pointer-events-none" style={{ border: "1px solid rgba(255,255,255,0.7)" }}>
+                {[1, 2].map((i) => (
+                  <React.Fragment key={i}>
+                    <div className="absolute top-0 bottom-0 w-px" style={{ left: `${(i * 100) / 3}%`, background: dragging ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.22)" }} />
+                    <div className="absolute left-0 right-0 h-px" style={{ top: `${(i * 100) / 3}%`, background: dragging ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.22)" }} />
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+            {comparing && (
+              <span className="absolute top-2 left-1/2 -translate-x-1/2 rounded-full px-2.5 py-1 text-[11px]" style={{ background: "rgba(0,0,0,0.6)", fontWeight: 600 }}>
+                Original
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="relative overflow-hidden rounded-sm" style={{ width: boxSize.w, height: boxSize.h, background: "#111" }}>
+            {item && <video src={item.url} className="w-full h-full object-cover" muted playsInline autoPlay loop />}
+            <p className="absolute bottom-2 inset-x-2 text-center text-[12px] rounded-full py-1.5" style={{ background: "rgba(0,0,0,0.6)" }}>
+              Filters and edits are for photos. Videos keep their own look.
+            </p>
+          </div>
+        )}
+        {error && (
+          <p className="absolute bottom-2 inset-x-4 text-center text-[12px] rounded-xl px-3 py-2" style={{ background: "rgba(237,73,86,0.92)", fontWeight: 600 }}>
+            {error}
+          </p>
+        )}
+      </div>
+
+      {/* several photos: pick which one */}
+      {items.length > 1 && !tool && strengthOpen === null && (
+        <div className="flex gap-1.5 px-3 py-2 overflow-x-auto shrink-0" style={{ scrollbarWidth: "none" }}>
+          {items.map((it, i) => (
+            <button
+              key={i}
+              onClick={() => setIdx(i)}
+              className="relative shrink-0 rounded-md overflow-hidden"
+              style={{ width: 46, height: 46, outline: i === idx ? "2px solid #FFFFFF" : "none", outlineOffset: 1, opacity: i === idx ? 1 : 0.7 }}
+            >
+              {it.type === "photo" ? (
+                <img src={it.url} alt="" className="w-full h-full object-cover" draggable={false} />
+              ) : (
+                <video src={it.url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+              )}
+              {it.type === "photo" && !fxIsDefault(edits[i]) && (
+                <span className="absolute bottom-0.5 end-0.5 w-2 h-2 rounded-full" style={{ background: "#4FA3FF", border: "1px solid #000" }} />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* the tools */}
+      <div className="shrink-0" style={{ minHeight: 150 }}>
+        {!isPhoto ? (
+          <div className="px-4 pt-3">
+            <p className="text-[12px] mb-2" style={{ color: "rgba(255,255,255,0.6)" }}>Shape of the post</p>
+            <div className="flex gap-2">
+              {POST_ASPECTS.map((a) => (
+                <button key={a.key} onClick={() => setAspectKeepCrop(a.key)} className="rounded-full px-3.5 h-9 text-[13px]" style={{ background: aspect === a.key ? "#FFFFFF" : "rgba(255,255,255,0.12)", color: aspect === a.key ? "#000" : "#FFF", fontWeight: 600 }}>
+                  {a.key}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : tool ? (
+          <div className="px-5 pt-4">
+            <p className="text-center text-[22px] mb-1 tabular-nums" style={{ fontWeight: 300 }}>
+              {Math.round(Number(ed.adj?.[tool.key]) || 0)}
+            </p>
+            <FxSlider value={Number(ed.adj?.[tool.key]) || 0} min={toolDef.min} max={toolDef.max} onChange={(v) => setEd((x) => ({ ...x, adj: { ...x.adj, [tool.key]: v } }))} />
+            <div className="flex items-center justify-between mt-3">
+              <button
+                onClick={() => {
+                  setEd((x) => ({ ...x, adj: { ...x.adj, [tool.key]: tool.before } }));
+                  setTool(null);
+                }}
+                className="px-2 h-10 text-[15px]"
+                style={{ fontWeight: 600 }}
+              >
+                Cancel
+              </button>
+              <button onClick={() => setTool(null)} className="px-2 h-10 text-[15px]" style={{ fontWeight: 700 }}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : strengthOpen !== null ? (
+          <div className="px-5 pt-4">
+            <p className="text-center text-[13px] mb-1" style={{ color: "rgba(255,255,255,0.7)", fontWeight: 600 }}>
+              {trText(filterName)} · <span className="tabular-nums">{Math.round(ed.strength ?? 100)}</span>
+            </p>
+            <FxSlider value={ed.strength ?? 100} min={0} max={100} onChange={(v) => setEd((x) => ({ ...x, strength: v }))} />
+            <div className="flex items-center justify-between mt-3">
+              <button
+                onClick={() => {
+                  setEd((x) => ({ ...x, strength: strengthOpen }));
+                  setStrengthOpen(null);
+                }}
+                className="px-2 h-10 text-[15px]"
+                style={{ fontWeight: 600 }}
+              >
+                Cancel
+              </button>
+              <button onClick={() => setStrengthOpen(null)} className="px-2 h-10 text-[15px]" style={{ fontWeight: 700 }}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : tab === "filter" ? (
+          <div className="pt-2">
+            <div className="flex gap-2.5 px-3 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+              {FX_FILTERS.map((f, i) => {
+                const on = ed.filter === f.key;
+                return (
+                  <button
+                    key={f.key}
+                    onClick={() => {
+                      if (on && f.key !== "normal") setStrengthOpen(ed.strength ?? 100);
+                      else setEd((x) => ({ ...x, filter: f.key, strength: 100 }));
+                    }}
+                    className="flex flex-col items-center gap-1.5 shrink-0"
+                  >
+                    <span className="text-[11px]" style={pill(on)}>{f.name}</span>
+                    <span className="rounded-md overflow-hidden" style={{ width: 72, height: 72, background: "#222", outline: on ? "2px solid #FFFFFF" : "none", outlineOffset: 1 }}>
+                      {thumbs?.[i] ? <img src={thumbs[i]} alt="" className="w-full h-full object-cover" draggable={false} /> : null}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {items.filter((x) => x.type === "photo").length > 1 && ed.filter !== "normal" && (
+              <button
+                onClick={() => setEdits((prev) => prev.map((e, i) => (items[i].type === "photo" ? { ...e, filter: ed.filter, strength: ed.strength } : e)))}
+                className="mx-auto mt-2 block text-[12px] px-3 h-8 rounded-full"
+                style={{ background: "rgba(255,255,255,0.12)", fontWeight: 600 }}
+              >
+                {trJoin("Use {0} on every photo", trText(filterName))}
+              </button>
+            )}
+          </div>
+        ) : tab === "edit" ? (
+          <div className="flex gap-1 px-2 pt-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+            {FX_TOOLS.map((t) => {
+              const Icon = FX_TOOL_ICONS[t.key] || SlidersHorizontal;
+              const v = Number(ed.adj?.[t.key]) || 0;
+              return (
+                <button key={t.key} onClick={() => setTool({ key: t.key, before: v })} className="flex flex-col items-center gap-1.5 shrink-0" style={{ width: 74 }}>
+                  <span className="text-[11px]" style={pill(v !== 0)}>{t.name}</span>
+                  <span className="rounded-full flex items-center justify-center" style={{ width: 54, height: 54, border: `1.5px solid ${v !== 0 ? "#FFFFFF" : "rgba(255,255,255,0.35)"}` }}>
+                    <Icon size={22} color="#FFFFFF" strokeWidth={1.8} />
+                  </span>
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: v !== 0 ? "#4FA3FF" : "transparent" }} />
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="px-4 pt-2">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex gap-2">
+                {POST_ASPECTS.map((a) => (
+                  <button
+                    key={a.key}
+                    onClick={() => setAspectKeepCrop(a.key)}
+                    className="rounded-full px-3 h-8 text-[12px] flex items-center gap-1.5"
+                    style={{ background: aspect === a.key ? "#FFFFFF" : "rgba(255,255,255,0.12)", color: aspect === a.key ? "#000" : "#FFF", fontWeight: 600 }}
+                  >
+                    <span className="inline-block rounded-[2px]" style={{ border: `1.5px solid ${aspect === a.key ? "#000" : "#FFF"}`, width: a.key === "16:9" ? 13 : a.key === "1:1" ? 10 : 9, height: a.key === "16:9" ? 8 : a.key === "1:1" ? 10 : 11 }} />
+                    {a.key}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setEd((x) => ({ ...x, crop: { ...x.crop, k: ((x.crop.k || 0) + 1) % 4, tx: 0, ty: 0 } }))}
+                  aria-label="Turn"
+                  className="w-9 h-9 rounded-full flex items-center justify-center"
+                  style={{ background: "rgba(255,255,255,0.12)" }}
+                >
+                  <RotateCw size={17} color="#FFFFFF" />
+                </button>
+                <button onClick={() => setEd((x) => ({ ...x, crop: { ...FX_EMPTY.crop } }))} className="px-3 h-9 rounded-full text-[12px]" style={{ background: "rgba(255,255,255,0.12)", fontWeight: 600 }}>
+                  Reset
+                </button>
+              </div>
+            </div>
+            <p className="text-center text-[12px] tabular-nums" style={{ color: "rgba(255,255,255,0.7)" }}>
+              {`${(ed.crop?.angle || 0) > 0 ? "+" : ""}${(ed.crop?.angle || 0).toFixed(1)}°`}
+            </p>
+            <FxSlider
+              value={ed.crop?.angle || 0}
+              min={-45}
+              max={45}
+              ticks
+              onChange={(v) => {
+                const [sw, sh] = srcSize();
+                setEd((x) => ({ ...x, crop: fxClampPan(sw, sh, aspectValue, { ...x.crop, angle: Math.abs(v) < 0.6 ? 0 : v }) }));
+              }}
+            />
+            <p className="text-center text-[11px] mt-1" style={{ color: "rgba(255,255,255,0.5)" }}>Drag to move · pinch to zoom · slide to straighten</p>
+          </div>
+        )}
+      </div>
+
+      {/* Filter · Edit · Crop */}
+      {!tool && strengthOpen === null && isPhoto && (
+        <div className="flex items-center justify-around shrink-0" style={{ height: 52, borderTop: "1px solid rgba(255,255,255,0.08)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+          {[
+            ["filter", "Filter"],
+            ["edit", "Edit"],
+            ["crop", "Crop"],
+          ].map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)} className="flex-1 h-full text-[14px]" style={pill(tab === k)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {busy && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" style={{ background: "rgba(0,0,0,0.72)" }}>
+          <LoopSpinner size={48} color="rgba(255,255,255,0.7)" />
+          <p className="text-[13px]" style={{ fontWeight: 600 }}>{busy}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- New post: Tag people (with Invite collaborators) and the AI label ----
+// Search for people to tag or invite. Blocked people never show.
+function PeopleSearchSheet({ title, exclude = [], onPick, onClose, max, count = 0 }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [me, setMe] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const inputRef = React.useRef(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMe(data?.user?.id || null));
+    const t = setTimeout(() => inputRef.current?.focus(), 250);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    const term = q.trim().replace(/^@/, "");
+    if (!term) {
+      setResults([]);
+      return;
+    }
+    let off = false;
+    setBusy(true);
+    const t = setTimeout(async () => {
+      const safe = term.replace(/[%_,()]/g, "");
+      const [{ data }, rel] = await Promise.all([
+        supabase.from("profiles").select("id, username, full_name, avatar_url").or(`username.ilike.%${safe}%,full_name.ilike.%${safe}%`).limit(15),
+        getRelations(),
+      ]);
+      if (off) return;
+      const skip = new Set(exclude);
+      setResults((data || []).filter((p) => p.id !== me && !skip.has(p.id) && !isBlockedEither(rel, p.id)).slice(0, 10));
+      setBusy(false);
+    }, 220);
+    return () => {
+      off = true;
+      clearTimeout(t);
+    };
+  }, [q, me, exclude.join(",")]);
+  const full = max && count >= max;
+  return (
+    <>
+      <div className="fixed inset-0 z-[96]" style={{ background: "rgba(0,0,0,0.55)" }} onClick={onClose} />
+      <div
+        className="fixed start-0 end-0 bottom-0 z-[97] rounded-t-3xl flex flex-col"
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", height: "72dvh", animation: "loopSheetUp 0.2s ease-out" }}
+        data-no-swipe=""
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1 shrink-0">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        <div className="flex items-center justify-between px-4 pb-2 shrink-0">
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{title}</span>
+          <button onClick={onClose} aria-label="Close">
+            <X size={18} color="var(--text-muted)" />
+          </button>
+        </div>
+        <div className="px-4 pb-2 shrink-0">
+          <div className="flex items-center gap-2 rounded-xl px-3 h-10" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <Search size={15} color="var(--text-muted)" />
+            <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search for a user" className="flex-1 bg-transparent outline-none text-sm" style={{ color: "var(--text)" }} />
+            {q && (
+              <button onClick={() => setQ("")} aria-label="Clear">
+                <X size={14} color="var(--text-muted)" />
+              </button>
+            )}
+          </div>
+          {full && <p className="text-[11px] mt-1.5" style={{ color: "var(--heart)" }}>{trJoin("You can choose up to {0}.", max)}</p>}
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto pb-4">
+          {results.map((p) => (
+            <button
+              key={p.id}
+              disabled={full}
+              onClick={() => onPick(p)}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-start transition-colors active:bg-[var(--active-highlight)]"
+              style={{ opacity: full ? 0.5 : 1 }}
+            >
+              <Avatar username={p.username} avatarUrl={p.avatar_url} size={42} />
+              <span className="min-w-0">
+                <span className="block text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{p.username}</span>
+                {p.full_name && <span translate="no" className="block text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{p.full_name}</span>}
+              </span>
+            </button>
+          ))}
+          {q.trim() && !busy && results.length === 0 && (
+            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No matching accounts</p>
+          )}
+          {busy && q.trim() && results.length === 0 && (
+            <div className="flex justify-center py-6">
+              <LoopSpinner />
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function PeopleChips({ list, onRemove }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {list.map((p) => (
+        <span key={p.id} className="flex items-center gap-1.5 rounded-full ps-1 pe-2 py-1" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.16)" }}>
+          <Avatar username={p.username} avatarUrl={p.avatar_url} size={22} />
+          <span className="text-[12px]" style={{ color: "#FFFFFF", fontWeight: 600 }}>{p.username}</span>
+          <button onClick={() => onRemove(p)} aria-label={`Remove ${p.username}`} className="p-0.5">
+            <X size={13} color="rgba(255,255,255,0.7)" />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Like Instagram: the photo, "Tap the photo to tag people", and
+// "Invite collaborators" just under it.
+function TagPeopleScreen({ media, aspect, tagged, collabs, onTagged, onCollabs, onClose }) {
+  const [search, setSearch] = useState(null); // "tag" | "collab"
+  const [t, setT] = useState(tagged);
+  const [c, setC] = useState(collabs);
+  const ratio = media?.type === "reel" ? "9 / 16" : (POST_ASPECTS.find((a) => a.key === aspect) || POST_ASPECTS[0]).css;
+  const done = () => {
+    onTagged(t);
+    onCollabs(c);
+    onClose();
+  };
+  return (
+    <div className="fixed inset-0 z-[94] flex flex-col" style={{ background: "#000000", color: "#FFFFFF" }} data-no-swipe="">
+      <div className="flex items-center justify-between px-3 shrink-0" style={{ height: 54 }}>
+        <button onClick={onClose} aria-label="Close" className="p-2 -ms-1">
+          <X size={26} color="#FFFFFF" />
+        </button>
+        <span className="text-[17px]" style={{ fontWeight: 700 }}>Tag people</span>
+        <button onClick={done} aria-label="Done" className="p-2 -me-1">
+          <Check size={26} color="#4FA3FF" strokeWidth={2.6} />
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <button onClick={() => setSearch("tag")} className="relative block mx-auto overflow-hidden" style={{ width: media?.type === "reel" ? "62%" : "100%", aspectRatio: ratio, background: "#111" }}>
+          {media?.url &&
+            (media.type === "photo" ? (
+              <img src={media.url} alt="" className="w-full h-full object-cover" draggable={false} />
+            ) : (
+              <video src={media.url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+            ))}
+          {t.length > 0 && (
+            <span className="absolute start-2.5 bottom-2.5 w-7 h-7 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.6)" }}>
+              <CircleUserRound size={15} color="#FFFFFF" />
+            </span>
+          )}
+        </button>
+        <div className="px-4">
+          <button onClick={() => setSearch("collab")} className="w-full rounded-lg h-11 mt-3 text-[14px] transition-transform active:scale-[0.99]" style={{ background: "#262626", fontWeight: 600 }}>
+            Invite collaborators
+          </button>
+          <p className="text-center text-[14px] mt-5 mb-4" style={{ color: "rgba(255,255,255,0.75)" }}>
+            Tap the photo to tag people.
+          </p>
+          {t.length > 0 && (
+            <div className="mb-5">
+              <p className="text-[12px] mb-2" style={{ color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>{trJoin("Tagged · {0}", t.length)}</p>
+              <PeopleChips list={t} onRemove={(p) => setT((x) => x.filter((y) => y.id !== p.id))} />
+            </div>
+          )}
+          {c.length > 0 && (
+            <div className="mb-5">
+              <p className="text-[12px] mb-2" style={{ color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>{trJoin("Collaborators · {0}/3", c.length)}</p>
+              <PeopleChips list={c} onRemove={(p) => setC((x) => x.filter((y) => y.id !== p.id))} />
+              <p className="text-[11px] mt-2" style={{ color: "rgba(255,255,255,0.5)" }}>
+                If they accept, your post will be shared with their followers.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+      {search && (
+        <PeopleSearchSheet
+          title={search === "tag" ? "Tag people" : "Invite collaborators"}
+          exclude={(search === "tag" ? t : c).map((p) => p.id)}
+          max={search === "tag" ? 20 : 3}
+          count={(search === "tag" ? t : c).length}
+          onPick={(p) => {
+            if (search === "tag") setT((x) => (x.length >= 20 ? x : [...x, p]));
+            else setC((x) => (x.length >= 3 ? x : [...x, p]));
+            setSearch(null);
+          }}
+          onClose={() => setSearch(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---- "AI info" on posts the creator labelled ----
+// Asked in small batches, so a page of posts costs one request. Before
+// loop-step-21.sql the column doesn't exist; then nothing is shown.
+const aiLabelCache = new Map();
+const aiLabelWaiters = new Map();
+let aiLabelQueue = new Set();
+let aiLabelTimer = null;
+let aiLabelOff = false;
+function aiLabelFor(id, cb) {
+  if (aiLabelCache.has(id)) return cb(aiLabelCache.get(id));
+  if (aiLabelOff) return cb(false);
+  if (!aiLabelWaiters.has(id)) aiLabelWaiters.set(id, []);
+  aiLabelWaiters.get(id).push(cb);
+  aiLabelQueue.add(id);
+  clearTimeout(aiLabelTimer);
+  aiLabelTimer = setTimeout(async () => {
+    const ids = [...aiLabelQueue];
+    aiLabelQueue = new Set();
+    const on = new Set();
+    try {
+      const { data, error } = await supabase.from("posts").select("id").in("id", ids).eq("ai_label", true);
+      if (error) aiLabelOff = /ai_label|column/i.test(error.message || "");
+      else (data || []).forEach((r) => on.add(r.id));
+    } catch {}
+    ids.forEach((id) => {
+      aiLabelCache.set(id, on.has(id));
+      (aiLabelWaiters.get(id) || []).forEach((f) => f(on.has(id)));
+      aiLabelWaiters.delete(id);
+    });
+  }, 120);
+}
+function markAiLabel(id, on) {
+  if (id) aiLabelCache.set(id, !!on);
+}
+function AiInfoChip({ postId, light = false }) {
+  const [on, setOn] = useState(() => aiLabelCache.get(postId) || false);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    if (postId) aiLabelFor(postId, (v) => alive && setOn(v));
+    return () => {
+      alive = false;
+    };
+  }, [postId]);
+  if (!on) return null;
+  return (
+    <>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        className="text-[11px] shrink-0 whitespace-nowrap"
+        style={{ color: light ? "rgba(255,255,255,0.85)" : "var(--text-muted)", fontWeight: 600 }}
+      >
+        · AI info
+      </button>
+      {open && (
+        <StorySheetShell title="AI info" onClose={() => setOpen(false)}>
+          <div className="px-4 pb-7">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "var(--bg-sunken)" }}>
+                <Sparkles size={18} color="var(--text)" />
+              </span>
+              <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Made or edited with AI</p>
+            </div>
+            <p className="text-[13px]" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+              The person who shared this said it was made or changed with AI tools. Loop asks people to label realistic content like this so everyone knows what they're looking at.
+            </p>
+          </div>
+        </StorySheetShell>
+      )}
+    </>
+  );
+}
+
+function NewPostToggle({ on }) {
+  return (
+    <span className="rounded-full shrink-0" style={{ width: 40, height: 23, background: on ? ACCENT : "var(--toggle-off)", position: "relative", display: "inline-block" }}>
+      <span className="rounded-full bg-white absolute" style={{ width: 19, height: 19, top: 2, left: on ? 19 : 2, transition: "left 0.15s" }} />
+    </span>
+  );
+}
+
+// ---- Story editor (like Instagram): text, stickers, drawing, filters ----
+// Photos come out as one finished picture (1080 × 1920). On a video the
+// writing and drawing are saved as a see-through picture laid on top, and
+// the filter is applied while it plays. Polls, questions and the other
+// tappable stickers stay tappable, as before.
+const STORY_W = 1080;
+const STORY_H = 1920;
+const STORY_FONTS = [
+  { key: "classic", name: "Classic", family: "'Sora', sans-serif", weight: 700 },
+  { key: "modern", name: "Modern", family: "'Montserrat', sans-serif", weight: 600, upper: true },
+  { key: "neon", name: "Neon", family: "'Caveat', cursive", weight: 700, neon: true },
+  { key: "typewriter", name: "Typewriter", family: "'Space Mono', monospace", weight: 400 },
+  { key: "strong", name: "Strong", family: "'Oswald', sans-serif", weight: 600, upper: true },
+  { key: "serif", name: "Serif", family: "'Playfair Display', serif", weight: 600 },
+  { key: "rounded", name: "Rounded", family: "'Nunito', sans-serif", weight: 800 },
+  { key: "script", name: "Script", family: "'Pacifico', cursive", weight: 400 },
+];
+const STORY_COLORS = ["#FFFFFF", "#000000", "#F42A41", "#FF8A00", "#FFD400", "#2ECC71", "#006A4E", "#1DA1F2", "#7B2FF7", "#FF4FA3", "#8E8E8E", "#C9A227"];
+const STORY_BRUSHES = [
+  { key: "pen", name: "Pen" },
+  { key: "marker", name: "Marker" },
+  { key: "neon", name: "Neon" },
+  { key: "eraser", name: "Eraser" },
+];
+const storyFontOf = (k) => [...STORY_FONTS, ...(typeof PREMIUM_FONTS !== "undefined" ? PREMIUM_FONTS : [])].find((f) => f.key === k) || STORY_FONTS[0];
+const storyId = () => "e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+let storyMeasure = null;
+// Lines of a text block at the reference width (360 px), so the screen and
+// the saved picture break lines in the same places.
+function storyTextLines(el) {
+  const f = storyFontOf(el.font);
+  if (!storyMeasure) storyMeasure = document.createElement("canvas").getContext("2d");
+  const ctx = storyMeasure;
+  ctx.font = `${f.weight} ${el.size}px ${f.family}`;
+  const maxW = 296;
+  const text = f.upper ? String(el.text || "").toUpperCase() : String(el.text || "");
+  const out = [];
+  for (const para of text.split("\n")) {
+    const words = para.split(/(\s+)/);
+    let line = "";
+    for (const w of words) {
+      const next = line + w;
+      if (ctx.measureText(next).width <= maxW || !line.trim()) {
+        if (ctx.measureText(next).width > maxW && !line.trim()) {
+          // one very long word: break it
+          let part = "";
+          for (const ch of Array.from(w)) {
+            if (ctx.measureText(part + ch).width > maxW && part) {
+              out.push(part);
+              part = ch;
+            } else part += ch;
+          }
+          line = part;
+        } else line = next;
+      } else {
+        out.push(line.trimEnd());
+        line = w.trimStart();
+      }
+    }
+    out.push(line.trimEnd());
+  }
+  return out;
+}
+function storyTextColors(el) {
+  if (el.bg === "solid") {
+    const light = ["#FFFFFF", "#FFD400", "#2ECC71", "#FF8A00", "#8E8E8E", "#C9A227", "#FF4FA3"].includes(el.color);
+    return { fg: light ? "#000000" : "#FFFFFF", bg: el.color };
+  }
+  if (el.bg === "soft") return { fg: el.color, bg: "rgba(0,0,0,0.55)" };
+  return { fg: el.color, bg: null };
+}
+// The look of a filter as a CSS filter (used on videos while they play).
+function fxCssFilter(key) {
+  if (!key || key === "normal") return undefined;
+  const p = fxParams({ filter: key, strength: 100, adj: {} });
+  const parts = [`brightness(${(1 + p.brightness * 0.45).toFixed(2)})`, `contrast(${(1 + p.contrast * 0.65).toFixed(2)})`, `saturate(${Math.max(0, 1 + p.saturation).toFixed(2)})`];
+  if (p.sepia) parts.push(`sepia(${p.sepia.toFixed(2)})`);
+  if (p.mono) parts.push(`grayscale(${p.mono.toFixed(2)})`);
+  if (p.warmth > 0.05) parts.push(`sepia(${Math.min(0.35, p.warmth * 0.5).toFixed(2)})`);
+  if (p.warmth < -0.05) parts.push(`hue-rotate(${Math.round(p.warmth * 18)}deg)`);
+  return parts.join(" ");
+}
+function storyVideoFilter(story) {
+  const fx = (Array.isArray(story?.stickers) ? story.stickers : []).find((s) => s.type === "fx");
+  return fx ? fxCssFilter(fx.filter) : undefined;
+}
+
+// ---- drawing strokes (used on screen and when saving) ----
+function drawStoryStrokes(ctx, strokes, w, h) {
+  for (const s of strokes) {
+    if (!s.pts.length) continue;
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = s.tool === "marker" ? "square" : "round";
+    const width = s.size * (w / 360);
+    const path = () => {
+      ctx.beginPath();
+      ctx.moveTo(s.pts[0][0] * w, s.pts[0][1] * h);
+      for (let i = 1; i < s.pts.length - 1; i++) {
+        const mx = ((s.pts[i][0] + s.pts[i + 1][0]) / 2) * w;
+        const my = ((s.pts[i][1] + s.pts[i + 1][1]) / 2) * h;
+        ctx.quadraticCurveTo(s.pts[i][0] * w, s.pts[i][1] * h, mx, my);
+      }
+      const last = s.pts[s.pts.length - 1];
+      ctx.lineTo(last[0] * w + 0.01, last[1] * h);
+    };
+    if (s.tool === "eraser") {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.lineWidth = width * 1.6;
+      ctx.strokeStyle = "#000";
+      path();
+      ctx.stroke();
+    } else if (s.tool === "neon") {
+      ctx.shadowColor = s.color;
+      ctx.shadowBlur = width * 1.8;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = width * 1.15;
+      path();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(255,255,255,0.92)";
+      ctx.lineWidth = width * 0.45;
+      path();
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = s.tool === "marker" ? 0.62 : 1;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.tool === "marker" ? width * 1.7 : width;
+      path();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+// A text or emoji element onto the saved picture.
+function drawStoryElement(ctx, el, W, H) {
+  const k = (W / 360) * (el.s || 1);
+  ctx.save();
+  ctx.translate(el.x * W, el.y * H);
+  ctx.rotate(((el.r || 0) * Math.PI) / 180);
+  if (el.kind === "emoji") {
+    const size = 72 * k;
+    ctx.font = `${size}px "Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(el.emoji, 0, size * 0.04);
+    ctx.restore();
+    return;
+  }
+  const f = storyFontOf(el.font);
+  const lines = storyTextLines(el);
+  const size = el.size * k;
+  const lineH = size * 1.34;
+  ctx.font = `${f.weight} ${size}px ${f.family}`;
+  ctx.textBaseline = "middle";
+  const { fg, bg } = storyTextColors(el);
+  const widths = lines.map((l) => ctx.measureText(l).width);
+  const maxW = Math.max(1, ...widths);
+  const padX = size * 0.32;
+  const top = -(lines.length * lineH) / 2;
+  lines.forEach((line, i) => {
+    const w = widths[i];
+    const x = el.align === "left" ? -maxW / 2 : el.align === "right" ? maxW / 2 - w : -w / 2;
+    const y = top + i * lineH + lineH / 2;
+    if (bg && line.trim()) {
+      ctx.fillStyle = bg;
+      roundRectPath(ctx, x - padX, y - lineH / 2, w + padX * 2, lineH, size * 0.28);
+      ctx.fill();
+    }
+    ctx.textAlign = "left";
+    if (f.neon && !bg) {
+      ctx.shadowColor = fg;
+      ctx.shadowBlur = size * 0.6;
+      ctx.fillStyle = fg;
+      ctx.fillText(line, x, y);
+      ctx.shadowBlur = size * 0.2;
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.fillText(line, x, y);
+      ctx.shadowBlur = 0;
+    } else {
+      if (!bg) {
+        ctx.shadowColor = "rgba(0,0,0,0.35)";
+        ctx.shadowBlur = size * 0.12;
+        ctx.shadowOffsetY = size * 0.03;
+      }
+      ctx.fillStyle = fg;
+      ctx.fillText(line, x, y);
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+    }
+  });
+  ctx.restore();
+}
+
+// Text and emoji on screen — the same layout as the saved picture.
+function StoryElementView({ el, scale }) {
+  if (el.kind === "emoji") {
+    return <span style={{ fontSize: 72 * scale, lineHeight: 1, display: "block", userSelect: "none" }}>{el.emoji}</span>;
+  }
+  const f = storyFontOf(el.font);
+  const lines = storyTextLines(el);
+  const size = el.size * scale;
+  const { fg, bg } = storyTextColors(el);
+  return (
+    <div style={{ textAlign: el.align || "center", fontFamily: f.family, fontWeight: f.weight, fontSize: size, lineHeight: `${size * 1.34}px`, whiteSpace: "pre", userSelect: "none" }}>
+      {lines.map((l, i) => (
+        <div key={i}>
+          <span
+            style={{
+              display: "inline-block",
+              color: f.neon && !bg ? "#FFFFFF" : fg,
+              background: bg && l.trim() ? bg : "transparent",
+              padding: `0 ${size * 0.32}px`,
+              borderRadius: size * 0.28,
+              textShadow: f.neon && !bg ? `0 0 ${size * 0.3}px ${fg}, 0 0 ${size * 0.6}px ${fg}` : bg ? "none" : "0 1px 4px rgba(0,0,0,0.35)",
+            }}
+          >
+            {l || " "}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function storyAverageColors(src) {
+  try {
+    const c = document.createElement("canvas");
+    c.width = 16;
+    c.height = 16;
+    const x = c.getContext("2d");
+    x.drawImage(src, 0, 0, 16, 16);
+    const d = x.getImageData(0, 0, 16, 16).data;
+    const avg = (y0, y1) => {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let y = y0; y < y1; y++)
+        for (let xx = 0; xx < 16; xx++) {
+          const i = (y * 16 + xx) * 4;
+          r += d[i];
+          g += d[i + 1];
+          b += d[i + 2];
+          n++;
+        }
+      const k = 0.72;
+      return `rgb(${Math.round((r / n) * k)},${Math.round((g / n) * k)},${Math.round((b / n) * k)})`;
+    };
+    return [avg(0, 4), avg(12, 16)];
+  } catch {
+    return ["#222", "#000"];
+  }
+}
+
+// ---- the text editor that opens over the story ----
+function StoryTextEditor({ initial, onDone, onCancel, canPremium }) {
+  const [el, setEl] = useState(() => initial || { id: storyId(), kind: "text", text: "", font: "classic", color: "#FFFFFF", align: "center", bg: "none", size: 34, x: 0.5, y: 0.42, s: 1, r: 0 });
+  const ref = React.useRef(null);
+  useEffect(() => {
+    const t = setTimeout(() => ref.current?.focus(), 80);
+    return () => clearTimeout(t);
+  }, []);
+  const f = storyFontOf(el.font);
+  const { fg, bg } = storyTextColors(el);
+  const fonts = [...STORY_FONTS, ...(typeof PREMIUM_FONTS !== "undefined" ? PREMIUM_FONTS : [])];
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col" style={{ background: "rgba(0,0,0,0.55)" }} data-no-swipe="">
+      <div className="flex items-center justify-between px-3 pt-3 shrink-0">
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => setEl((x) => ({ ...x, align: x.align === "center" ? "left" : x.align === "left" ? "right" : "center" }))}
+            aria-label="Alignment"
+            className="w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.35)" }}
+          >
+            {el.align === "left" ? <AlignLeft size={20} color="#fff" /> : el.align === "right" ? <AlignRight size={20} color="#fff" /> : <AlignCenter size={20} color="#fff" />}
+          </button>
+          <button
+            onClick={() => setEl((x) => ({ ...x, bg: x.bg === "none" ? "solid" : x.bg === "solid" ? "soft" : "none" }))}
+            aria-label="Text background"
+            className="w-10 h-10 rounded-full flex items-center justify-center text-[15px]"
+            style={{ background: el.bg === "none" ? "rgba(0,0,0,0.35)" : "#FFFFFF", color: el.bg === "none" ? "#FFF" : "#000", fontWeight: 800, border: "1.5px solid #fff" }}
+          >
+            A
+          </button>
+        </div>
+        <button
+          onClick={() => (el.text.trim() ? onDone(el) : onCancel(el))}
+          className="px-3 h-10 text-[16px]"
+          style={{ color: "#FFFFFF", fontWeight: 700 }}
+        >
+          Done
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 relative flex items-center justify-center px-6">
+        {/* size, like Instagram's slider on the left */}
+        <div className="absolute start-2 top-1/2 -translate-y-1/2" style={{ height: 200, width: 36 }} data-no-swipe="">
+          <div
+            className="absolute pointer-events-none"
+            style={{ left: "50%", top: 11, bottom: 11, width: 12, transform: "translateX(-50%)", background: "rgba(255,255,255,0.4)", clipPath: "polygon(0 0, 100% 0, 62% 100%, 38% 100%)", borderRadius: 6 }}
+          />
+          <input
+            type="range"
+            dir="ltr"
+            min={18}
+            max={64}
+            value={el.size}
+            onChange={(e) => setEl((x) => ({ ...x, size: Number(e.target.value) }))}
+            aria-label="Size"
+            className="loop-fx-range"
+            style={{ width: 200, transform: "rotate(-90deg) translate(-82px, -82px)", transformOrigin: "center" }}
+          />
+        </div>
+        <textarea
+          ref={ref}
+          value={el.text}
+          onChange={(e) => setEl((x) => ({ ...x, text: e.target.value.slice(0, 400) }))}
+          rows={Math.min(8, Math.max(1, el.text.split("\n").length))}
+          className="w-full bg-transparent outline-none resize-none"
+          style={{
+            fontFamily: f.family,
+            fontWeight: f.weight,
+            fontSize: el.size,
+            lineHeight: 1.34,
+            color: f.neon && !bg ? "#FFFFFF" : fg,
+            textAlign: el.align,
+            textTransform: f.upper ? "uppercase" : "none",
+            textShadow: f.neon && !bg ? `0 0 10px ${fg}, 0 0 20px ${fg}` : "none",
+            background: bg ? bg : "transparent",
+            borderRadius: 10,
+            padding: bg ? "4px 10px" : 0,
+            caretColor: "#FFFFFF",
+          }}
+          placeholder=""
+        />
+      </div>
+      <div className="shrink-0 pb-3" style={{ paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}>
+        <div className="flex gap-2 px-3 pb-2.5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+          {STORY_COLORS.map((c) => (
+            <button
+              key={c}
+              onClick={() => setEl((x) => ({ ...x, color: c }))}
+              aria-label={c}
+              className="rounded-full shrink-0"
+              style={{ width: 28, height: 28, background: c, border: el.color === c ? "3px solid #fff" : "2px solid rgba(255,255,255,0.7)", boxShadow: "0 1px 4px rgba(0,0,0,0.4)" }}
+            />
+          ))}
+        </div>
+        <div className="flex gap-2 px-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+          {fonts.map((ft) => {
+            const locked = ft.tier && !canPremium?.(ft.tier);
+            return (
+              <button
+                key={ft.key}
+                onClick={() => !locked && setEl((x) => ({ ...x, font: ft.key }))}
+                className="rounded-full px-3.5 h-9 text-[13px] shrink-0 flex items-center gap-1"
+                style={{
+                  fontFamily: ft.family,
+                  fontWeight: ft.weight,
+                  background: el.font === ft.key ? "#FFFFFF" : "rgba(0,0,0,0.45)",
+                  color: el.font === ft.key ? "#000" : "#FFF",
+                  border: "1px solid rgba(255,255,255,0.4)",
+                  opacity: locked ? 0.55 : 1,
+                }}
+              >
+                {locked && <Lock size={11} />}
+                {ft.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const STORY_EMOJI = ["😍", "😂", "🥰", "😎", "🔥", "❤️", "✨", "🎉", "💯", "🙏", "👏", "😭", "🤩", "😇", "🥳", "😘", "🌸", "🌙", "⭐", "☀️", "🌈", "🍀", "🎂", "🎁", "📍", "🇧🇩", "💐", "🕌", "☕", "🍔", "⚽", "🏏", "🎵", "📸", "✈️", "💪", "👑", "💎", "🦋", "🐱"];
+
+function StoryEditor({ file, onCancel, onPublished }) {
+  const isVideo = (file.type || "").startsWith("video");
+  const [videoUrl] = useState(() => (isVideo ? URL.createObjectURL(file) : null));
+  const [src, setSrc] = useState(null); // decoded photo
+  const [shown, setShown] = useState(null); // filtered photo (canvas)
+  const [bgColors, setBgColors] = useState(["#1a1a1a", "#000000"]);
+  const [filter, setFilter] = useState("normal");
+  const [filterFlash, setFilterFlash] = useState("");
+  const [photoT, setPhotoT] = useState({ x: 0, y: 0, s: 1, r: 0 });
+  const [elements, setElements] = useState([]);
+  const [strokes, setStrokes] = useState([]);
+  const [mode, setMode] = useState(null); // text | draw | tray | filters
+  const [textEditing, setTextEditing] = useState(null);
+  const [brush, setBrush] = useState({ tool: "pen", color: "#FFFFFF", size: 6 });
+  const [stickerType, setStickerType] = useState(null);
+  const [dragId, setDragId] = useState(null);
+  const [overTrash, setOverTrash] = useState(false);
+  const [caption, setCaption] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [stage, setStage] = useState({ w: 360, h: 640 });
+  const [badge, setBadge] = useState(null);
+  const wrapRef = React.useRef(null);
+  const stageRef = React.useRef(null);
+  const drawRef = React.useRef(null);
+  const ptrs = React.useRef(new Map());
+  const gest = React.useRef(null);
+  const liveStroke = React.useRef(null);
+  const scale = stage.w / 360;
+
+  useEffect(() => {
+    loadMyBadge().then(setBadge).catch(() => {});
+  }, []);
+  const canPremium = (tier) => !!badge?.active && (tier === "elite" ? tierRank(badge.tier) >= 2 : tierRank(badge.tier) >= 3);
+
+  useEffect(() => () => videoUrl && URL.revokeObjectURL(videoUrl), [videoUrl]);
+
+  // fit a 9:16 stage on the screen
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const fit = () => {
+      const r = el.getBoundingClientRect();
+      let h = r.height;
+      let w = (h * 9) / 16;
+      if (w > r.width) {
+        w = r.width;
+        h = (w * 16) / 9;
+      }
+      setStage({ w: Math.floor(w), h: Math.floor(h) });
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+
+  // open the photo
+  useEffect(() => {
+    if (isVideo) return;
+    let off = false;
+    fxLoadSource(file, 2048)
+      .then((c) => {
+        if (off) return;
+        setSrc(c);
+        setBgColors(storyAverageColors(c));
+      })
+      .catch(() => !off && setError("This photo can't be opened here."));
+    return () => {
+      off = true;
+    };
+  }, [file]);
+
+  // the photo with its filter
+  useEffect(() => {
+    if (!src) return;
+    if (filter === "normal") {
+      setShown(src);
+      return;
+    }
+    const c = document.createElement("canvas");
+    const r = createFxRenderer(c);
+    r.setSource(src);
+    const w = Math.min(src.width, 1600);
+    const h = Math.round((w * src.height) / src.width);
+    r.render({ filter, strength: 100, adj: {}, crop: FX_EMPTY.crop }, src.width / src.height, w, h);
+    let out = c;
+    if (r.kind === "webgl") {
+      out = document.createElement("canvas");
+      out.width = w;
+      out.height = h;
+      out.getContext("2d").drawImage(c, 0, 0);
+    }
+    r.dispose();
+    setShown(out);
+  }, [src, filter]);
+
+  // strokes on screen
+  useEffect(() => {
+    const c = drawRef.current;
+    if (!c) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = Math.round(stage.w * dpr);
+    c.height = Math.round(stage.h * dpr);
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+    drawStoryStrokes(ctx, liveStroke.current ? [...strokes, liveStroke.current] : strokes, c.width, c.height);
+  }, [strokes, stage.w, stage.h]);
+  const redrawLive = () => {
+    const c = drawRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+    drawStoryStrokes(ctx, liveStroke.current ? [...strokes, liveStroke.current] : strokes, c.width, c.height);
+  };
+
+  const flashFilter = (k) => {
+    setFilter(k);
+    const f = FX_FILTERS.find((x) => x.key === k);
+    setFilterFlash(f ? trText(f.name) : "");
+    clearTimeout(flashFilter.t);
+    flashFilter.t = setTimeout(() => setFilterFlash(""), 900);
+  };
+
+  // where the photo sits (contained, then moved / zoomed / turned)
+  const photoBox = () => {
+    if (!shown) return { w: stage.w, h: stage.h };
+    const a = shown.width / shown.height;
+    let w = stage.w;
+    let h = w / a;
+    if (h > stage.h) {
+      h = stage.h;
+      w = h * a;
+    }
+    return { w, h };
+  };
+
+  // ---- gestures ----
+  const relPos = (e) => {
+    const r = stageRef.current.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, px: e.clientX, py: e.clientY, r };
+  };
+  const trashHit = (e) => {
+    const r = stageRef.current.getBoundingClientRect();
+    const tx = r.left + r.width / 2;
+    const ty = r.bottom - 52;
+    return Math.hypot(e.clientX - tx, e.clientY - ty) < 46;
+  };
+  const onStageDown = (e, elId = null) => {
+    if (mode === "text" || mode === "tray" || stickerType) return;
+    e.stopPropagation();
+    try {
+      stageRef.current.setPointerCapture(e.pointerId);
+    } catch {}
+    ptrs.current.set(e.pointerId, relPos(e));
+    if (mode === "draw") {
+      const p = relPos(e);
+      liveStroke.current = { ...brush, pts: [[p.x, p.y]] };
+      redrawLive();
+      return;
+    }
+    const list = [...ptrs.current.values()];
+    const target = elId || gest.current?.elId || null;
+    if (list.length === 1) {
+      gest.current = { elId: target, start: list[0], moved: false, base: target ? { ...elements.find((x) => x.id === target) } : { ...photoT }, at: Date.now() };
+      if (target) setDragId(target);
+    } else if (list.length === 2) {
+      const [a, b] = list;
+      gest.current = {
+        elId: target,
+        two: true,
+        d0: Math.hypot(a.px - b.px, a.py - b.py),
+        a0: Math.atan2(b.py - a.py, b.px - a.px),
+        c0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        base: target ? { ...elements.find((x) => x.id === target) } : { ...photoT },
+        moved: true,
+      };
+    }
+  };
+  const onStageMove = (e) => {
+    if (!ptrs.current.has(e.pointerId)) return;
+    ptrs.current.set(e.pointerId, relPos(e));
+    if (mode === "draw" && liveStroke.current) {
+      const p = relPos(e);
+      const pts = liveStroke.current.pts;
+      const lp = pts[pts.length - 1];
+      if (Math.hypot((p.x - lp[0]) * stage.w, (p.y - lp[1]) * stage.h) > 1.5) pts.push([p.x, p.y]);
+      redrawLive();
+      return;
+    }
+    const g = gest.current;
+    if (!g) return;
+    const list = [...ptrs.current.values()];
+    if (g.two && list.length >= 2) {
+      const [a, b] = list;
+      const d = Math.hypot(a.px - b.px, a.py - b.py);
+      const ang = Math.atan2(b.py - a.py, b.px - a.px);
+      const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const s = Math.max(0.25, Math.min(6, (g.base.s || 1) * (d / (g.d0 || d))));
+      const r = (g.base.r || 0) + ((ang - g.a0) * 180) / Math.PI;
+      if (g.elId) {
+        setElements((prev) => prev.map((x) => (x.id === g.elId ? { ...x, s, r, x: g.base.x + (c.x - g.c0.x), y: g.base.y + (c.y - g.c0.y) } : x)));
+      } else {
+        setPhotoT({ s, r, x: g.base.x + (c.x - g.c0.x) * stage.w, y: g.base.y + (c.y - g.c0.y) * stage.h });
+      }
+    } else if (list.length === 1) {
+      const p = list[0];
+      const dx = p.x - g.start.x;
+      const dy = p.y - g.start.y;
+      if (Math.hypot(dx * stage.w, dy * stage.h) > 6) g.moved = true;
+      if (g.elId) {
+        setElements((prev) => prev.map((x) => (x.id === g.elId ? { ...x, x: g.base.x + dx, y: g.base.y + dy } : x)));
+        setOverTrash(trashHit(e));
+      }
+    }
+  };
+  const onStageUp = (e) => {
+    const had = ptrs.current.get(e.pointerId);
+    ptrs.current.delete(e.pointerId);
+    if (mode === "draw") {
+      const stroke = liveStroke.current;
+      liveStroke.current = null;
+      if (stroke && stroke.pts.length) setStrokes((s) => [...s, stroke]);
+      return;
+    }
+    const g = gest.current;
+    if (!g) return;
+    if (ptrs.current.size > 0) {
+      // one finger left: carry on as a one-finger drag from here
+      const rest = [...ptrs.current.values()][0];
+      gest.current = { elId: g.elId, start: rest, moved: true, base: g.elId ? { ...elements.find((x) => x.id === g.elId) } : { ...photoT } };
+      return;
+    }
+    gest.current = null;
+    if (g.elId) {
+      if (overTrash || (had && trashHit(e))) setElements((prev) => prev.filter((x) => x.id !== g.elId));
+      else if (!g.moved && Date.now() - (g.at || 0) < 350) {
+        const el = elements.find((x) => x.id === g.elId);
+        if (el?.kind === "text") {
+          setTextEditing(el);
+          setMode("text");
+        }
+      }
+      setDragId(null);
+      setOverTrash(false);
+      return;
+    }
+    // background: a sideways swipe changes the filter, a tap writes text
+    if (had && !g.two) {
+      const dx = (had.x - g.start.x) * stage.w;
+      const dy = (had.y - g.start.y) * stage.h;
+      if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+        const i = FX_FILTERS.findIndex((f) => f.key === filter);
+        const n = FX_FILTERS.length;
+        flashFilter(FX_FILTERS[(i + (dx < 0 ? 1 : -1) + n) % n].key);
+      } else if (!g.moved && Date.now() - (g.at || 0) < 350) {
+        setTextEditing(null);
+        setMode("text");
+      }
+    }
+  };
+
+  const addSticker = (type, data) => {
+    setStickerType(null);
+    const count = elements.filter((x) => x.kind === "sticker").length;
+    if (count >= MAX_STICKERS) return;
+    setElements((prev) => [...prev, { id: storyId(), kind: "sticker", st: { id: newStickerId(), type, ...data }, x: 0.5, y: 0.42 + (count % 3) * 0.08, s: 1, r: 0 }]);
+  };
+
+  // ---- saving ----
+  const renderPicture = async ({ withPhoto }) => {
+    const c = document.createElement("canvas");
+    c.width = STORY_W;
+    c.height = STORY_H;
+    const ctx = c.getContext("2d");
+    const k = STORY_W / stage.w;
+    if (withPhoto) {
+      const g = ctx.createLinearGradient(0, 0, 0, STORY_H);
+      g.addColorStop(0, bgColors[0]);
+      g.addColorStop(1, bgColors[1]);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, STORY_W, STORY_H);
+      if (shown) {
+        const b = photoBox();
+        ctx.save();
+        ctx.translate(STORY_W / 2 + photoT.x * k, STORY_H / 2 + photoT.y * k);
+        ctx.rotate((photoT.r * Math.PI) / 180);
+        ctx.scale(photoT.s, photoT.s);
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(shown, (-b.w * k) / 2, (-b.h * k) / 2, b.w * k, b.h * k);
+        ctx.restore();
+      }
+    }
+    // drawing on its own layer, so the eraser only removes drawing
+    if (strokes.length) {
+      const d = document.createElement("canvas");
+      d.width = STORY_W;
+      d.height = STORY_H;
+      drawStoryStrokes(d.getContext("2d"), strokes, STORY_W, STORY_H);
+      ctx.drawImage(d, 0, 0);
+    }
+    const deco = elements.filter((x) => x.kind !== "sticker");
+    for (const el of deco) {
+      if (el.kind === "text") {
+        const f = storyFontOf(el.font);
+        try {
+          await document.fonts?.load?.(`${f.weight} 40px ${f.family}`, el.text);
+        } catch {}
+      }
+      drawStoryElement(ctx, el, STORY_W, STORY_H);
+    }
+    return c;
+  };
+  const toFile = (canvas, type, q, name) =>
+    new Promise((resolve, reject) =>
+      canvas.toBlob((b) => {
+        if (!b) return reject(new Error("save"));
+        const f = new File([b], name, { type });
+        f.__loopReady = true;
+        resolve(f);
+      }, type, q)
+    );
+
+  const publish = async (audience) => {
+    setBusy("Sharing…");
+    setError("");
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not logged in");
+      if (isVideo && file.size > maxVideoBytes()) throw new Error(trJoin("That video is over {0} MB — pick a shorter one.", maxVideoMb()));
+      const upload = async (f) => {
+        const path = `${user.id}/${Date.now()}-${(f.name || "story").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const { error: upErr } = await supabase.storage.from("stories").upload(path, f);
+        if (upErr) throw new Error(upErr.message);
+        return supabase.storage.from("stories").getPublicUrl(path).data.publicUrl;
+      };
+      let mediaUrl;
+      const extra = [];
+      if (isVideo) {
+        mediaUrl = await upload(file);
+        if (strokes.length || elements.some((x) => x.kind !== "sticker")) {
+          const layer = await renderPicture({ withPhoto: false });
+          extra.push({ id: newStickerId(), type: "layer", url: await upload(await toFile(layer, "image/png", undefined, "layer.png")), x: 50, y: 50 });
+        }
+        if (filter !== "normal") extra.push({ id: newStickerId(), type: "fx", filter, x: 50, y: 50 });
+      } else {
+        const pic = await renderPicture({ withPhoto: true });
+        mediaUrl = await upload(await toFile(pic, "image/jpeg", 0.9, "story.jpg"));
+      }
+      const interactive = elements
+        .filter((x) => x.kind === "sticker")
+        .map((x) => ({ ...x.st, x: Math.round(x.x * 1000) / 10, y: Math.round(x.y * 1000) / 10, s: Math.round((x.s || 1) * 100) / 100, r: Math.round(x.r || 0) }));
+      const stickers = [...interactive, ...extra];
+      const prefs = getStoryPrefs();
+      const row = {
+        user_id: user.id,
+        media_url: mediaUrl,
+        media_type: isVideo ? "video" : "photo",
+        caption: caption.trim() || null,
+        comments_disabled: !prefs.allowReplies,
+        ...(stickers.length ? { stickers } : {}),
+        ...(audience === "close_friends" ? { audience: "close_friends" } : {}),
+      };
+      const { error: insErr } = await supabase.from("stories").insert(row);
+      if (insErr) {
+        throw new Error(
+          /audience/.test(insErr.message)
+            ? "Close friends stories start working once loop-step-21.sql has been run."
+            : /stickers/.test(insErr.message)
+            ? "Stickers need the latest Loop SQL — run it in Supabase, or remove the stickers."
+            : insErr.message
+        );
+      }
+      const mentioned = [...new Set(interactive.filter((st) => st.type === "mention" && st.user_id !== user.id).map((st) => st.user_id))];
+      if (mentioned.length) {
+        try {
+          await supabase.from("notifications").insert(mentioned.map((id) => ({ user_id: id, actor_id: user.id, type: "story_mention" })));
+        } catch {}
+      }
+      setBusy("");
+      onPublished();
+    } catch (e) {
+      setBusy("");
+      setError(e.message || "Couldn't share your story");
+    }
+  };
+
+  const pb = photoBox();
+  const toolBtn = (label, icon, onClick, active) => (
+    <button
+      key={label}
+      onClick={onClick}
+      aria-label={label}
+      className="w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90"
+      style={{ background: active ? "#FFFFFF" : "rgba(0,0,0,0.35)" }}
+    >
+      {icon}
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "#000000" }} data-no-swipe="">
+      <style>{FX_CSS}</style>
+      <div ref={wrapRef} className="flex-1 min-h-0 flex items-start justify-center pt-2">
+        <div
+          ref={stageRef}
+          className="relative overflow-hidden"
+          style={{ width: stage.w, height: stage.h, borderRadius: 14, background: `linear-gradient(180deg, ${bgColors[0]}, ${bgColors[1]})`, touchAction: "none" }}
+          onPointerDown={(e) => onStageDown(e)}
+          onPointerMove={onStageMove}
+          onPointerUp={onStageUp}
+          onPointerCancel={onStageUp}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {isVideo ? (
+            <video src={videoUrl} className="absolute inset-0 w-full h-full object-contain pointer-events-none" style={{ filter: fxCssFilter(filter) }} autoPlay loop muted playsInline />
+          ) : shown ? (
+            <canvas
+              ref={(c) => {
+                if (c && shown && c.__src !== shown) {
+                  c.width = shown.width;
+                  c.height = shown.height;
+                  c.getContext("2d").drawImage(shown, 0, 0);
+                  c.__src = shown;
+                }
+              }}
+              className="absolute pointer-events-none"
+              style={{
+                left: "50%",
+                top: "50%",
+                width: pb.w,
+                height: pb.h,
+                transform: `translate(-50%, -50%) translate(${photoT.x}px, ${photoT.y}px) rotate(${photoT.r}deg) scale(${photoT.s})`,
+              }}
+            />
+          ) : (
+            !error && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <LoopSpinner size={44} color="rgba(255,255,255,0.6)" />
+              </div>
+            )
+          )}
+          <canvas ref={drawRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+          {elements.map((el) => (
+            <div
+              key={el.id}
+              className="absolute"
+              style={{
+                left: `${el.x * 100}%`,
+                top: `${el.y * 100}%`,
+                transform: `translate(-50%, -50%) rotate(${el.r || 0}deg) ${el.kind === "sticker" ? `scale(${el.s || 1})` : ""}`,
+                touchAction: "none",
+                opacity: dragId === el.id && overTrash ? 0.45 : 1,
+                pointerEvents: mode === "draw" ? "none" : "auto",
+              }}
+              onPointerDown={(e) => onStageDown(e, el.id)}
+            >
+              {el.kind === "sticker" ? (
+                <div style={{ pointerEvents: "none" }}>
+                  <StickerBody st={el.st} mode="compose" />
+                </div>
+              ) : (
+                <StoryElementView el={el} scale={scale * (el.s || 1)} />
+              )}
+            </div>
+          ))}
+          {filterFlash && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="text-[28px]" style={{ color: "#FFFFFF", fontWeight: 700, textShadow: "0 2px 12px rgba(0,0,0,0.6)", animation: "loopFade 0.15s ease-out" }}>{filterFlash}</span>
+            </div>
+          )}
+          {dragId && (
+            <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center rounded-full pointer-events-none" style={{ bottom: 30, width: overTrash ? 60 : 48, height: overTrash ? 60 : 48, background: overTrash ? "#ED4956" : "rgba(0,0,0,0.5)", border: "1.5px solid #fff", transition: "all .12s" }}>
+              <Trash2 size={22} color="#FFFFFF" />
+            </div>
+          )}
+
+          {/* top: close and the tools */}
+          {mode !== "text" && (
+            <>
+              <button onClick={mode === "draw" ? () => setMode(null) : onCancel} aria-label="Close" className="absolute top-3 start-3 w-11 h-11 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.35)" }} onPointerDown={(e) => e.stopPropagation()}>
+                {mode === "draw" ? <Check size={22} color="#FFFFFF" /> : <X size={24} color="#FFFFFF" />}
+              </button>
+              {mode === "draw" ? (
+                <div className="absolute top-3 end-3 flex items-center gap-2" onPointerDown={(e) => e.stopPropagation()}>
+                  {strokes.length > 0 && toolBtn("Undo", <Undo2 size={20} color="#FFFFFF" />, () => setStrokes((s) => s.slice(0, -1)))}
+                  {STORY_BRUSHES.map((b) =>
+                    toolBtn(
+                      b.name,
+                      b.key === "pen" ? <PenLine size={19} color={brush.tool === b.key ? "#000" : "#fff"} /> : b.key === "marker" ? <Highlighter size={19} color={brush.tool === b.key ? "#000" : "#fff"} /> : b.key === "neon" ? <Brush size={19} color={brush.tool === b.key ? "#000" : "#fff"} /> : <Eraser size={19} color={brush.tool === b.key ? "#000" : "#fff"} />,
+                      () => setBrush((x) => ({ ...x, tool: b.key })),
+                      brush.tool === b.key
+                    )
+                  )}
+                </div>
+              ) : (
+                <div className="absolute top-3 end-3 flex flex-col gap-2.5" onPointerDown={(e) => e.stopPropagation()}>
+                  {toolBtn("Text", <Type size={21} color="#FFFFFF" />, () => {
+                    setTextEditing(null);
+                    setMode("text");
+                  })}
+                  {toolBtn("Stickers", <Sticker size={21} color="#FFFFFF" />, () => setMode("tray"))}
+                  {toolBtn("Draw", <PenLine size={20} color="#FFFFFF" />, () => setMode("draw"))}
+                  {toolBtn("Filters", <Sparkles size={20} color={mode === "filters" ? "#000" : "#FFFFFF"} />, () => setMode((m) => (m === "filters" ? null : "filters")), mode === "filters")}
+                </div>
+              )}
+            </>
+          )}
+
+          {mode === "draw" && (
+            <div className="absolute inset-x-0 bottom-0 pb-3 pt-2" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.5), transparent)" }} onPointerDown={(e) => e.stopPropagation()}>
+              <div className="px-5 mb-2">
+                <FxSlider value={brush.size} min={2} max={24} onChange={(v) => setBrush((x) => ({ ...x, size: v }))} />
+              </div>
+              <div className="flex gap-2 px-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+                {STORY_COLORS.map((c) => (
+                  <button key={c} onClick={() => setBrush((x) => ({ ...x, color: c, tool: x.tool === "eraser" ? "pen" : x.tool }))} aria-label={c} className="rounded-full shrink-0" style={{ width: 28, height: 28, background: c, border: brush.color === c ? "3px solid #fff" : "2px solid rgba(255,255,255,0.7)" }} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "filters" && (
+            <div className="absolute inset-x-0 bottom-0 pb-3 pt-6" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.6), transparent)" }} onPointerDown={(e) => e.stopPropagation()}>
+              <div className="flex gap-2 px-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+                {FX_FILTERS.map((f) => (
+                  <button key={f.key} onClick={() => flashFilter(f.key)} className="rounded-full px-3.5 h-9 text-[13px] shrink-0" style={{ background: filter === f.key ? "#FFFFFF" : "rgba(0,0,0,0.5)", color: filter === f.key ? "#000" : "#FFF", fontWeight: 600, border: "1px solid rgba(255,255,255,0.35)" }}>
+                    {f.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "text" && (
+            <StoryTextEditor
+              initial={textEditing}
+              canPremium={canPremium}
+              onCancel={(el) => {
+                if (textEditing) setElements((prev) => prev.filter((x) => x.id !== textEditing.id));
+                setTextEditing(null);
+                setMode(null);
+              }}
+              onDone={(el) => {
+                setElements((prev) => (prev.some((x) => x.id === el.id) ? prev.map((x) => (x.id === el.id ? el : x)) : [...prev, el]));
+                setTextEditing(null);
+                setMode(null);
+              }}
+            />
+          )}
+          {error && (
+            <p className="absolute top-16 inset-x-4 text-center text-[12px] rounded-xl px-3 py-2" style={{ background: "rgba(237,73,86,0.92)", color: "#fff", fontWeight: 600 }}>
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* bottom: caption, then share like Instagram */}
+      {mode !== "text" && mode !== "draw" && (
+        <div className="shrink-0 px-3 pt-2.5" style={{ paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}>
+          <input
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+            placeholder="Add a caption..."
+            maxLength={200}
+            className="w-full rounded-full px-4 h-10 text-sm outline-none mb-2.5"
+            style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.16)", color: "#FFFFFF" }}
+          />
+          <div className="flex items-center gap-2">
+            <button onClick={() => publish("everyone")} disabled={!!busy} className="flex-1 flex items-center justify-center gap-2 rounded-full h-12 text-[14px] transition-transform active:scale-95" style={{ background: "#FFFFFF", color: "#000", fontWeight: 700 }}>
+              Your story
+            </button>
+            <button onClick={() => publish("close_friends")} disabled={!!busy} className="flex-1 flex items-center justify-center gap-2 rounded-full h-12 text-[14px] transition-transform active:scale-95" style={{ background: "#1CD14F", color: "#FFFFFF", fontWeight: 700 }}>
+              <Star size={16} color="#FFFFFF" fill="#FFFFFF" />
+              Close friends
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mode === "tray" && (
+        <StorySheetShell title="Stickers" onClose={() => setMode(null)}>
+          <div className="grid grid-cols-3 gap-2.5 px-4 pb-4">
+            {STICKER_TYPES.map(({ type, label, icon: Icon }) => (
+              <button
+                key={type}
+                onClick={() => {
+                  setMode(null);
+                  setStickerType(type);
+                }}
+                className="flex flex-col items-center justify-center gap-1.5 rounded-2xl py-4 transition-transform active:scale-95"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+              >
+                <Icon size={22} color="var(--text)" />
+                <span className="text-[12px]" style={{ color: "var(--text)", fontWeight: 700 }}>{label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="px-4 text-[12px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Emoji</p>
+          <div className="grid grid-cols-8 gap-1 px-3 pb-6">
+            {STORY_EMOJI.map((em) => (
+              <button
+                key={em}
+                onClick={() => {
+                  setMode(null);
+                  setElements((prev) => [...prev, { id: storyId(), kind: "emoji", emoji: em, x: 0.5, y: 0.45, s: 1, r: 0 }]);
+                }}
+                className="aspect-square flex items-center justify-center text-[28px] rounded-lg active:scale-125 transition-transform"
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+        </StorySheetShell>
+      )}
+      {stickerType && <StickerEditorSheet type={stickerType} onDone={(data) => addSticker(stickerType, data)} onClose={() => setStickerType(null)} />}
+
+      {busy && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3" style={{ background: "rgba(0,0,0,0.7)" }}>
+          <LoopSpinner size={48} color="rgba(255,255,255,0.7)" />
+          <p className="text-[13px]" style={{ color: "#fff", fontWeight: 600 }}>{busy}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken }) {
   const [mode, setMode] = useState(initialMode);
   const [sound, setSound] = useState(presetSound); // a sound from someone else's video
@@ -16814,6 +19298,9 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
   const [draftNote, setDraftNote] = useState("");
   const [postedScheduled, setPostedScheduled] = useState(null); // Date when last share was scheduled
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [editorAt, setEditorAt] = useState(null); // which item the photo editor opens on
+  const [aiLabel, setAiLabel] = useState(false);
+  const [tagScreen, setTagScreen] = useState(false);
   const advancedCount = [hideLikes || hideComments || hideRepostsSaves, turnOffComments, matureContent, scheduleOn].filter(Boolean).length;
 
   const refreshDrafts = () =>
@@ -16849,6 +19336,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
         tagInput,
         taggedPeople,
         aspect,
+        aiLabel,
         pollEnabled,
         pollQuestion,
         pollOptions,
@@ -16893,6 +19381,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
     setTagInput(d.tagInput || "");
     setTaggedPeople(Array.isArray(d.taggedPeople) ? d.taggedPeople : []);
     setAspect(d.aspect || "4:5");
+    setAiLabel(!!d.aiLabel);
     setPollEnabled(!!d.pollEnabled);
     setPollQuestion(d.pollQuestion || "");
     setPollOptions(d.pollOptions && d.pollOptions.length >= 2 ? d.pollOptions : ["", ""]);
@@ -16956,6 +19445,9 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
       setLimitNotice("");
       return combined;
     });
+    // Like Instagram: pick → edit → caption. Photos open the editor.
+    const firstPhoto = picked.findIndex((f) => !(f.type || "").startsWith("video"));
+    if (firstPhoto >= 0 && items.length + firstPhoto < 20) setEditorAt(items.length + firstPhoto);
   };
 
   const removeItem = (index) => {
@@ -16984,6 +19476,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
     setCollabPeople([]);
     setAspect("4:5");
     setLinkUrl("");
+    setAiLabel(false);
     if (coverUrl) URL.revokeObjectURL(coverUrl);
     setCoverFile(null);
     setCoverUrl(null);
@@ -17133,9 +19626,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
       coverImage = carouselUploads[0].url;
     }
 
-    const { data: insertedPost, error: insertError } = await supabase
-      .from("posts")
-      .insert({
+    const postRow = {
         user_id: user.id,
         media_url: coverImage,
         cover_url: customCover,
@@ -17159,9 +19650,15 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
         // database keeps it hidden from everyone else until then, and it
         // lands in the feed in the right place when that moment arrives.
         ...(scheduledFor ? { created_at: scheduledFor.toISOString() } : {}),
-      })
-      .select("id")
-      .single();
+        ...(aiLabel ? { ai_label: true } : {}),
+    };
+    let { data: insertedPost, error: insertError } = await supabase.from("posts").insert(postRow).select("id").single();
+    if (insertError && postRow.ai_label && /ai_label/.test(insertError.message || "")) {
+      // The AI label needs loop-step-21.sql; post without it rather than fail.
+      delete postRow.ai_label;
+      ({ data: insertedPost, error: insertError } = await supabase.from("posts").insert(postRow).select("id").single());
+    }
+    if (!insertError && insertedPost?.id) markAiLabel(insertedPost.id, !!postRow.ai_label);
 
     if (insertError) {
       setUploading(false);
@@ -17389,11 +19886,20 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
               </label>
             ) : (
               <>
-                <div className="rounded-2xl overflow-hidden mb-2 mx-auto" style={{ background: "var(--bg-sunken)", aspectRatio: POST_ASPECTS.find((a) => a.key === aspect)?.css || "4 / 5", width: aspect === "16:9" ? "100%" : "82%" }}>
-                  {items[0].type === "photo" ? (
-                    <img src={items[0].url} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <video src={items[0].url} className="w-full h-full object-cover" muted playsInline autoPlay loop />
+                <div className="relative rounded-2xl overflow-hidden mb-2 mx-auto" style={{ background: "var(--bg-sunken)", aspectRatio: POST_ASPECTS.find((a) => a.key === aspect)?.css || "4 / 5", width: aspect === "16:9" ? "100%" : "82%" }}>
+                  <button onClick={() => setEditorAt(0)} aria-label="Edit photos" className="block w-full h-full">
+                    {items[0].type === "photo" ? (
+                      <img src={items[0].url} alt="" className="w-full h-full object-cover" draggable={false} />
+                    ) : (
+                      <video src={items[0].url} className="w-full h-full object-cover" muted playsInline autoPlay loop />
+                    )}
+                  </button>
+                  {items.some((it) => it.type === "photo") && (
+                    <button
+                      onClick={() => setEditorAt(Math.max(0, items.findIndex((it) => it.type === "photo")))}
+                      className="absolute bottom-2.5 end-2.5 flex items-center gap-1.5 rounded-full px-3 h-8 text-[12px] transition-transform active:scale-95"
+                      style={{ background: "rgba(0,0,0,0.65)", color: "#FFFFFF", fontWeight: 700 }}
+                    >{trJoin("{0} Edit", <SlidersHorizontal size={14} color="#FFFFFF" />)}</button>
                   )}
                 </div>
                 <div className="flex items-center justify-center gap-2 mb-3">
@@ -17427,7 +19933,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
                   {items.map((it, i) => (
                     <div key={i} className="relative shrink-0 rounded-xl overflow-hidden" style={{ width: 84, height: 84, background: "var(--surface)" }}>
                       {it.type === "photo" ? (
-                        <img src={it.url} alt="" className="w-full h-full object-cover" />
+                        <img src={it.url} alt="" className="w-full h-full object-cover" draggable={false} onClick={() => setEditorAt(i)} />
                       ) : (
                         <video src={it.url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
                       )}
@@ -17529,45 +20035,61 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
 
         <CaptionBox value={caption} onChange={setCaption} placeholder="Write a caption..." />
 
-        <div className="rounded-xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="w-full flex items-center gap-2 px-3 py-2.5 text-sm">
-            <MapPin size={15} color="var(--text-muted)" />
+        <div className="rounded-2xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <button onClick={() => setTagScreen(true)} className="w-full flex items-center gap-3 px-3.5 py-3 text-start transition-colors active:bg-[var(--active-highlight)]">
+            <CircleUserRound size={20} color="var(--text)" strokeWidth={1.9} />
+            <span className="flex-1 text-[15px]" style={{ color: "var(--text)" }}>Tag people</span>
+            {(taggedPeople.length > 0 || collabPeople.length > 0) && (
+              <span className="flex items-center gap-1.5 min-w-0">
+                <span className="flex shrink-0">
+                  {[...taggedPeople, ...collabPeople].slice(0, 3).map((p, i) => (
+                    <span key={p.id + "-" + i} className="rounded-full" style={{ marginInlineStart: i ? -7 : 0, border: "2px solid var(--surface)" }}>
+                      <Avatar username={p.username} avatarUrl={p.avatar_url} size={20} />
+                    </span>
+                  ))}
+                </span>
+                <span className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                  {taggedPeople.length + collabPeople.length === 1
+                    ? (taggedPeople[0] || collabPeople[0]).username
+                    : trJoin("{0} people", taggedPeople.length + collabPeople.length)}
+                </span>
+              </span>
+            )}
+            <ChevronRight size={18} color="var(--text-muted)" />
+          </button>
+          <div className="flex items-center gap-3 px-3.5 py-3" style={{ borderTop: "1px solid var(--border)" }}>
+            <MapPin size={20} color="var(--text)" strokeWidth={1.9} />
             <input
               type="text"
               placeholder="Add location"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
-              className="flex-1 bg-transparent text-sm outline-none"
+              className="flex-1 bg-transparent text-[15px] outline-none min-w-0"
               style={{ color: "var(--text)" }}
             />
           </div>
-          <div className="w-full flex items-center gap-2 px-3 py-2.5 text-sm" style={{ borderTop: "1px solid var(--border)" }}>
-            <Link2 size={15} color="var(--text-muted)" />
+          <div className="flex items-center gap-3 px-3.5 py-3" style={{ borderTop: "1px solid var(--border)" }}>
+            <Link2 size={20} color="var(--text)" strokeWidth={1.9} />
             <input
               type="url"
               inputMode="url"
-              placeholder="Add a link (optional)"
+              placeholder="Add link"
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
-              className="flex-1 bg-transparent text-sm outline-none"
+              className="flex-1 bg-transparent text-[15px] outline-none min-w-0"
               style={{ color: "var(--text)" }}
             />
           </div>
-        </div>
-
-        <div className="rounded-xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <TagPeoplePicker bare value={taggedPeople} onChange={setTaggedPeople} />
-          <div style={{ borderTop: "1px solid var(--border)" }}>
-            <TagPeoplePicker
-              bare
-              icon={Users}
-              value={collabPeople}
-              onChange={setCollabPeople}
-              title="Invite collaborators"
-              max={3}
-              hint="If they accept, this post shows on their profile too, with both your names on it."
-            />
-          </div>
+          <button onClick={() => setAiLabel((v) => !v)} role="switch" aria-checked={aiLabel} className="w-full flex items-center gap-3 px-3.5 py-3 text-start" style={{ borderTop: "1px solid var(--border)" }}>
+            <Sparkles size={20} color="var(--text)" strokeWidth={1.9} />
+            <span className="flex-1 min-w-0">
+              <span className="block text-[15px]" style={{ color: "var(--text)" }}>Add AI label</span>
+              <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.35 }}>
+                Label realistic photos or videos that were made or changed with AI.
+              </span>
+            </span>
+            <NewPostToggle on={aiLabel} />
+          </button>
         </div>
 
         {/* Poll */}
@@ -17747,6 +20269,31 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
         )}
       </div>
 
+      {tagScreen && (
+        <TagPeopleScreen
+          media={mode === "reel" ? (previewUrl ? { url: previewUrl, type: "reel" } : null) : items[0] ? { url: items[0].url, type: items[0].type } : null}
+          aspect={aspect}
+          tagged={taggedPeople}
+          collabs={collabPeople}
+          onTagged={setTaggedPeople}
+          onCollabs={setCollabPeople}
+          onClose={() => setTagScreen(false)}
+        />
+      )}
+      {editorAt !== null && mode !== "reel" && items.length > 0 && (
+        <PhotoEditor
+          items={items}
+          startIndex={Math.min(editorAt, items.length - 1)}
+          aspect={aspect}
+          onAspect={setAspect}
+          onClose={() => setEditorAt(null)}
+          onDone={(next) => {
+            next.forEach((n) => n.oldUrl && n.oldUrl !== n.url && URL.revokeObjectURL(n.oldUrl));
+            setItems(next.map(({ oldUrl, ...rest }) => rest));
+            setEditorAt(null);
+          }}
+        />
+      )}
       {draftsOpen && (
         <StorySheetShell title="Drafts" onClose={() => setDraftsOpen(false)}>
           <p className="text-[11px] px-4 pb-2" style={{ color: "var(--text-muted)" }}>
@@ -18037,7 +20584,7 @@ function NotificationsSettings({ userId, onBack }) {
       {error && <p className="text-xs px-4 pt-3" style={{ color: "var(--heart)" }}>{error}</p>}
 
       {loading ? (
-        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : (
         <div className="px-4 pt-4">
           {/* On the web each device must opt in once; this is that switch,
@@ -18333,7 +20880,7 @@ function SettingsScreen({
 
   const handleLogout = async () => {
     if (!window.confirm(trText("Log out of Loop?"))) return;
-    await supabase.auth.signOut();
+    await logOutCurrentAccount();
   };
 
   const Header = ({ title, back }) => (
@@ -18348,7 +20895,7 @@ function SettingsScreen({
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
       </div>
     );
   }
@@ -19170,7 +21717,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
       </div>
     );
   }
@@ -19198,6 +21745,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             <div className="flex flex-col leading-tight min-w-0 text-start">
               <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
               <LocationLink location={post.location} />
+              <AiInfoChip postId={post.id} />
             </div>
           </button>
         </div>
@@ -19239,7 +21787,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
           </div>
           <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
             <button onClick={toggleSave} className="h-7 flex items-center justify-center transition-transform active:scale-90">
-              <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
+              <PopOnTrue on={post.saved} kind="save"><Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} /></PopOnTrue>
             </button>
             <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
               {countPrefs.saves && !post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
@@ -19257,7 +21805,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
             onTouchMove={() => clearTimeout(pressTimer.current)}
             className="h-8 flex items-center justify-center transition-transform active:scale-90"
           >
-            <Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} />
+            <PopOnTrue on={post.liked} kind="like"><Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} /></PopOnTrue>
           </button>
           <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
             {countPrefs.likes && !post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
@@ -19279,7 +21827,7 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
           </div>
           <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
             <button onClick={toggleRepost} className="h-7 flex items-center justify-center transition-transform active:scale-90">
-              <RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} />
+              <PopOnTrue on={post.reposted} kind="repost"><RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} /></PopOnTrue>
             </button>
             <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
               {countPrefs.reposts && !post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
@@ -19834,7 +22382,7 @@ function AccountStatusScreen({ onBack }) {
     <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
       <ScreenHeader title="Account status" onBack={onBack} />
       {!state ? (
-        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : (
         <>
           <div className="flex flex-col items-center text-center px-6 pt-8 pb-6">
@@ -19922,7 +22470,7 @@ function FavouritesScreen({ onBack, onOpenProfile }) {
         Posts from your favourites show with a ★ in your feed. Add someone from the ⋯ menu on their post. They won't be told.
       </p>
       {rows === null ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center py-12">
           <Star size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -20151,7 +22699,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
         {error ? (
           <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
         ) : loading ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : items.length === 0 ? (
           <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Nothing here yet</p>
         ) : isLikes ? (
@@ -20194,7 +22742,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
         {error ? (
           <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
         ) : loading ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : items.length === 0 ? (
           <p className="text-xs text-center py-10 px-8" style={{ color: "var(--text-muted)" }}>
             Nothing yet. Reels you watch turn up here, newest first.
@@ -20591,7 +23139,7 @@ function ArchiveScreen({ currentUserId, onBack, onOpenPost }) {
       {error ? (
         <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
       ) : loading ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : shown.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-16 px-8 text-center">
           <Archive size={28} color="var(--toggle-off)" />
@@ -20619,18 +23167,20 @@ function ArchiveScreen({ currentUserId, onBack, onOpenPost }) {
   );
 }
 
-// ---- Multi-account ----
-// Supabase keeps one session in localStorage, so switching accounts means
-// stashing each session's tokens ourselves and calling setSession to swap.
-// Refresh tokens rotate, so a stashed one can go stale — that case is
-// handled by asking for a fresh login rather than failing silently.
+// ---- Several accounts on one phone (like Instagram) ----
+// Supabase keeps one session at a time, so Loop keeps a copy of each
+// account's session here and swaps them. Every time a session is renewed
+// the copy is renewed too, so switching back always works. To switch,
+// Loop first asks for a fresh session for the other account — the one
+// that is open now is only replaced once that has worked, so a failed
+// switch never logs anyone out.
 const ACCOUNTS_KEY = "loop_accounts";
 
 function readAccounts() {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
+    return Array.isArray(list) ? list.filter((a) => a && a.id) : [];
   } catch {
     return [];
   }
@@ -20640,92 +23190,388 @@ function writeAccounts(list) {
   try {
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(list));
   } catch {}
+  try {
+    window.dispatchEvent(new Event("loop:accounts"));
+  } catch {}
+}
+
+// Keep this phone's copy of the open session up to date.
+function stashSession(session, profile) {
+  if (DEMO_MODE || !session?.user?.id || !session.refresh_token) return;
+  const list = readAccounts();
+  const old = list.find((a) => a.id === session.user.id) || {};
+  const entry = {
+    ...old,
+    id: session.user.id,
+    username: (profile && profile.username) || old.username || "",
+    avatar_url: profile ? profile.avatar_url || null : old.avatar_url || null,
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    used_at: Date.now(),
+    expired: false,
+  };
+  writeAccounts([entry, ...list.filter((a) => a.id !== entry.id)].slice(0, 6));
 }
 
 async function rememberCurrentAccount(profile) {
-  const { data } = await supabase.auth.getSession();
-  const session = data?.session;
-  if (!session || !profile) return;
-  const entry = {
-    id: profile.id,
-    username: profile.username,
-    avatar_url: profile.avatar_url || null,
-    access_token: session.access_token,
-    refresh_token: session.refresh_token,
-  };
-  const list = readAccounts().filter((a) => a.id !== entry.id);
-  writeAccounts([entry, ...list].slice(0, 5));
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (data?.session && profile && data.session.user?.id === profile.id) stashSession(data.session, profile);
+  } catch {}
 }
 
-function AccountSwitcherSheet({ currentUserId, onClose, onSwitched, onAddAccount }) {
-  const [accounts, setAccounts] = useState(readAccounts());
-  const [busyId, setBusyId] = useState(null);
-  const [error, setError] = useState("");
+function otherAccounts(meId) {
+  return readAccounts()
+    .filter((a) => a.id !== meId)
+    .sort((a, b) => (b.used_at || 0) - (a.used_at || 0));
+}
 
-  const switchTo = async (acc) => {
+function markAccountExpired(id) {
+  writeAccounts(readAccounts().map((a) => (a.id === id ? { ...a, expired: true } : a)));
+}
+
+// Ask Supabase for a brand-new session for a saved account without
+// touching the one that is open now.
+async function freshSessionFor(acc) {
+  const auth = supabase.auth || {};
+  const base =
+    (typeof auth.url === "string" && auth.url) ||
+    (SB_PUBLIC_PREFIX ? SB_PUBLIC_PREFIX.replace(/\/storage\/v1\/object\/public\/?$/, "/auth/v1") : "");
+  const key = (auth.headers && (auth.headers.apikey || auth.headers.apiKey)) || supabase.rest?.headers?.apikey || supabase.supabaseKey || "";
+  if (!base || !key || DEMO_MODE) return { session: { access_token: acc.access_token, refresh_token: acc.refresh_token }, direct: false };
+  try {
+    const res = await fetch(`${base}/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json;charset=UTF-8" },
+      body: JSON.stringify({ refresh_token: acc.refresh_token }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.access_token) {
+      if (res.status >= 500 || res.status === 402 || res.status === 429) return { error: "busy" };
+      return { error: "expired" };
+    }
+    return { session: { access_token: body.access_token, refresh_token: body.refresh_token }, direct: true };
+  } catch {
+    return { error: "offline" };
+  }
+}
+
+// Switch to a saved account. Returns { ok } or { error: "expired" | "offline" | "busy" }.
+async function switchToAccount(acc) {
+  let current = null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    current = data?.session || null;
+  } catch {}
+  if (current) stashSession(current);
+  if (current?.user?.id === acc.id) return { ok: true, same: true };
+  const fresh = await freshSessionFor(acc);
+  if (fresh.error) {
+    if (fresh.error === "expired") markAccountExpired(acc.id);
+    return { error: fresh.error };
+  }
+  let error = null;
+  try {
+    ({ error } = await supabase.auth.setSession(fresh.session));
+  } catch (e) {
+    error = e || new Error("setSession");
+  }
+  if (error) {
+    // Put the account that was open back, exactly as it was.
+    if (current) {
+      try {
+        await supabase.auth.setSession({ access_token: current.access_token, refresh_token: current.refresh_token });
+      } catch {}
+    }
+    markAccountExpired(acc.id);
+    return { error: "expired" };
+  }
+  try {
+    sessionStorage.setItem("loop_switched_to", acc.username || "");
+  } catch {}
+  return { ok: true };
+}
+
+// "Log out": only this phone, only this account. If another account is
+// saved here, Loop opens that one instead of the login screen.
+async function logOutCurrentAccount() {
+  if (DEMO_MODE) {
+    await supabase.auth.signOut();
+    return;
+  }
+  let me = null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    me = data?.session?.user?.id || null;
+  } catch {}
+  writeAccounts(readAccounts().filter((a) => a.id !== me));
+  let next = null;
+  for (const acc of otherAccounts(me)) {
+    if (acc.expired) continue;
+    const r = await freshSessionFor(acc);
+    if (r.session && r.direct) {
+      next = { acc, session: r.session };
+      break;
+    }
+    if (r.error === "expired") markAccountExpired(acc.id);
+  }
+  try {
+    await supabase.auth.signOut({ scope: "local" });
+  } catch {}
+  if (next) {
+    let error = null;
+    try {
+      ({ error } = await supabase.auth.setSession(next.session));
+    } catch (e) {
+      error = e || new Error("setSession");
+    }
+    if (!error) {
+      try {
+        sessionStorage.setItem("loop_switched_to", next.acc.username || "");
+      } catch {}
+      window.location.reload();
+    }
+  }
+}
+
+// Switching covers the screen for a moment, then Loop starts again as the
+// other account.
+function SwitchingCover({ username }) {
+  return (
+    <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center gap-4" style={{ background: "var(--bg)" }}>
+      <LoopWordmark height={44} />
+      <LoopSpinner size={40} />
+      {username ? (
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>{trJoin("Switching to {0}", <b style={{ color: "var(--text)" }}>{username}</b>)}</p>
+      ) : null}
+    </div>
+  );
+}
+
+// Long-press the profile tab (or tap your name on your profile).
+function AccountSwitcherSheet({ currentUserId, onClose, onAddAccount, onOpenSettings }) {
+  const [accounts, setAccounts] = useState(() => readAccounts());
+  const [busyId, setBusyId] = useState(null);
+  const [switching, setSwitching] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const re = () => setAccounts(readAccounts());
+    window.addEventListener("loop:accounts", re);
+    return () => window.removeEventListener("loop:accounts", re);
+  }, []);
+  const me = accounts.find((a) => a.id === currentUserId);
+  const others = accounts.filter((a) => a.id !== currentUserId).sort((a, b) => (b.used_at || 0) - (a.used_at || 0));
+  const list = me ? [me, ...others] : others;
+
+  const pick = async (acc) => {
     if (acc.id === currentUserId) {
       onClose();
       return;
     }
-    setBusyId(acc.id);
-    setError("");
-    const { error: err } = await supabase.auth.setSession({
-      access_token: acc.access_token,
-      refresh_token: acc.refresh_token,
-    });
-    setBusyId(null);
-    if (err) {
-      // Stale refresh token — drop it and send them to a normal login.
-      writeAccounts(readAccounts().filter((a) => a.id !== acc.id));
-      setAccounts(readAccounts());
-      setError(`Session for @${acc.username} expired. Log in again to add it back.`);
+    if (acc.expired) {
+      onAddAccount?.();
       return;
     }
-    onSwitched();
+    setBusyId(acc.id);
+    setError("");
+    const r = await switchToAccount(acc);
+    if (r.ok) {
+      setSwitching(acc.username || "");
+      window.location.reload();
+      return;
+    }
+    setBusyId(null);
+    setAccounts(readAccounts());
+    setError(
+      r.error === "offline"
+        ? "No internet connection. Try again when you're back online."
+        : r.error === "busy"
+        ? "Loop is busy right now. Try again in a moment."
+        : trJoin("{0} needs you to log in again.", "@" + (acc.username || "?"))
+    );
   };
-
   const forget = (acc) => {
     writeAccounts(readAccounts().filter((a) => a.id !== acc.id));
-    setAccounts(readAccounts());
   };
 
+  if (switching !== null) return <SwitchingCover username={switching} />;
+
   return (
-    <StorySheetShell title="Switch account" onClose={onClose}>
-      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
-      <div className="pb-2">
-        {accounts.length === 0 ? (
-          <p className="text-xs text-center py-5 px-8" style={{ color: "var(--text-muted)" }}>
-            No other accounts saved on this device yet.
-          </p>
-        ) : (
-          accounts.map((a) => (
-            <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
-              <Avatar username={a.username} avatarUrl={a.avatar_url} size={44} />
-              <span className="flex-1 text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</span>
-              {a.id === currentUserId ? (
-                <Check size={18} color="var(--accent-solid)" />
-              ) : (
-                <>
-                  <button
-                    onClick={() => switchTo(a)}
-                    disabled={busyId === a.id}
-                    className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
-                    style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busyId === a.id ? 0.6 : 1 }}
-                  >
-                    {busyId === a.id ? "..." : "Switch"}
+    <>
+      <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.6)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
+      <div
+        className="fixed start-0 end-0 bottom-0 z-[71] rounded-t-3xl px-4 pb-5"
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", animation: "loopSheetUp 0.2s ease-out", paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))" }}
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-4">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        {error && <p className="text-xs pb-2 px-1" style={{ color: "var(--heart)" }}>{error}</p>}
+        <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+          {list.map((a) => {
+            const isMe = a.id === currentUserId;
+            return (
+              <div key={a.id} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                <button onClick={() => pick(a)} disabled={!!busyId} className="flex items-center gap-3 flex-1 min-w-0 text-start">
+                  <Avatar username={a.username || "?"} avatarUrl={a.avatar_url} size={48} />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-[15px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username || "…"}</span>
+                    {a.expired && !isMe && (
+                      <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>Log in again to use this account</span>
+                    )}
+                  </span>
+                </button>
+                {isMe ? (
+                  <span className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: "#0095F6" }}>
+                    <Check size={14} color="#FFFFFF" strokeWidth={3} />
+                  </span>
+                ) : busyId === a.id ? (
+                  <LoopSpinner size={28} />
+                ) : (
+                  <button onClick={() => forget(a)} aria-label="Remove from this phone" className="p-1 shrink-0">
+                    <X size={16} color="var(--text-muted)" />
                   </button>
-                  <button onClick={() => forget(a)} className="p-1 shrink-0"><X size={16} color="var(--text-muted)" /></button>
-                </>
-              )}
-            </div>
-          ))
+                )}
+              </div>
+            );
+          })}
+          <button onClick={onAddAccount} className="w-full flex items-center gap-3 px-4 py-3 text-start transition-colors active:bg-[var(--active-highlight)]">
+            <span className="rounded-full flex items-center justify-center shrink-0" style={{ width: 48, height: 48, background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+              <Plus size={22} color="var(--text)" />
+            </span>
+            <span className="text-[15px]" style={{ color: "var(--text)", fontWeight: 600 }}>Add Loop account</span>
+          </button>
+        </div>
+        {onOpenSettings && (
+          <button
+            onClick={onOpenSettings}
+            className="w-full rounded-full h-12 mt-3 text-[14px] transition-transform active:scale-[0.98]"
+            style={{ border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+          >
+            Account settings
+          </button>
         )}
       </div>
-      <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
-      <StoryMenuRow icon={<UserPlus size={17} color="var(--text)" />} label="Log into another account" onClick={onAddAccount} />
-      <div className="pb-4" />
-    </StorySheetShell>
+    </>
   );
+}
+
+// Your own picture in the bottom bar. Tap: your profile. Double-tap:
+// the other account you used last. Hold: the accounts sheet.
+function ProfileTabButton({ me, active, onTap, onDoubleTap, onLongPress }) {
+  const lastTap = React.useRef(0);
+  const holdTimer = React.useRef(null);
+  const held = React.useRef(false);
+  const start = () => {
+    held.current = false;
+    clearTimeout(holdTimer.current);
+    holdTimer.current = setTimeout(() => {
+      held.current = true;
+      try {
+        navigator.vibrate?.(10);
+      } catch {}
+      onLongPress?.();
+    }, 450);
+  };
+  const cancel = () => clearTimeout(holdTimer.current);
+  const click = () => {
+    if (held.current) {
+      held.current = false;
+      return;
+    }
+    const now = Date.now();
+    if (now - lastTap.current < 320) {
+      lastTap.current = 0;
+      onDoubleTap?.();
+      return;
+    }
+    lastTap.current = now;
+    onTap?.();
+  };
+  const ring = active ? "var(--text)" : "transparent";
+  return (
+    <button
+      onClick={click}
+      onPointerDown={start}
+      onPointerUp={cancel}
+      onPointerLeave={cancel}
+      onPointerCancel={cancel}
+      onContextMenu={(e) => e.preventDefault()}
+      aria-label="Profile"
+      className="flex flex-col items-center justify-center gap-1"
+      style={{ width: 44, height: 36, WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
+    >
+      {me && (me.avatar_url || me.username) ? (
+        <span className="rounded-full flex items-center justify-center" style={{ width: 28, height: 28, border: `2px solid ${ring}`, padding: 1 }}>
+          {me.avatar_url ? (
+            <img src={me.avatar_url} alt="" draggable={false} className="w-full h-full rounded-full object-cover" />
+          ) : (
+            <span className="w-full h-full rounded-full flex items-center justify-center text-[11px]" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+              {(me.username || "?")[0].toUpperCase()}
+            </span>
+          )}
+        </span>
+      ) : (
+        <CircleUserRound size={23} color={active ? "var(--accent-solid)" : "var(--text-muted)"} strokeWidth={active ? 2.4 : 2} />
+      )}
+      <span className="rounded-full" style={{ width: 4, height: 4, background: active ? "var(--accent-solid)" : "transparent" }} />
+    </button>
+  );
+}
+
+// Who is logged in, for the bottom bar.
+function useMeProfile(meId, refreshKey) {
+  const [me, setMe] = useState(null);
+  useEffect(() => {
+    if (!meId) {
+      setMe(null);
+      return;
+    }
+    let off = false;
+    const cached = readAccounts().find((a) => a.id === meId);
+    if (cached) setMe({ id: meId, username: cached.username, avatar_url: cached.avatar_url });
+    supabase
+      .from("profiles")
+      .select("id, username, avatar_url")
+      .eq("id", meId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (off || !data) return;
+        setMe(data);
+        rememberCurrentAccount(data);
+      })
+      .catch?.(() => {});
+    return () => {
+      off = true;
+    };
+  }, [meId, refreshKey]);
+  return me;
+}
+
+// Unread chats, for the badge on the Messages tab.
+function useUnreadChats(meId, poke) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!meId) return;
+    let off = false;
+    const load = async () => {
+      if (document.visibilityState === "hidden") return;
+      try {
+        const { data } = await supabase.rpc("my_unread_count");
+        if (!off) setN(Number(data) || 0);
+      } catch {}
+    };
+    load();
+    const t = setInterval(load, 45000);
+    const vis = () => document.visibilityState === "visible" && load();
+    document.addEventListener("visibilitychange", vis);
+    return () => {
+      off = true;
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", vis);
+    };
+  }, [meId, poke]);
+  return n;
 }
 
 // ---- Share profile ----
@@ -20984,7 +23830,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
 
       <p className="text-[11px] px-4 pt-3 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>{trJoin("{0} on this list", members.length)}</p>
       {loading ? (
-        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : members.length === 0 ? (
         <p className="text-xs px-4 pb-1" style={{ color: "var(--text-muted)" }}>Nobody yet</p>
       ) : (
@@ -21003,7 +23849,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
               className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
               style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
             >
-              Remove
+              {PEOPLE_LIST_WORDS[kind]?.remove || "Remove"}
             </button>
           </div>
         ))
@@ -21015,7 +23861,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search people to add"
+            placeholder={PEOPLE_LIST_WORDS[kind]?.search || "Search people to add"}
             className="flex-1 bg-transparent outline-none text-sm"
             style={{ color: "var(--text)" }}
           />
@@ -21030,14 +23876,14 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
             onClick={() => add(c)}
             disabled={busyId === c.id}
             className="rounded-full px-4 h-8 text-xs shrink-0 transition-transform active:scale-95"
-            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busyId === c.id ? 0.6 : 1 }}
+            style={{ background: kind === "blocked" ? "var(--heart)" : ACCENT, color: kind === "blocked" ? "#FFFFFF" : "var(--on-accent)", fontWeight: 700, opacity: busyId === c.id ? 0.6 : 1 }}
           >
-            Add
+            {PEOPLE_LIST_WORDS[kind]?.add || "Add"}
           </button>
         </div>
       ))}
       {!loading && shown.length === 0 && (
-        <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>No one else to add</p>
+        <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>{PEOPLE_LIST_WORDS[kind]?.none || "No one else to add"}</p>
       )}
     </div>
   );
@@ -21451,7 +24297,7 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
       </div>
     );
   }
@@ -22029,7 +24875,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
         {error ? (
           <p className="text-xs text-center py-10 px-6" style={{ color: "var(--heart)" }}>{error}</p>
         ) : loading ? (
-          <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : posts.length === 0 ? (
           <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Nothing here</p>
         ) : (
@@ -22046,6 +24892,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                   <div className="flex flex-col leading-tight min-w-0 text-start">
                     <span className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{post.username}</span>
                     <LocationLink location={post.location} />
+                    <AiInfoChip postId={post.id} />
                   </div>
                 </button>
                 <button
@@ -22086,7 +24933,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                   </div>
                   <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                     <button onClick={() => toggleSave(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
-                      <Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} />
+                      <PopOnTrue on={post.saved} kind="save"><Bookmark size={23} color="var(--text)" fill={post.saved ? "var(--text)" : "none"} strokeWidth={1.9} /></PopOnTrue>
                     </button>
                     <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                       {!post.hide_saves && post.saveCount > 0 ? formatCount(post.saveCount) : "\u00A0"}
@@ -22108,7 +24955,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                     }}
                     className="h-8 flex items-center justify-center transition-transform active:scale-90"
                   >
-                    <Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} />
+                    <PopOnTrue on={post.liked} kind="like"><Heart size={31} color={post.liked ? "var(--heart)" : "var(--text)"} fill={post.liked ? "var(--heart)" : "none"} strokeWidth={1.9} /></PopOnTrue>
                   </button>
                   <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                     {!post.hide_likes && post.likeCount > 0 ? formatCount(post.likeCount) : "\u00A0"}
@@ -22130,7 +24977,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
                   </div>
                   <div className="flex flex-col items-center" style={{ minWidth: 28 }}>
                     <button onClick={() => toggleRepost(post)} className="h-7 flex items-center justify-center transition-transform active:scale-90">
-                      <RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} />
+                      <PopOnTrue on={post.reposted} kind="repost"><RepostIcon size={25} color={post.reposted ? "var(--accent-solid)" : "var(--text)"} active={post.reposted} /></PopOnTrue>
                     </button>
                     <span className="text-[11px] leading-none h-3 mt-1" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
                       {!post.hide_reposts && post.repostCount > 0 ? formatCount(post.repostCount) : "\u00A0"}
@@ -22436,7 +25283,7 @@ function EditHighlightScreen({ highlight, currentUserId, onClose, onSaved }) {
         </div>
 
         {loading ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : list.length === 0 ? (
           <p className="text-xs text-center py-10 px-8" style={{ color: "var(--text-muted)" }}>
             {tab === "selected"
@@ -22914,7 +25761,7 @@ function NewHighlightSheet({ currentUserId, onClose, onCreated }) {
       </p>
 
       {loading ? (
-        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : stories.length === 0 ? (
         <p className="text-xs text-center py-8 px-8" style={{ color: "var(--text-muted)" }}>
           You haven't posted any stories yet. Post one and it can live here afterwards.
@@ -23206,7 +26053,7 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
       {error ? (
         <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
       ) : loading ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : shown.length === 0 ? (
         <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>
           {q ? "No one matches that" : mode === "followers" ? "No followers yet" : "Not following anyone yet"}
@@ -23866,7 +26713,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
       </div>
     );
   }
@@ -24182,7 +27029,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
           {showSuggest && (
             <div className="mb-2">
               {similar === null ? (
-                <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>Loading…</p>
+                <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
               ) : similar.length === 0 ? (
                 <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>No suggestions right now</p>
               ) : (
@@ -24628,6 +27475,10 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
       {sheet === "accounts" && (
         <AccountSwitcherSheet
           currentUserId={myId}
+          onOpenSettings={onOpenSettings ? () => {
+            setSheet(null);
+            onOpenSettings();
+          } : undefined}
           onClose={() => setSheet(null)}
           onSwitched={() => {
             setSheet(null);
@@ -24957,7 +27808,7 @@ function ConvoPeek({ conversationId, meId }) {
     <div className="mx-4 mb-2 rounded-2xl p-3" style={{ background: "var(--bg-sunken)" }}>
       <p className="text-[11px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Peek · they won't see that you read this</p>
       {msgs === null ? (
-        <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>Loading…</p>
+        <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : msgs.length === 0 ? (
         <p className="text-xs py-2" style={{ color: "var(--text-muted)" }}>No messages yet</p>
       ) : (
@@ -24981,7 +27832,7 @@ function ConvoPeek({ conversationId, meId }) {
   );
 }
 
-function MessagesScreen({ onBack, startWith }) {
+function MessagesScreen({ onBack, startWith, asTab = false, onChatOpenChange }) {
   const [userId, setUserId] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24994,6 +27845,10 @@ function MessagesScreen({ onBack, startWith }) {
   const [inboxTab, setInboxTab] = useState("chats"); // chats | channels
   const [requests, setRequests] = useState([]); // chats from people you don't follow
   const [showRequests, setShowRequests] = useState(false);
+  useEffect(() => {
+    onChatOpenChange?.(!!(openChat || creatingGroup || showRequests));
+  }, [openChat, creatingGroup, showRequests]);
+  useEffect(() => () => onChatOpenChange?.(false), []);
 
   useEffect(() => {
     init();
@@ -25279,9 +28134,11 @@ function MessagesScreen({ onBack, startWith }) {
       <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2 min-w-0">
-            <button onClick={onBack} className="-ms-1.5 p-1 transition-transform active:scale-90">
-              <ChevronLeft size={24} color="var(--text)" />
-            </button>
+            {!asTab && (
+              <button onClick={onBack} className="-ms-1.5 p-1 transition-transform active:scale-90">
+                <ChevronLeft size={24} color="var(--text)" />
+              </button>
+            )}
             <h1 className="text-xl truncate" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
               Messages
             </h1>
@@ -25372,7 +28229,7 @@ function MessagesScreen({ onBack, startWith }) {
             ))
           )
         ) : loading ? (
-          <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center mt-16 px-8 text-center gap-2">
             <Send size={30} color="var(--toggle-off)" />
@@ -25639,40 +28496,92 @@ const EMOJI_LIBRARY = {
   Animals: ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔","🐧","🐦","🦆","🦅","🦉","🐴","🦄","🐝","🦋","🐌","🐞","🐢","🐍","🐙"],
 };
 
-function EmojiPickerSheet({ onPick, onClose }) {
-  const [tab, setTab] = useState("Smileys");
-  const tabs = Object.keys(EMOJI_LIBRARY);
+// ---- The full emoji keyboard ----
+// Same height whichever group is open (like Gboard), so the tabs never
+// jump. Recently used emoji come first.
+const RECENT_EMOJI_KEY = "loop_recent_emoji";
+function readRecentEmoji() {
+  try {
+    const list = JSON.parse(localStorage.getItem(RECENT_EMOJI_KEY) || "[]");
+    return Array.isArray(list) ? list.slice(0, 32) : [];
+  } catch {
+    return [];
+  }
+}
+function pushRecentEmoji(e) {
+  try {
+    const list = [e, ...readRecentEmoji().filter((x) => x !== e)].slice(0, 32);
+    localStorage.setItem(RECENT_EMOJI_KEY, JSON.stringify(list));
+  } catch {}
+}
+
+function EmojiPickerSheet({ onPick, onClose, title = "Choose a reaction" }) {
+  const recent = React.useMemo(() => readRecentEmoji(), []);
+  const groups = React.useMemo(() => (recent.length ? { Recent: recent, ...EMOJI_LIBRARY } : EMOJI_LIBRARY), [recent]);
+  const tabs = Object.keys(groups);
+  const [tab, setTab] = useState(recent.length ? "Recent" : "Smileys");
+  const gridRef = React.useRef(null);
+  useEffect(() => {
+    if (gridRef.current) gridRef.current.scrollTop = 0;
+  }, [tab]);
   return (
-    <StorySheetShell title="Choose a reaction" onClose={onClose}>
-      <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
-        {tabs.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className="rounded-full px-3 h-8 text-xs shrink-0"
-            style={{
-              background: tab === t ? ACCENT : "var(--bg-sunken)",
-              color: tab === t ? "var(--on-accent)" : "var(--text-muted)",
-              border: tab === t ? "none" : "1px solid var(--border)",
-              fontWeight: 600,
-            }}
-          >
-            {t}
+    <>
+      <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.6)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
+      <div
+        className="fixed start-0 end-0 bottom-0 z-[71] rounded-t-3xl flex flex-col"
+        style={{
+          background: "var(--bg)",
+          border: "1px solid var(--border)",
+          height: "min(58dvh, 440px)",
+          animation: "loopSheetUp 0.2s ease-out",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1 shrink-0">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        <div className="flex items-center justify-between px-4 pb-2 shrink-0">
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>{title}</span>
+          <button onClick={onClose} aria-label="Close">
+            <X size={18} color="var(--text-muted)" />
           </button>
-        ))}
+        </div>
+        <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto shrink-0" style={{ scrollbarWidth: "none" }}>
+          {tabs.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className="rounded-full px-3 h-8 text-xs shrink-0"
+              style={{
+                background: tab === t ? ACCENT : "var(--bg-sunken)",
+                color: tab === t ? "var(--on-accent)" : "var(--text-muted)",
+                border: tab === t ? "none" : "1px solid var(--border)",
+                fontWeight: 600,
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div ref={gridRef} className="flex-1 min-h-0 overflow-y-auto px-3 pb-3" style={{ overscrollBehavior: "contain" }}>
+          <div className="grid grid-cols-8 gap-1">
+            {groups[tab].map((e) => (
+              <button
+                key={e}
+                onClick={() => {
+                  pushRecentEmoji(e);
+                  onPick(e);
+                }}
+                className="aspect-square flex items-center justify-center rounded-lg transition-transform active:scale-125"
+                style={{ fontSize: 26, lineHeight: 1 }}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
-      <div className="grid grid-cols-8 gap-1 px-4 pb-6">
-        {EMOJI_LIBRARY[tab].map((e) => (
-          <button
-            key={e}
-            onClick={() => onPick(e)}
-            className="aspect-square flex items-center justify-center text-xl rounded-lg transition-transform active:scale-125"
-          >
-            {e}
-          </button>
-        ))}
-      </div>
-    </StorySheetShell>
+    </>
   );
 }
 
@@ -25890,7 +28799,7 @@ function ForwardSheet({ message, currentUserId, onClose, onDone }) {
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : (
           <>
             {shownGroups.length > 0 && (
@@ -26150,7 +29059,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
       </div>
 
       {loading ? (
-        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : (
         members.map((m) => (
           <div key={m.user_id} className="flex items-center gap-3 px-4 py-2.5">
@@ -26245,14 +29154,48 @@ const MSG_COLS =
 // Chat themes: a background for the whole chat plus matching bubbles.
 // Patterns are tiny inline SVGs, so nothing extra is downloaded.
 const svgUrl = (svg) => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+// ---- Chat themes: every theme has its own picture, no two look alike ----
+const svgTile = (w, h, body) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'>${body}</svg>`);
+const sparkle = (x, y, r, c) => `<path d='M${x} ${y - r}l${r * 0.28} ${r * 0.72} ${r * 0.72} ${r * 0.28}-${r * 0.72} ${r * 0.28}-${r * 0.28} ${r * 0.72}-${r * 0.28}-${r * 0.72}-${r * 0.72}-${r * 0.28} ${r * 0.72}-${r * 0.28}z' fill='${c}'/>`;
 const PAT = {
-  hearts: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56'><path d='M14 20c-2.5-3-7-1.5-7 2 0 3 4 5.5 7 8 3-2.5 7-5 7-8 0-3.5-4.5-5-7-2z' fill='${c}'/><path d='M42 46c-1.8-2.1-5-1-5 1.4 0 2.1 2.8 3.9 5 5.6 2.2-1.7 5-3.5 5-5.6 0-2.4-3.2-3.5-5-1.4z' fill='${c}'/></svg>`),
-  stars: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><circle cx='8' cy='12' r='1.2' fill='${c}'/><circle cx='52' cy='6' r='0.8' fill='${c}'/><circle cx='30' cy='34' r='1' fill='${c}'/><circle cx='70' cy='44' r='1.4' fill='${c}'/><circle cx='14' cy='62' r='0.9' fill='${c}'/><circle cx='46' cy='70' r='1.1' fill='${c}'/><path d='M62 20l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z' fill='${c}'/></svg>`),
-  dots: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22'><circle cx='3' cy='3' r='1.6' fill='${c}'/></svg>`),
-  waves: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='80' height='26'><path d='M0 13c10 0 10-8 20-8s10 8 20 8 10-8 20-8 10 8 20 8' fill='none' stroke='${c}' stroke-width='1.6'/></svg>`),
-  leaves: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><path d='M14 30c0-10 8-16 18-16-1 10-8 17-18 16z' fill='${c}'/><path d='M44 58c0-7 6-11 12-11-1 7-6 11-12 11z' fill='${c}'/></svg>`),
-  confetti: (c1, c2) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='60' height='60'><rect x='8' y='10' width='6' height='2.4' rx='1.2' transform='rotate(30 11 11)' fill='${c1}'/><rect x='40' y='30' width='6' height='2.4' rx='1.2' transform='rotate(-25 43 31)' fill='${c2}'/><circle cx='22' cy='46' r='1.8' fill='${c2}'/><circle cx='50' cy='8' r='1.5' fill='${c1}'/></svg>`),
+  hearts: (c) => svgTile(56, 56, `<path d='M14 20c-2.5-3-7-1.5-7 2 0 3 4 5.5 7 8 3-2.5 7-5 7-8 0-3.5-4.5-5-7-2z' fill='${c}'/><path d='M42 46c-1.8-2.1-5-1-5 1.4 0 2.1 2.8 3.9 5 5.6 2.2-1.7 5-3.5 5-5.6 0-2.4-3.2-3.5-5-1.4z' fill='${c}'/>`),
+  stars: (c) => svgTile(80, 80, `<circle cx='8' cy='12' r='1.2' fill='${c}'/><circle cx='52' cy='6' r='0.8' fill='${c}'/><circle cx='30' cy='34' r='1' fill='${c}'/><circle cx='70' cy='44' r='1.4' fill='${c}'/><circle cx='14' cy='62' r='0.9' fill='${c}'/><circle cx='46' cy='70' r='1.1' fill='${c}'/>${sparkle(62, 22, 3, c)}`),
+  dots: (c) => svgTile(22, 22, `<circle cx='3' cy='3' r='1.6' fill='${c}'/>`),
+  waves: (c) => svgTile(80, 26, `<path d='M0 13c10 0 10-8 20-8s10 8 20 8 10-8 20-8 10 8 20 8' fill='none' stroke='${c}' stroke-width='1.6'/>`),
+  leaves: (c) => svgTile(64, 64, `<path d='M14 30c0-10 8-16 18-16-1 10-8 17-18 16z' fill='${c}'/><path d='M44 58c0-7 6-11 12-11-1 7-6 11-12 11z' fill='${c}'/>`),
+  confetti: (c1, c2) => svgTile(60, 60, `<rect x='8' y='10' width='6' height='2.4' rx='1.2' transform='rotate(30 11 11)' fill='${c1}'/><rect x='40' y='30' width='6' height='2.4' rx='1.2' transform='rotate(-25 43 31)' fill='${c2}'/><circle cx='22' cy='46' r='1.8' fill='${c2}'/><circle cx='50' cy='8' r='1.5' fill='${c1}'/>`),
+  // Night sky: a crescent moon among the stars
+  moon: (c) => svgTile(150, 150, `<path d='M38 22a16 16 0 1 0 18 24 13 13 0 1 1-18-24z' fill='${c}'/>${sparkle(110, 30, 4, c)}${sparkle(84, 112, 3, c)}${sparkle(20, 120, 2.4, c)}<circle cx='128' cy='86' r='1.3' fill='${c}'/><circle cx='70' cy='70' r='0.9' fill='${c}'/><circle cx='140' cy='136' r='1' fill='${c}'/><circle cx='52' cy='96' r='0.8' fill='${c}'/>`),
+  // Galaxy: ringed planets and far-off suns
+  planets: (c, c2) => svgTile(170, 170, `<circle cx='46' cy='48' r='11' fill='${c2}'/><ellipse cx='46' cy='48' rx='22' ry='6' fill='none' stroke='${c}' stroke-width='2' transform='rotate(-22 46 48)'/><circle cx='128' cy='120' r='5' fill='${c}'/>${sparkle(130, 34, 4.5, c)}${sparkle(30, 140, 3.2, c)}<circle cx='96' cy='82' r='1.2' fill='${c}'/><circle cx='160' cy='70' r='1' fill='${c}'/><circle cx='70' cy='160' r='1.2' fill='${c}'/>`),
+  // Mint: bubbles rising
+  bubbles: (c) => svgTile(96, 96, `<circle cx='20' cy='24' r='10' fill='none' stroke='${c}' stroke-width='1.6'/><path d='M14 20a7 7 0 0 1 5-4' stroke='${c}' stroke-width='1.6' fill='none' stroke-linecap='round'/><circle cx='66' cy='60' r='6' fill='none' stroke='${c}' stroke-width='1.5'/><circle cx='34' cy='78' r='3' fill='none' stroke='${c}' stroke-width='1.3'/><circle cx='82' cy='18' r='2.5' fill='${c}'/>`),
+  // Citrus: lemon slices
+  citrus: (c, c2) => svgTile(84, 84, `<g transform='translate(22 24)'><circle r='12' fill='${c2}'/><circle r='9.5' fill='none' stroke='${c}' stroke-width='1.6'/>${[0, 60, 120, 180, 240, 300].map((a) => `<line x1='0' y1='0' x2='${(9 * Math.cos((a * Math.PI) / 180)).toFixed(1)}' y2='${(9 * Math.sin((a * Math.PI) / 180)).toFixed(1)}' stroke='${c}' stroke-width='1.3'/>`).join("")}</g><g transform='translate(64 62) rotate(20)'><ellipse rx='8' ry='5.5' fill='${c2}'/><path d='M-8 0a8 5.5 0 0 0 16 0' fill='none' stroke='${c}' stroke-width='1.4'/></g>`),
+  // Monochrome: fine diagonal lines
+  lines: (c) => svgTile(14, 14, `<path d='M-2 16L16 -2M-2 2L2 -2M12 16L16 12' stroke='${c}' stroke-width='1.1'/>`),
+  // Rose: little five-petal flowers
+  flowers: (c, c2) => svgTile(76, 76, `<g transform='translate(20 20)'>${[0, 72, 144, 216, 288].map((a) => `<circle cx='${(5 * Math.cos((a * Math.PI) / 180)).toFixed(1)}' cy='${(5 * Math.sin((a * Math.PI) / 180)).toFixed(1)}' r='4.2' fill='${c}'/>`).join("")}<circle r='2.4' fill='${c2}'/></g><g transform='translate(56 56) scale(0.7)'>${[0, 72, 144, 216, 288].map((a) => `<circle cx='${(5 * Math.cos((a * Math.PI) / 180)).toFixed(1)}' cy='${(5 * Math.sin((a * Math.PI) / 180)).toFixed(1)}' r='4.2' fill='${c}'/>`).join("")}<circle r='2.4' fill='${c2}'/></g>`),
+  // Berry: little bunches of berries with a leaf
+  berries: (c, c2) => svgTile(84, 84, `<g transform='translate(24 26)'><circle cx='-4' cy='0' r='4' fill='${c}'/><circle cx='4' cy='0' r='4' fill='${c}'/><circle cx='0' cy='6' r='4' fill='${c}'/><path d='M0 -4c2-6 8-8 12-6-2 5-7 7-12 6z' fill='${c2}'/></g><g transform='translate(62 62) scale(0.75)'><circle cx='-4' cy='0' r='4' fill='${c}'/><circle cx='4' cy='0' r='4' fill='${c}'/><circle cx='0' cy='6' r='4' fill='${c}'/><path d='M0 -4c2-6 8-8 12-6-2 5-7 7-12 6z' fill='${c2}'/></g>`),
+  // Lavender: sprigs
+  lavender: (c, c2) => svgTile(60, 92, `<g transform='translate(18 14) rotate(-12)'><path d='M0 0v40' stroke='${c2}' stroke-width='1.4'/>${[0, 7, 14, 21, 28].map((y, i) => `<ellipse cx='${i % 2 ? 2.6 : -2.6}' cy='${y}' rx='2.6' ry='4' fill='${c}'/>`).join("")}</g><g transform='translate(44 52) rotate(10) scale(0.8)'><path d='M0 0v40' stroke='${c2}' stroke-width='1.4'/>${[0, 7, 14, 21, 28].map((y, i) => `<ellipse cx='${i % 2 ? 2.6 : -2.6}' cy='${y}' rx='2.6' ry='4' fill='${c}'/>`).join("")}</g>`),
+  // Desert: dunes along the bottom
+  dunes: (c1, c2) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 160' preserveAspectRatio='none'><path d='M0 80 C80 40 150 40 220 78 S340 120 400 70 V160 H0Z' fill='${c1}'/><path d='M0 120 C70 96 140 98 210 118 S330 140 400 112 V160 H0Z' fill='${c2}'/></svg>`),
+  // Sunset: a low sun with rays
+  rays: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' preserveAspectRatio='none'>${Array.from({ length: 12 }, (_, i) => { const a = Math.PI + (i + 0.5) * (Math.PI / 12); return `<path d='M100 170 L${(100 + 260 * Math.cos(a - 0.05)).toFixed(0)} ${(170 + 260 * Math.sin(a - 0.05)).toFixed(0)} L${(100 + 260 * Math.cos(a + 0.05)).toFixed(0)} ${(170 + 260 * Math.sin(a + 0.05)).toFixed(0)}Z' fill='${c}'/>`; }).join("")}</svg>`),
+  // premium pictures
+  bokeh: (c) => svgTile(180, 180, `<defs><radialGradient id='b'><stop offset='0' stop-color='${c}' stop-opacity='0.55'/><stop offset='1' stop-color='${c}' stop-opacity='0'/></radialGradient></defs><circle cx='40' cy='44' r='26' fill='url(#b)'/><circle cx='132' cy='96' r='34' fill='url(#b)'/><circle cx='70' cy='150' r='18' fill='url(#b)'/><circle cx='160' cy='16' r='14' fill='url(#b)'/>`),
+  petals: (c, c2) => svgTile(110, 110, `${[[24, 22, 20], [80, 40, -35], [46, 84, 60], [96, 96, 10]].map(([x, y, a]) => `<path transform='translate(${x} ${y}) rotate(${a})' d='M0 -9c5 0 8 5 6 9-1 3-4 5-6 6-2-1-5-3-6-6-2-4 1-9 6-9z' fill='${c}'/><path transform='translate(${x} ${y}) rotate(${a})' d='M0 -9l-1.6 3.4L0 -4.6l1.6-1.2z' fill='${c2}'/>`).join("")}`),
+  lanterns: (c, c2) => svgTile(150, 180, `<path d='M30 0v30' stroke='${c}' stroke-width='1.2'/><rect x='22' y='30' width='16' height='24' rx='5' fill='${c2}' stroke='${c}' stroke-width='1.4'/><path d='M24 30h12l-2-5h-8z' fill='${c}'/><path d='M27 54h6v4h-6z' fill='${c}'/><path d='M110 0v58' stroke='${c}' stroke-width='1.2'/><rect x='103' y='58' width='14' height='20' rx='4.5' fill='${c2}' stroke='${c}' stroke-width='1.3'/><path d='M105 58h10l-2-4h-6z' fill='${c}'/><path d='M72 108a14 14 0 1 0 16 20 11 11 0 1 1-16-20z' fill='${c}'/>${sparkle(126, 140, 4, c)}${sparkle(30, 150, 3, c)}`),
+  rain: (c) => svgTile(40, 64, `<path d='M8 0l-6 18M30 22l-6 18M18 44l-5 15' stroke='${c}' stroke-width='1.3' stroke-linecap='round'/><circle cx='34' cy='58' r='1.6' fill='${c}'/>`),
+  damask: (c) => svgTile(84, 84, `<g transform='translate(42 42)' fill='none' stroke='${c}' stroke-width='1.3'><path d='M0 -22c6 6 6 12 0 18-6-6-6-12 0-18zM0 22c6-6 6-12 0-18-6 6-6 12 0 18zM-22 0c6-6 12-6 18 0-6 6-12 6-18 0zM22 0c-6-6-12-6-18 0 6 6 12 6 18 0z'/><circle r='3' fill='${c}'/></g><path d='M0 0l5 5-5 5-5-5zM84 0l5 5-5 5-5-5zM0 84l5 5-5 5-5-5zM84 84l5 5-5 5-5-5z' fill='${c}'/>`),
+  grid: (c) => svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 200' preserveAspectRatio='none'>${Array.from({ length: 9 }, (_, i) => `<path d='M0 ${(10 + i * i * 2.4).toFixed(1)}H400' stroke='${c}' stroke-width='1.2'/>`).join("")}${Array.from({ length: 13 }, (_, i) => `<path d='M200 0L${-400 + i * 100} 200' stroke='${c}' stroke-width='1.2'/>`).join("")}</svg>`),
+  facets: (c, c2) => svgTile(60, 52, `<path d='M0 0L30 0L15 26Z' fill='${c}'/><path d='M30 0L60 0L45 26Z' fill='${c2}'/><path d='M15 26L45 26L30 52Z' fill='${c}'/><path d='M0 52L15 26L30 52Z' fill='${c2}'/><path d='M30 52L45 26L60 52Z' fill='${c2}'/>`),
+  stripes: (c) => svgTile(140, 140, `<path d='M-10 20c30-10 40 10 70 0s40-12 90 4M-10 70c26-12 48 8 72-2s46-10 88 6M-10 118c30-8 44 12 74 0s40-12 86 2' fill='none' stroke='${c}' stroke-width='9' stroke-linecap='round'/>`),
+  lotus: (c, c2, c3) => svgTile(120, 120, `<ellipse cx='88' cy='92' rx='22' ry='8' fill='${c3}'/><g transform='translate(36 40)'><path d='M0 6c-6-4-7-14 0-20 7 6 6 16 0 20z' fill='${c}'/><path d='M0 6c-10 0-16-8-15-15 8 0 14 6 15 15z' fill='${c2}'/><path d='M0 6c10 0 16-8 15-15-8 0-14 6-15 15z' fill='${c2}'/></g><circle cx='100' cy='24' r='1.6' fill='${c}'/>`),
 };
+
 const CHAT_THEMES = [
   { key: "default", name: "Default", bubble: "linear-gradient(135deg, var(--accent-start) 0%, var(--accent-end) 100%)", on: "var(--on-accent)" },
   {
@@ -26263,7 +29206,7 @@ const CHAT_THEMES = [
   },
   {
     key: "night", name: "Night sky",
-    bg: `${PAT.stars("rgba(255,255,255,0.55)")}, linear-gradient(180deg, #0B1026 0%, #1B2A4A 100%)`,
+    bg: `${PAT.moon("rgba(255,244,214,0.62)")}, radial-gradient(120% 70% at 50% 0%, #22305A 0%, #0B1026 60%, #060914 100%)`,
     bubble: "linear-gradient(135deg, #4FACFE 0%, #00F2FE 100%)", on: "#00243A",
     other: "rgba(255,255,255,0.12)", otherText: "#EEF4FF", muted: "rgba(238,244,255,0.6)",
   },
@@ -26281,13 +29224,13 @@ const CHAT_THEMES = [
   },
   {
     key: "sunset", name: "Sunset",
-    bg: "linear-gradient(165deg, #FF9A76 0%, #FECFEF 100%)",
+    bg: `${PAT.rays("rgba(255,255,255,0.16)")} center bottom / 100% 100% no-repeat, radial-gradient(circle at 50% 86%, #FFE29A 0 13%, rgba(255,226,154,0.35) 13.5% 20%, transparent 21%), linear-gradient(180deg, #FF7E6B 0%, #FFA07A 45%, #FECFEF 100%)`,
     bubble: "linear-gradient(135deg, #FF5E62 0%, #FF9966 100%)", on: "#FFFFFF",
-    other: "rgba(255,255,255,0.85)", otherText: "#3A1A0E", muted: "rgba(58,26,14,0.6)",
+    other: "rgba(255,255,255,0.86)", otherText: "#3A1A0E", muted: "rgba(58,26,14,0.6)",
   },
   {
     key: "galaxy", name: "Galaxy",
-    bg: `${PAT.stars("rgba(255,255,255,0.45)")}, radial-gradient(circle at 30% 20%, #5B2A86 0%, #24123B 55%, #0E0718 100%)`,
+    bg: `${PAT.planets("rgba(255,255,255,0.55)", "rgba(255,170,240,0.55)")}, radial-gradient(60% 40% at 75% 25%, rgba(255,92,205,0.35), transparent 70%), radial-gradient(circle at 25% 65%, #5B2A86 0%, #24123B 55%, #0E0718 100%)`,
     bubble: "linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%)", on: "#FFFFFF",
     other: "rgba(255,255,255,0.12)", otherText: "#F3EAFF", muted: "rgba(243,234,255,0.6)",
   },
@@ -26299,9 +29242,9 @@ const CHAT_THEMES = [
   },
   {
     key: "desert", name: "Desert",
-    bg: "linear-gradient(180deg, #F6D365 0%, #FDA085 100%)",
+    bg: `${PAT.dunes("rgba(194,120,54,0.55)", "rgba(160,92,38,0.7)")} center bottom / 100% 34% no-repeat, radial-gradient(circle at 78% 18%, #FFF4C2 0 6%, transparent 6.5%), linear-gradient(180deg, #F9D976 0%, #F39F86 100%)`,
     bubble: "linear-gradient(135deg, #8E5A2B 0%, #C1803D 100%)", on: "#FFFFFF",
-    other: "rgba(255,255,255,0.8)", otherText: "#3B230C", muted: "rgba(59,35,12,0.6)",
+    other: "rgba(255,255,255,0.82)", otherText: "#3B230C", muted: "rgba(59,35,12,0.6)",
   },
   {
     key: "candy", name: "Candy",
@@ -26311,41 +29254,145 @@ const CHAT_THEMES = [
   },
   {
     key: "mint", name: "Mint",
-    bg: `${PAT.waves("rgba(0,176,155,0.18)")}, #E6FFF7`,
+    bg: `${PAT.bubbles("rgba(0,150,130,0.22)")}, linear-gradient(180deg, #E6FFF7 0%, #D4F7EC 100%)`,
     bubble: "linear-gradient(135deg, #00B09B 0%, #96C93D 100%)", on: "#04241E",
     other: "#FFFFFF", otherText: "#06302A", muted: "rgba(6,48,42,0.55)",
   },
   {
     key: "citrus", name: "Citrus",
-    bg: `${PAT.dots("rgba(247,151,30,0.25)")}, #FFF7D6`,
+    bg: `${PAT.citrus("rgba(230,150,20,0.55)", "rgba(255,214,90,0.45)")}, linear-gradient(180deg, #FFF9DB 0%, #FFF1C2 100%)`,
     bubble: "linear-gradient(135deg, #F7971E 0%, #FFD200 100%)", on: "#2E1E00",
     other: "#FFFFFF", otherText: "#2E1E00", muted: "rgba(46,30,0,0.55)",
   },
   {
     key: "mono", name: "Monochrome",
-    bg: `${PAT.dots("rgba(0,0,0,0.10)")}, #F2F2F2`,
+    bg: `${PAT.lines("rgba(0,0,0,0.07)")}, linear-gradient(180deg, #F7F7F7 0%, #E9E9E9 100%)`,
     bubble: "linear-gradient(135deg, #434343 0%, #000000 100%)", on: "#FFFFFF",
     other: "#FFFFFF", otherText: "#111111", muted: "rgba(17,17,17,0.5)",
   },
   {
     key: "rose", name: "Rose",
-    bg: "linear-gradient(180deg, #FBE3E8 0%, #FFF1EB 100%)",
-    bubble: "linear-gradient(135deg, #ED4264 0%, #FFEDBC 100%)", on: "#33060F",
+    bg: `${PAT.flowers("rgba(237,66,100,0.16)", "rgba(255,190,90,0.5)")}, linear-gradient(180deg, #FDE7EC 0%, #FFF1EB 100%)`,
+    bubble: "linear-gradient(135deg, #ED4264 0%, #FFB88C 100%)", on: "#33060F",
     other: "#FFFFFF", otherText: "#33060F", muted: "rgba(51,6,15,0.55)",
   },
   {
     key: "berry", name: "Berry",
-    bg: "linear-gradient(180deg, #3A0F2E 0%, #5E1742 100%)",
+    bg: `${PAT.berries("rgba(255,105,170,0.22)", "rgba(120,200,120,0.25)")}, linear-gradient(180deg, #3A0F2E 0%, #5E1742 100%)`,
     bubble: "linear-gradient(135deg, #B24592 0%, #F15F79 100%)", on: "#FFFFFF",
     other: "rgba(255,255,255,0.12)", otherText: "#FFEAF4", muted: "rgba(255,234,244,0.6)",
   },
   {
     key: "lavender", name: "Lavender",
-    bg: `${PAT.dots("rgba(142,45,226,0.16)")}, #F3ECFF`,
+    bg: `${PAT.lavender("rgba(142,45,226,0.22)", "rgba(90,140,90,0.28)")}, linear-gradient(180deg, #F5EEFF 0%, #ECE2FF 100%)`,
     bubble: "linear-gradient(135deg, #8E2DE2 0%, #B06AB3 100%)", on: "#FFFFFF",
     other: "#FFFFFF", otherText: "#2A0F45", muted: "rgba(42,15,69,0.55)",
   },
+  // ---- Premium: Elite and Supreme badges ----
+  {
+    key: "pe_golden", name: "Golden Hour", tier: "elite",
+    bg: `${PAT.bokeh("#FFD27A")}, linear-gradient(160deg, #2B1A05 0%, #6B3F0A 45%, #C88A1B 100%)`,
+    bubble: "linear-gradient(135deg, #FDE68A 0%, #F59E0B 55%, #B45309 100%)", on: "#2B1500",
+    other: "rgba(255,255,255,0.14)", otherText: "#FFF6E0", muted: "rgba(255,246,224,0.65)",
+  },
+  {
+    key: "pe_sakura", name: "Sakura", tier: "elite",
+    bg: `${PAT.petals("rgba(255,138,175,0.5)", "rgba(255,255,255,0.7)")}, linear-gradient(180deg, #FFF0F5 0%, #FFD6E5 100%)`,
+    bubble: "linear-gradient(135deg, #FF8FB1 0%, #FF5C8A 100%)", on: "#FFFFFF",
+    other: "#FFFFFF", otherText: "#4A1026", muted: "rgba(74,16,38,0.55)",
+  },
+  {
+    key: "pe_eid", name: "Moonlit Eid", tier: "elite",
+    bg: `${PAT.lanterns("rgba(255,214,120,0.75)", "rgba(255,190,80,0.25)")}, radial-gradient(120% 70% at 50% 0%, #1D3A6B 0%, #0A1733 60%, #050B1C 100%)`,
+    bubble: "linear-gradient(135deg, #F6D365 0%, #FDA085 100%)", on: "#2A1300",
+    other: "rgba(255,255,255,0.12)", otherText: "#FFF7E0", muted: "rgba(255,247,224,0.62)",
+  },
+  {
+    key: "pe_rain", name: "Rainy Dhaka", tier: "elite",
+    bg: `${PAT.rain("rgba(200,225,255,0.32)")}, linear-gradient(180deg, #2C3E50 0%, #3E5A74 55%, #4C6A85 100%)`,
+    bubble: "linear-gradient(135deg, #89F7FE 0%, #66A6FF 100%)", on: "#0A1A2C",
+    other: "rgba(255,255,255,0.14)", otherText: "#EEF6FF", muted: "rgba(238,246,255,0.62)",
+  },
+  {
+    key: "ps_aurora", name: "Aurora", tier: "supreme",
+    bg: `${PAT.stars("rgba(255,255,255,0.5)")}, radial-gradient(120% 55% at 15% 8%, rgba(64,255,170,0.5), transparent 62%), radial-gradient(100% 50% at 85% 22%, rgba(80,140,255,0.45), transparent 62%), radial-gradient(90% 55% at 50% 0%, rgba(190,90,255,0.4), transparent 70%), linear-gradient(180deg, #04101A 0%, #0A1F2E 100%)`,
+    bubble: "linear-gradient(135deg, #43E97B 0%, #38F9D7 50%, #7F7FD5 100%)", on: "#03131A",
+    other: "rgba(255,255,255,0.12)", otherText: "#E8FFF6", muted: "rgba(232,255,246,0.62)",
+  },
+  {
+    key: "ps_royal", name: "Royal", tier: "supreme",
+    bg: `${PAT.damask("rgba(232,196,104,0.32)")}, radial-gradient(circle at 50% 30%, #4B1A6B 0%, #2A0A3D 60%, #16041F 100%)`,
+    bubble: "linear-gradient(135deg, #F8E08E 0%, #D4A72C 50%, #A8781B 100%)", on: "#2A1700",
+    other: "rgba(255,255,255,0.12)", otherText: "#FBEFFF", muted: "rgba(251,239,255,0.62)",
+  },
+  {
+    key: "ps_neon", name: "Neon City", tier: "supreme",
+    bg: `${PAT.grid("rgba(255,64,200,0.55)")} center bottom / 100% 40% no-repeat, radial-gradient(circle at 50% 62%, #FF7AC6 0 10%, rgba(255,122,198,0.25) 10.5% 15%, transparent 16%), linear-gradient(180deg, #0B0221 0%, #2B0A4A 58%, #120018 100%)`,
+    bubble: "linear-gradient(135deg, #FF00CC 0%, #3333FF 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.1)", otherText: "#FFE8FB", muted: "rgba(255,232,251,0.62)",
+  },
+  {
+    key: "ps_diamond", name: "Diamond", tier: "supreme",
+    bg: `${PAT.facets("rgba(255,255,255,0.22)", "rgba(255,255,255,0.08)")}, linear-gradient(160deg, #D7F1FF 0%, #9BD3F5 50%, #6FA8DC 100%)`,
+    bubble: "linear-gradient(135deg, #E0F7FF 0%, #7FC8F8 50%, #3A86C8 100%)", on: "#04223A",
+    other: "rgba(255,255,255,0.78)", otherText: "#0A2A44", muted: "rgba(10,42,68,0.6)",
+  },
+  {
+    key: "ps_tiger", name: "Bengal Tiger", tier: "supreme",
+    bg: `${PAT.stripes("rgba(20,10,0,0.72)")}, linear-gradient(160deg, #FFB347 0%, #F28A1C 55%, #D9650A 100%)`,
+    bubble: "linear-gradient(135deg, #1A1A1A 0%, #3A2A12 100%)", on: "#FFD9A0",
+    other: "rgba(255,255,255,0.88)", otherText: "#2A1400", muted: "rgba(42,20,0,0.6)",
+  },
+  {
+    key: "ps_lotus", name: "Shapla", tier: "supreme",
+    bg: `${PAT.lotus("rgba(255,120,170,0.75)", "rgba(255,170,205,0.7)", "rgba(40,140,90,0.45)")}, linear-gradient(180deg, #0F5C5A 0%, #0B3F49 100%)`,
+    bubble: "linear-gradient(135deg, #FF9AC1 0%, #F0568C 100%)", on: "#FFFFFF",
+    other: "rgba(255,255,255,0.13)", otherText: "#EFFFFB", muted: "rgba(239,255,251,0.62)",
+  },
 ];
+
+const CHAT_FONTS = [
+  { key: "default", name: "Default", stack: "inherit" },
+  { key: "sora", name: "Sora", stack: "'Sora', sans-serif" },
+  { key: "cinzel", name: "Cinzel", stack: "'Cinzel', serif" },
+  { key: "serif", name: "Serif", stack: "'Playfair Display', Georgia, serif" },
+  { key: "mono", name: "Mono", stack: "'Space Mono', ui-monospace, monospace" },
+  { key: "rounded", name: "Rounded", stack: "'Nunito', sans-serif" },
+  { key: "classic", name: "Classic", stack: "'Lora', serif" },
+  { key: "wide", name: "Wide", stack: "'Montserrat', sans-serif" },
+  { key: "condensed", name: "Condensed", stack: "'Oswald', sans-serif" },
+  { key: "playful", name: "Playful", stack: "'Pacifico', cursive" },
+  { key: "hand", name: "Handwriting", stack: "'Caveat', cursive" },
+];
+// Premium fonts (Elite: some, Supreme: all) — for chats and story text.
+// Several of them have Bangla letters too.
+const PREMIUM_FONTS = [
+  { key: "pe_dancing", name: "Dancing", family: "'Dancing Script', cursive", weight: 700, tier: "elite" },
+  { key: "pe_lobster", name: "Lobster", family: "'Lobster', cursive", weight: 400, tier: "elite" },
+  { key: "pe_galada", name: "Galada", family: "'Galada', cursive", weight: 400, tier: "elite" },
+  { key: "pe_baloo", name: "Baloo", family: "'Baloo Da 2', sans-serif", weight: 700, tier: "elite" },
+  { key: "ps_vibes", name: "Great Vibes", family: "'Great Vibes', cursive", weight: 400, tier: "supreme" },
+  { key: "ps_righteous", name: "Righteous", family: "'Righteous', sans-serif", weight: 400, tier: "supreme" },
+  { key: "ps_atma", name: "Atma", family: "'Atma', sans-serif", weight: 600, tier: "supreme" },
+  { key: "ps_tiro", name: "Tiro Bangla", family: "'Tiro Bangla', serif", weight: 400, tier: "supreme" },
+  { key: "ps_bebas", name: "Bebas", family: "'Bebas Neue', sans-serif", weight: 400, tier: "supreme", upper: true },
+  { key: "ps_cinzel", name: "Cinzel Deco", family: "'Cinzel Decorative', serif", weight: 700, tier: "supreme" },
+].map((f) => ({ ...f, stack: f.family }));
+const ALL_CHAT_FONTS = [...CHAT_FONTS, ...PREMIUM_FONTS];
+// Can this badge use something premium? Elite = elite things; Supreme = all.
+function premiumAllowed(badge, tier) {
+  if (!tier) return true;
+  if (!badge?.active) return false;
+  return tier === "elite" ? tierRank(badge.tier) >= 2 : tierRank(badge.tier) >= 3;
+}
+function PremiumLock({ tier }) {
+  return (
+    <span className="absolute top-1.5 start-1.5 flex items-center gap-1 rounded-full px-1.5 h-5 text-[9px]" style={{ background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontWeight: 700 }}>
+      <Lock size={9} color="#FFFFFF" />
+      {tier === "elite" ? "Elite" : "Supreme"}
+    </span>
+  );
+}
 
 // Style for the message area of a themed chat: the background, plus the
 // colours used inside it so received bubbles and times stay readable.
@@ -26361,24 +29408,8 @@ function chatAreaStyle(t) {
   };
 }
 
-// System stacks only — no extra webfont downloads, so nothing flashes
-// or blocks while a chat opens.
-const CHAT_FONTS = [
-  { key: "default",   name: "Default",   stack: "inherit" },
-  { key: "sora",      name: "Sora",      stack: "'Sora', sans-serif" },
-  { key: "cinzel",    name: "Cinzel",    stack: "'Cinzel', serif" },
-  { key: "serif",     name: "Serif",     stack: "'Playfair Display', Georgia, serif" },
-  { key: "mono",      name: "Mono",      stack: "'Space Mono', ui-monospace, monospace" },
-  { key: "rounded",   name: "Rounded",   stack: "'Nunito', sans-serif" },
-  { key: "classic",   name: "Classic",   stack: "'Lora', serif" },
-  { key: "wide",      name: "Wide",      stack: "'Montserrat', sans-serif" },
-  { key: "condensed", name: "Condensed", stack: "'Oswald', sans-serif" },
-  { key: "playful",   name: "Playful",   stack: "'Pacifico', cursive" },
-  { key: "hand",      name: "Handwriting", stack: "'Caveat', cursive" },
-]
-
 const themeOf = (key) => CHAT_THEMES.find((t) => t.key === key) || CHAT_THEMES[0];
-const fontOf = (key) => CHAT_FONTS.find((f) => f.key === key) || CHAT_FONTS[0];
+const fontOf = (key) => ALL_CHAT_FONTS.find((f) => f.key === key) || CHAT_FONTS[0];
 
 function CustomiseSheet({ conversationId, table = "conversations", rowId, theme, font, image = null, title = "Chat theme", onClose, onApplied }) {
   const [pickedTheme, setPickedTheme] = useState(theme || "default");
@@ -26387,10 +29418,19 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [badge, setBadge] = useState(null);
   const photoRef = React.useRef(null);
+  useEffect(() => {
+    loadMyBadge().then(setBadge).catch(() => {});
+  }, []);
+  const lockedTip = (tier) =>
+    setError(tier === "elite" ? "This is for Elite and Supreme badges. Get one in Settings → Verified." : "This is for the Supreme badge. Get it in Settings → Verified.");
 
   const t = withPhoto(themeOf(pickedTheme), pickedImage);
   const f = fontOf(pickedFont);
+  // A premium pick without the right badge can be tried in the preview,
+  // but Apply asks for the badge instead of saving it.
+  const lockedPick = !premiumAllowed(badge, themeOf(pickedTheme).tier) || !premiumAllowed(badge, fontOf(pickedFont).tier);
 
   // Your own picture from the phone becomes the background.
   const pickPhoto = async (file) => {
@@ -26412,6 +29452,12 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
   };
 
   const apply = async () => {
+    const thTier = themeOf(pickedTheme).tier;
+    const ftTier = fontOf(pickedFont).tier;
+    if (!premiumAllowed(badge, thTier) || !premiumAllowed(badge, ftTier)) {
+      lockedTip(!premiumAllowed(badge, thTier) ? thTier : ftTier);
+      return;
+    }
     setBusy(true);
     setError("");
     const patch = { theme: pickedTheme, chat_font: pickedFont };
@@ -26424,7 +29470,13 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
       .eq("id", rowId || conversationId);
     setBusy(false);
     if (err) {
-      setError(/theme_image|chat_font|theme/.test(err.message) && /column/.test(err.message) ? "Your own photo needs loop-step-12.sql — run it in Supabase first." : err.message);
+      setError(
+        /premium_needs_badge/.test(err.message)
+          ? "Premium themes and fonts need an active Elite or Supreme badge."
+          : /theme_image|chat_font|theme/.test(err.message) && /column/.test(err.message)
+          ? "Your own photo needs loop-step-12.sql — run it in Supabase first."
+          : err.message
+      );
       return;
     }
     onApplied(pickedTheme, pickedFont, pickedImage || null);
@@ -26443,8 +29495,6 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
           if (file) pickPhoto(file);
         }}
       />
-      {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
-
       {/* Live preview — stays at the top while you scroll the themes */}
       <div className="sticky top-0 z-10 px-4 pb-3" style={{ background: "var(--bg)" }}>
       <div className="rounded-3xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
@@ -26468,6 +29518,12 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
           <p className="text-end text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>{trJoin("Seen · {0} · {1}", t.name, f.name)}</p>
         </div>
       </div>
+      {error && (
+        <p className="flex items-start gap-1.5 text-[12px] pt-2 px-1" style={{ color: lockedPick ? "var(--text-secondary)" : "var(--heart)", fontWeight: 600 }}>
+          {lockedPick && <Lock size={13} className="shrink-0 mt-0.5" />}
+          <span>{error}</span>
+        </p>
+      )}
       </div>
 
       <p className="px-4 text-[12px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Themes</p>
@@ -26496,7 +29552,7 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
           </span>
           <span className="text-[11px]" style={{ color: "var(--text)", fontWeight: pickedImage ? 700 : 500 }}>{pickedImage ? "Change photo" : "Custom"}</span>
         </button>
-        {CHAT_THEMES.map((th) => {
+        {CHAT_THEMES.filter((th) => !th.tier).map((th) => {
           const on = !pickedImage && pickedTheme === th.key;
           return (
             <button
@@ -26530,6 +29586,46 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
         })}
       </div>
 
+      <div className="flex items-center gap-2 px-4 mt-5 mb-2">
+        <Sparkles size={14} color="var(--accent-solid)" />
+        <p className="text-[12px]" style={{ color: "var(--text)", fontWeight: 700 }}>Premium</p>
+        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Elite & Supreme badges</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2.5 px-4">
+        {CHAT_THEMES.filter((th) => th.tier).map((th) => {
+          const on = !pickedImage && pickedTheme === th.key;
+          const ok = premiumAllowed(badge, th.tier);
+          return (
+            <button
+              key={th.key}
+              onClick={() => {
+                if (!ok) lockedTip(th.tier);
+                else setError("");
+                setPickedTheme(th.key);
+                setPickedImage(null);
+              }}
+              className="flex flex-col items-center gap-1.5 transition-transform active:scale-95"
+            >
+              <span
+                className="relative w-full rounded-2xl overflow-hidden flex flex-col justify-end gap-1 p-2"
+                style={{ aspectRatio: "3 / 4", background: th.bg, border: on ? "2.5px solid var(--accent-solid)" : "1px solid var(--border)" }}
+              >
+                <span className="self-start rounded-full" style={{ width: "62%", height: 10, background: th.other }} />
+                <span className="self-end rounded-full" style={{ width: "55%", height: 10, background: th.bubble }} />
+                <span className="self-end rounded-full" style={{ width: "40%", height: 10, background: th.bubble }} />
+                {!ok && <PremiumLock tier={th.tier} />}
+                {on && (
+                  <span className="absolute top-1.5 end-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "var(--accent-solid)" }}>
+                    <Check size={12} color="var(--on-accent)" strokeWidth={3} />
+                  </span>
+                )}
+              </span>
+              <span className="text-[11px]" style={{ color: "var(--text)", fontWeight: on ? 700 : 500 }}>{th.name}</span>
+            </button>
+          );
+        })}
+      </div>
+
       {pickedImage && (
         <>
           <div className="flex items-center justify-between px-4 mt-4 mb-2">
@@ -26539,7 +29635,7 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
             </button>
           </div>
           <div className="flex gap-2.5 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
-            {CHAT_THEMES.map((th) => (
+            {CHAT_THEMES.filter((th) => premiumAllowed(badge, th.tier)).map((th) => (
               <button
                 key={th.key}
                 onClick={() => setPickedTheme(th.key)}
@@ -26559,21 +29655,31 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
 
       <p className="px-4 text-[12px] mt-4 mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Font</p>
       <div className="flex gap-2 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
-        {CHAT_FONTS.map((ft) => (
-          <button
-            key={ft.key}
-            onClick={() => setPickedFont(ft.key)}
-            className="rounded-full px-3.5 h-9 text-[13px] shrink-0"
-            style={{
-              fontFamily: ft.stack,
-              background: pickedFont === ft.key ? "var(--text)" : "var(--surface)",
-              color: pickedFont === ft.key ? "var(--bg)" : "var(--text)",
-              border: "1px solid var(--border)",
-            }}
-          >
-            {ft.name}
-          </button>
-        ))}
+        {ALL_CHAT_FONTS.map((ft) => {
+          const ok = premiumAllowed(badge, ft.tier);
+          return (
+            <button
+              key={ft.key}
+              onClick={() => {
+                if (!ok) lockedTip(ft.tier);
+                else setError("");
+                setPickedFont(ft.key);
+              }}
+              className="rounded-full px-3.5 h-9 text-[13px] shrink-0 flex items-center gap-1.5"
+              style={{
+                fontFamily: ft.stack,
+                fontWeight: ft.weight || 400,
+                background: pickedFont === ft.key ? "var(--text)" : "var(--surface)",
+                color: pickedFont === ft.key ? "var(--bg)" : "var(--text)",
+                border: ft.tier ? "1px solid var(--accent-solid)" : "1px solid var(--border)",
+                opacity: ok ? 1 : 0.6,
+              }}
+            >
+              {!ok && <Lock size={11} />}
+              {ft.name}
+            </button>
+          );
+        })}
       </div>
 
       <div className="px-4 pt-4 pb-6">
@@ -26581,9 +29687,18 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
           onClick={apply}
           disabled={busy}
           className="w-full rounded-full h-11 text-sm transition-transform active:scale-95"
-          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : lockedPick ? 0.75 : 1 }}
         >
-          {busy ? "Applying..." : "Apply"}
+          {busy ? (
+            "Applying..."
+          ) : lockedPick ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Lock size={14} />
+              Apply
+            </span>
+          ) : (
+            "Apply"
+          )}
         </button>
       </div>
     </StorySheetShell>
@@ -26766,7 +29881,7 @@ function NicknamesSheet({ conversationId, currentUserId, onClose, onSaved }) {
       </p>
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : (
           rows.map((r) => {
             const changed = (drafts[r.user_id] || "") !== (r.nickname || "");
@@ -27029,7 +30144,7 @@ function ShareSheet({ item, currentUserId, onClose, onShared }) {
 
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : (
           <>
             {shownGroups.length > 0 && (
@@ -27229,7 +30344,7 @@ function AddToCollectionSheet({ postIds, currentUserId, onClose, onDone }) {
 
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : collections.length === 0 ? (
           <p className="text-xs text-center py-6 px-8" style={{ color: "var(--text-muted)" }}>
             No collections yet. Name one above to make your first.
@@ -27355,7 +30470,7 @@ function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
 
       <p className="text-[11px] px-4 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>{trJoin("{0} collaborator{1}", rows.length, rows.length === 1 ? "" : "s")}</p>
       {loading ? (
-        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}>Loading...</p>
+        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
       ) : rows.length === 0 ? (
         <p className="text-xs px-4 pb-2" style={{ color: "var(--text-muted)" }}>No one added yet</p>
       ) : (
@@ -28960,7 +32075,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </div>
         )}
         {loading ? (
-          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>Loading...</p>
+          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : visibleMessages.length === 0 ? (
           <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>No messages yet — say hi 👋</p>
         ) : (
@@ -29038,7 +32153,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     openCtx(m);
                   }}
                   className="relative max-w-[78%]"
-                  style={menuFor === m.id ? { zIndex: 86 } : undefined}
+                  style={{ WebkitUserSelect: "none", userSelect: "none", WebkitTouchCallout: "none", ...(menuFor === m.id ? { zIndex: 86 } : {}) }}
                 >
                   {/* quoted parent */}
                   {parent && !m.deleted && (
@@ -29647,7 +32762,7 @@ function NotificationsScreen({ onBack }) {
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
-            Loading...
+            <LoopSpinner />
           </p>
         ) : notifications.length === 0 ? (
           <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
@@ -29893,7 +33008,7 @@ function CommentsScreen({ postId, postOwnerId, onBack }) {
       <div className="flex-1 overflow-y-auto px-4 pt-3">
         {loading ? (
           <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
-            Loading...
+            <LoopSpinner />
           </p>
         ) : comments.length === 0 ? (
           <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
@@ -30128,7 +33243,7 @@ function SetNewPasswordScreen({ onDone }) {
   );
 }
 
-function LoginScreen({ onLogin, onGoSignup, onForgot }) {
+function LoginScreen({ onLogin, onGoSignup, onForgot, noDemo = false }) {
   const [email, setEmail] = useState(""); // username, email or phone
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -30224,7 +33339,7 @@ function LoginScreen({ onLogin, onGoSignup, onForgot }) {
       <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>{trJoin("Don't have an account? {0}", <button onClick={onGoSignup} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
           Sign Up
         </button>)}</p>
-      <button onClick={startDemo} className="text-center text-xs mt-4" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Just looking? {0}", <span style={{ color: "var(--accent-solid)" }}>Try the demo</span>)}</button>
+      {!noDemo && <button onClick={startDemo} className="text-center text-xs mt-4" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Just looking? {0}", <span style={{ color: "var(--accent-solid)" }}>Try the demo</span>)}</button>}
     </div>
   );
 }
@@ -30531,14 +33646,23 @@ function InterestsScreen({ onBack }) {
   );
 }
 
+// The bottom bar, in Instagram's order: Home, Reels, Messages, Search,
+// Profile. New post sits at the top of Home (and a swipe right from Home).
 const TABS = [
-  { key: "feed", label: "Feed", icon: Home, screen: FeedScreen },
+  { key: "feed", label: "Home", icon: Home, screen: FeedScreen },
   { key: "reels", label: "Reels", icon: Clapperboard, screen: ReelsScreen },
+  { key: "messages", label: "Messages", icon: ChatsIcon, screen: MessagesScreen },
   { key: "search", label: "Search", icon: Search, screen: SearchScreen },
-  { key: "upload", label: "Upload", icon: PlusSquare, screen: UploadScreen },
   { key: "profile", label: "Profile", icon: CircleUserRound, screen: ProfileScreen },
+  { key: "upload", label: "New post", icon: PlusSquare, screen: UploadScreen, hidden: true },
 ];
 
+const PEOPLE_LIST_WORDS = {
+  close_friends: { add: "Add", remove: "Remove", search: "Search people to add", none: "No one else to add" },
+  blocked: { add: "Block", remove: "Unblock", search: "Search people to block", none: "No one else to block" },
+  restricted: { add: "Restrict", remove: "Unrestrict", search: "Search people to restrict", none: "No one else to restrict" },
+  muted: { add: "Mute", remove: "Unmute", search: "Search people to mute", none: "No one else to mute" },
+};
 const PEOPLE_LIST_META = {
   close_friends: { title: "Close friends", hint: "Only these people see stories you share with close friends." },
   blocked: { title: "Blocked", hint: "Blocked people can't find your profile, posts or story." },
@@ -30674,7 +33798,7 @@ function ModerationScreen({ onBack }) {
   const load = async () => {
     setRows(null);
     setError("");
-    if (tab === "verify") {
+    if (tab === "verify" || tab === "gifs") {
       setRows([]);
       return;
     }
@@ -30717,6 +33841,7 @@ function ModerationScreen({ onBack }) {
     ["bans", "Suspended"],
     ...(role === "admin" ? [["verify", "Badges"]] : []),
     ["team", "Team"],
+    ["gifs", "GIFs"],
     ["log", "Log"],
   ];
 
@@ -30819,6 +33944,8 @@ function ModerationScreen({ onBack }) {
 
         {tab === "verify" ? (
           <VerificationQueue flash={flash} />
+        ) : tab === "gifs" ? (
+          <GifModeration flash={flash} />
         ) : error ? (
           <div className="rounded-2xl p-4 text-center" style={{ background: "var(--surface)" }}>
             <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Couldn't load this</p>
@@ -30827,7 +33954,7 @@ function ModerationScreen({ onBack }) {
             </p>
           </div>
         ) : rows === null ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>Loading…</p>
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center py-12">
             <Shield size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -31085,6 +34212,25 @@ function LoopApp() {
   const [uploadMode, setUploadMode] = useState("photo");
   const [presetSound, setPresetSound] = useState(null); // from "Use this sound"
   const [uploadNonce, setUploadNonce] = useState(0);
+  const [dmChatOpen, setDmChatOpen] = useState(false);
+  const [accountSheet, setAccountSheet] = useState(false);
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [switchingTo, setSwitchingTo] = useState(null);
+  const [frameEl, setFrameEl] = useState(null);
+  const [switchNote, setSwitchNote] = useState(() => {
+    try {
+      const v = sessionStorage.getItem("loop_switched_to");
+      sessionStorage.removeItem("loop_switched_to");
+      return v || null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (!switchNote) return;
+    const t = setTimeout(() => setSwitchNote(null), 2600);
+    return () => clearTimeout(t);
+  }, [switchNote]);
   useEffect(() => {
     const onTag = (e) => setHashtag(e.detail);
     window.addEventListener("loop:hashtag", onTag);
@@ -31168,6 +34314,7 @@ function LoopApp() {
     supabase.auth.getUser().then(({ data }) => setMeId(data?.user?.id ?? null));
     // Keep "who am I" right after logging in, out, or switching accounts.
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (session) stashSession(session);
       setMeId(session?.user?.id ?? null);
       staffRolePromise = null;
       invalidateRelations();
@@ -31355,7 +34502,39 @@ function LoopApp() {
   }
   if (accentStart && !accentEnd) rootVarOverrides["--accent-solid"] = accentStart;
 
-  const ActiveScreen = TABS.find((t) => t.key === active).screen;
+  const ActiveScreen = (TABS.find((t) => t.key === active) || TABS[0]).screen;
+  const meProfile = useMeProfile(meId, profileRefresh);
+  const unreadChats = useUnreadChats(meId, active === "messages" ? 0 : active);
+  const goTab = (key) => {
+    if (key === "reels") setReelStartId(null);
+    if (key === "upload" && active !== "upload") {
+      setUploadMode("photo");
+      setUploadNonce((n) => n + 1);
+    }
+    setActive(key);
+  };
+  const quickSwitch = async () => {
+    const other = otherAccounts(meId).find((a) => !a.expired);
+    if (!other) {
+      setAccountSheet(true);
+      return;
+    }
+    setSwitchingTo(other.username || "");
+    let r = { error: "offline" };
+    try {
+      r = await switchToAccount(other);
+    } catch {}
+    if (r.ok) window.location.reload();
+    else {
+      setSwitchingTo(null);
+      setAccountSheet(true);
+    }
+  };
+  useEffect(() => {
+    if (!meId) return;
+    const t = setTimeout(() => warmAnimatedEmoji(CHAT_QUICK_REACTIONS), 6000);
+    return () => clearTimeout(t);
+  }, [meId]);
   const overlayOpen = inboxOpen || notificationsOpen || interestsOpen || commentsPostId !== null || reportPostId !== null || viewProfileId !== null || settingsOpen || viewPostId !== null || savedOpen || profileFeed !== null || editProfileOpen || activityOpen || archiveOpen || peopleList !== null || moderationOpen || !!myBan || !!myDeletion || hashtag !== null || locationPage !== null || locked || channelOpen !== null || soundPage !== null;
 
   // ---- Back button ----
@@ -31365,6 +34544,17 @@ function LoopApp() {
   // on-screen back arrows and the phone's Back stay in step.
   // Order = which screen is on top when several are open (same order as
   // the screen picker below).
+  // Swiping away from Home needs the Back step that a first tap makes
+  // (see "Back button" below), so Back on the next tab returns to Home.
+  const backGuardRef = React.useRef(false);
+  useTabSwipe(frameEl, {
+    enabled: !overlayOpen && !(active === "messages" && dmChatOpen) && !accountSheet && switchingTo === null,
+    active,
+    onGo: (key) => {
+      if (active === "feed" && key !== "feed" && !backGuardRef.current) return false;
+      goTab(key);
+    },
+  });
   const overlayStack = [
     [channelOpen !== null, () => setChannelOpen(null)],
     [soundPage !== null, () => setSoundPage(null)],
@@ -31390,28 +34580,46 @@ function LoopApp() {
     [viewProfileId !== null, () => setViewProfileId(null)],
     [active !== "feed", () => setActive("feed")],
   ];
-  const navDepth = authScreen || myBan || myDeletion || locked ? 0 : overlayStack.filter((o) => o[0]).length;
+  const blockedNav = !!(authScreen || myBan || myDeletion || locked);
+  const overlayDepth = blockedNav ? 0 : overlayStack.slice(0, -1).filter((o) => o[0]).length;
   const overlayStackRef = React.useRef(overlayStack);
   overlayStackRef.current = overlayStack;
-  const prevDepthRef = React.useRef(0);
+  const activeRef = React.useRef(active);
+  activeRef.current = active;
+  const pushedRef = React.useRef(0);
   const skipPopRef = React.useRef(0);
-  const closingFromPopRef = React.useRef(false);
+  const blockedNavRef = React.useRef(blockedNav);
+  blockedNavRef.current = blockedNav;
+
+  // The guard step goes in on any tap (a tap counts as the person's own action).
+  useEffect(() => {
+    const ensureGuard = () => {
+      if (backGuardRef.current || blockedNavRef.current) return;
+      try {
+        window.history.pushState({ loop: "guard" }, "");
+        backGuardRef.current = true;
+      } catch {}
+    };
+    document.addEventListener("click", ensureGuard, true);
+    return () => document.removeEventListener("click", ensureGuard, true);
+  }, []);
 
   useEffect(() => {
-    const prev = prevDepthRef.current;
-    prevDepthRef.current = navDepth;
-    if (navDepth > prev) {
-      for (let k = prev; k < navDepth; k++) window.history.pushState({ loop: k + 1 }, "");
-    } else if (navDepth < prev) {
-      if (closingFromPopRef.current) {
-        closingFromPopRef.current = false;
-        return;
+    const prev = pushedRef.current;
+    if (overlayDepth > prev) {
+      if (!backGuardRef.current) {
+        window.history.pushState({ loop: "guard" }, "");
+        backGuardRef.current = true;
       }
+      for (let k = prev; k < overlayDepth; k++) window.history.pushState({ loop: k + 1 }, "");
+      pushedRef.current = overlayDepth;
+    } else if (overlayDepth < prev) {
       // Closed with an on-screen arrow: drop the matching history steps.
+      pushedRef.current = overlayDepth;
       skipPopRef.current += 1;
-      window.history.go(-(prev - navDepth));
+      window.history.go(-(prev - overlayDepth));
     }
-  }, [navDepth]);
+  }, [overlayDepth]);
 
   useEffect(() => {
     const onPop = () => {
@@ -31419,10 +34627,21 @@ function LoopApp() {
         skipPopRef.current -= 1;
         return;
       }
-      const top = overlayStackRef.current.find((o) => o[0]);
-      if (top) {
-        closingFromPopRef.current = true;
-        top[1]();
+      if (pushedRef.current > 0) {
+        // The phone's Back: close the screen on top.
+        pushedRef.current -= 1;
+        const top = overlayStackRef.current.slice(0, -1).find((o) => o[0]);
+        top?.[1]();
+        return;
+      }
+      if (backGuardRef.current) {
+        backGuardRef.current = false;
+        if (activeRef.current !== "feed") {
+          setActive("feed");
+          return;
+        }
+        // Back on Home with nothing open leaves Loop, like any app.
+        window.history.back();
       }
     };
     window.addEventListener("popstate", onPop);
@@ -31495,7 +34714,34 @@ function LoopApp() {
         <style>{THEME_CSS}</style>
         <div className="flex-1 w-full flex flex-col items-center justify-center gap-4" style={{ minHeight: "100dvh" }}>
           <LoopLogo size={96} />
-          <span className="text-sm" style={{ color: "var(--text-muted)" }}>Loading...</span>
+          <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
+        </div>
+      </div>
+    );
+  }
+
+  if (addingAccount && !authScreen && !checkingSession) {
+    return (
+      <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={shownTheme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
+        <style>{THEME_CSS}</style>
+        <div
+          className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
+          style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
+        >
+          <button
+            onClick={() => setAddingAccount(false)}
+            className="absolute top-3 start-3 z-10 flex items-center gap-1 rounded-full px-3 h-9 text-[13px]"
+            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600 }}
+          >
+            <ChevronLeft size={16} /> Cancel
+          </button>
+          {addingAccount === "signup" ? (
+            <SignupScreen onSignup={() => window.location.reload()} onGoLogin={() => setAddingAccount(true)} />
+          ) : addingAccount === "forgot" ? (
+            <ForgotPasswordScreen onBack={() => setAddingAccount(true)} />
+          ) : (
+            <LoginScreen noDemo onLogin={() => window.location.reload()} onGoSignup={() => setAddingAccount("signup")} onForgot={() => setAddingAccount("forgot")} />
+          )}
         </div>
       </div>
     );
@@ -31536,10 +34782,10 @@ function LoopApp() {
     <div className="loop-page w-full min-h-screen flex items-center justify-center notranslate" translate="no" data-theme={shownTheme} style={{ background: "var(--page-bg)", ...rootVarOverrides }}>
       <style>{THEME_CSS}</style>
       <FxLayer />
-      <AnimatedIcons />
       <DemoPill />
       <LowCopyChip />
       <div
+        ref={setFrameEl}
         className="loop-frame flex flex-col w-full max-w-[390px] h-[780px] overflow-hidden relative"
         style={{ background: "var(--bg)", borderRadius: 36, border: "8px solid var(--page-bg)" }}
       >
@@ -31738,6 +34984,7 @@ function LoopApp() {
                 setReelStartId(postId);
                 setActive("reels");
               }}
+              onCreate={() => goTab("upload")}
             />
           ) : active === "reels" ? (
             <ReelsScreen
@@ -31776,14 +35023,14 @@ function LoopApp() {
                 setActive("upload");
               }}
               onOpenModeration={() => setModerationOpen(true)}
-              onAddAccount={async () => {
-                await supabase.auth.signOut();
-              }}
+              onAddAccount={() => setAddingAccount(true)}
               onSwitched={() => window.location.reload()}
               onOpenProfileFeed={({ posts, index, title }) =>
                 setProfileFeed({ postIds: posts.map((x) => x.id), index, title })
               }
             />
+          ) : active === "messages" ? (
+            <MessagesScreen asTab onBack={() => goTab("feed")} onChatOpenChange={setDmChatOpen} />
           ) : active === "upload" ? (
             <UploadScreen
               key={`upload-${uploadNonce}`}
@@ -31843,47 +35090,81 @@ function LoopApp() {
         )}
 
         {/* Bottom nav */}
-        {!overlayOpen && (
+        {!overlayOpen && !(active === "messages" && dmChatOpen) && (
           <div
-            className="flex items-center justify-around px-2 pt-3 shrink-0"
-            style={{ background: "var(--bg)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}
+            className="flex items-center justify-around px-2 pt-2.5 shrink-0"
+            style={{ background: "var(--bg)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))" }}
           >
-            {TABS.map((tab) => {
+            {TABS.filter((t) => !t.hidden).map((tab) => {
               const Icon = tab.icon;
               const isActive = active === tab.key;
+              if (tab.key === "profile")
+                return (
+                  <ProfileTabButton
+                    key="profile"
+                    me={meProfile}
+                    active={isActive}
+                    onTap={() => goTab("profile")}
+                    onDoubleTap={quickSwitch}
+                    onLongPress={() => setAccountSheet(true)}
+                  />
+                );
               return (
                 <button
                   key={tab.key}
-                  onClick={() => {
-                    if (tab.key === "reels") setReelStartId(null);
-                    if (tab.key === "upload" && active !== "upload") {
-                      setUploadMode("photo");
-                      setUploadNonce((n) => n + 1);
-                    }
-                    setActive(tab.key);
-                  }}
+                  onClick={() => goTab(tab.key)}
                   aria-label={tab.label}
-                  className="flex flex-col items-center justify-center gap-1"
+                  className="relative flex flex-col items-center justify-center gap-1"
                   style={{ width: 44, height: 36 }}
                 >
-                  <Icon
-                    size={23}
-                    color={isActive ? "var(--accent-solid)" : "var(--text-muted)"}
-                    strokeWidth={isActive ? 2.4 : 2}
-                    fill={isActive && (tab.key === "feed" || tab.key === "profile") ? "var(--accent-solid)" : "none"}
-                  />
+                  {tab.key === "messages" ? (
+                    <ChatsIcon size={25} color={isActive ? "var(--accent-solid)" : "var(--text-muted)"} />
+                  ) : (
+                    <Icon
+                      size={24}
+                      color={isActive ? "var(--accent-solid)" : "var(--text-muted)"}
+                      strokeWidth={isActive ? 2.4 : 2}
+                      fill={isActive && tab.key === "feed" ? "var(--accent-solid)" : "none"}
+                    />
+                  )}
+                  {tab.key === "messages" && unreadChats > 0 && (
+                    <span
+                      className="absolute -top-1 rounded-full flex items-center justify-center text-[9px]"
+                      style={{ insetInlineStart: 24, background: "#FF3040", color: "#FFFFFF", fontWeight: 700, minWidth: 17, height: 17, padding: "0 4px", border: "2px solid var(--bg)" }}
+                    >
+                      {unreadChats > 99 ? "99+" : unreadChats}
+                    </span>
+                  )}
                   <span
                     className="rounded-full"
-                    style={{
-                      width: 4,
-                      height: 4,
-                      background: isActive ? "var(--accent-solid)" : "transparent",
-                      transition: "background 0.2s",
-                    }}
+                    style={{ width: 4, height: 4, background: isActive ? "var(--accent-solid)" : "transparent", transition: "background 0.2s" }}
                   />
                 </button>
               );
             })}
+          </div>
+        )}
+        {accountSheet && (
+          <AccountSwitcherSheet
+            currentUserId={meId}
+            onClose={() => setAccountSheet(false)}
+            onAddAccount={() => {
+              setAccountSheet(false);
+              setAddingAccount(true);
+            }}
+            onOpenSettings={() => {
+              setAccountSheet(false);
+              setSettingsOpen(true);
+            }}
+          />
+        )}
+        {switchingTo !== null && <SwitchingCover username={switchingTo} />}
+        {switchNote && (
+          <div
+            className="absolute left-1/2 -translate-x-1/2 top-3 z-[90] rounded-full px-4 py-2 text-xs"
+            style={{ background: "var(--text)", color: "var(--bg)", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "loopPop 0.2s ease-out", whiteSpace: "nowrap", maxWidth: "88%", overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {trJoin("Logged in as {0}", switchNote)}
           </div>
         )}
       </div>
