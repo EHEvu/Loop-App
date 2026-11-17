@@ -350,7 +350,7 @@ function trText(s) {
 }
 // Text with pieces in the middle: "Delete {0} posts?" keeps the right word order.
 function trJoin(pat, ...args) {
-  const out = (I18N_DICT && I18N_DICT[pat]) || pat;
+  const out = (I18N_DICT && (I18N_DICT[pat] ?? trExact(pat))) || pat;
   const empty = (a) => a === null || a === undefined || a === false || a === true || a === "";
   const plain = args.every((a) => empty(a) || typeof a === "string" || typeof a === "number");
   if (plain)
@@ -12377,7 +12377,7 @@ function StoriesBar({ onOpenProfile }) {
               <Plus size={11} color="var(--on-accent)" strokeWidth={3.5} />
             </button>
           </div>
-          <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>
+          <span className="text-[11px] truncate text-center" style={{ color: "var(--text)", width: 80, maxWidth: 80 }}>
             Your story
           </span>
         </div>
@@ -20358,7 +20358,7 @@ function DraftRow({ draft, onOpen, onDelete }) {
           <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>
             {draft.caption?.trim() || (draft.mode === "reel" ? "Reel" : "Post")}
           </p>
-          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · saved {1} ago{2}", draft.mode === "reel" ? "Reel" : `${count} item${count === 1 ? "" : "s"}`, timeAgo(new Date(draft.savedAt).toISOString(), true), draft.scheduleOn ? " · scheduled" : "")}</p>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · saved {1} ago{2}", draft.mode === "reel" ? "Reel" : count === 1 ? "1 item" : trJoin("{0} items", count), timeAgo(new Date(draft.savedAt).toISOString(), true), draft.scheduleOn ? " · scheduled" : "")}</p>
         </div>
       </button>
       <button onClick={onDelete} className="p-1.5 shrink-0 transition-transform active:scale-90">
@@ -21957,7 +21957,7 @@ function writeTimePrefs(prefs) {
 }
 const fmtMinutes = (sec) => {
   const m = Math.round(sec / 60);
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+  return m < 60 ? trJoin("{0} min", m) : trJoin("{0}h {1}m", Math.floor(m / 60), m % 60);
 };
 
 function recordTimeSpent(seconds) {
@@ -22261,14 +22261,14 @@ function TimeManagementScreen({ onBack }) {
       <ScreenHeader title="Time management" onBack={onBack} />
       <div className="px-4 pt-4">
         <div className="rounded-2xl p-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className="flex items-end justify-between mb-4">
+          <div className="flex flex-wrap items-end justify-between mb-4" style={{ columnGap: 12, rowGap: 8 }}>
             <div>
               <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Today</p>
-              <p className="text-2xl" style={{ color: "var(--text)", fontWeight: 800 }}>{fmtMinutes(today)}</p>
+              <p className="text-2xl" style={{ color: "var(--text)", fontWeight: 800, whiteSpace: "nowrap" }}>{fmtMinutes(today)}</p>
             </div>
-            <div className="text-end">
+            <div className="text-end" style={{ marginInlineStart: "auto" }}>
               <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Daily average</p>
-              <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>{fmtMinutes(avg)}</p>
+              <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700, whiteSpace: "nowrap" }}>{fmtMinutes(avg)}</p>
             </div>
           </div>
           <div className="flex items-end justify-between gap-2" style={{ height: 120 }}>
@@ -22288,7 +22288,7 @@ function TimeManagementScreen({ onBack }) {
             ))}
           </div>
           {prefs.dailyLimit > 0 && (
-            <p className="text-[12px] mt-3" style={{ color: "var(--text-secondary)" }}>{trJoin("Daily limit: {0} min · {1}", prefs.dailyLimit, today >= prefs.dailyLimit * 60 ? "reached today" : `${fmtMinutes(Math.max(0, prefs.dailyLimit * 60 - today))} left`)}</p>
+            <p className="text-[12px] mt-3" style={{ color: "var(--text-secondary)" }}>{trJoin("Daily limit: {0} min · {1}", prefs.dailyLimit, today >= prefs.dailyLimit * 60 ? "reached today" : trJoin("{0} left", fmtMinutes(Math.max(0, prefs.dailyLimit * 60 - today))))}</p>
           )}
         </div>
 
@@ -22298,7 +22298,7 @@ function TimeManagementScreen({ onBack }) {
         </p>
         <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
           {[0, 15, 30, 45, 60, 90, 120].map((m) => (
-            <Choice key={m} value={m} current={prefs.dailyLimit} label={m ? (m < 60 ? `${m} min` : `${m / 60} h`) : "Off"} onPick={(v) => update({ dailyLimit: v })} />
+            <Choice key={m} value={m} current={prefs.dailyLimit} label={m ? (m < 60 ? trJoin("{0} min", m) : trJoin("{0}h", (m / 60).toLocaleString(I18N_LOCALE))) : "Off"} onPick={(v) => update({ dailyLimit: v })} />
           ))}
         </div>
 
@@ -22780,7 +22780,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
     const avg = days.length ? Math.round(total / days.length) : 0;
     const fmt = (sec) => {
       const m = Math.round(sec / 60);
-      return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+      return m < 60 ? trJoin("{0} min", m) : trJoin("{0}h {1}m", Math.floor(m / 60), m % 60);
     };
     const max = Math.max(1, ...days.map((d) => data[d]));
 
@@ -23053,8 +23053,8 @@ function InsightsScreen({ onBack }) {
             <Box label="Comments" value={formatCount(state.comments)} />
           </div>
           <div className="flex gap-2 px-4 pb-3">
-            <Box label="New followers" value={formatCount(state.newFollowers)} hint={`${formatCount(state.followers)} in all`} />
-            <Box label="You posted" value={formatCount(state.posted)} hint={`${formatCount(state.totalPosts)} in all`} />
+            <Box label="New followers" value={formatCount(state.newFollowers)} hint={trJoin("{0} in all", formatCount(state.followers))} />
+            <Box label="You posted" value={formatCount(state.posted)} hint={trJoin("{0} in all", formatCount(state.totalPosts))} />
           </div>
           <p className="px-4 pb-4 text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("Views, likes and comments count the posts you put up in the last {0} days.", state.days)}</p>
 
@@ -25593,7 +25593,7 @@ function HighlightsRow({ profileId, username, isOwn, onOpen, onNew }) {
         <StorySheetShell title={manage.title} onClose={() => setManage(null)}>
           <div className="pb-6">
             <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
-              {manage.count === 0 ? "This highlight has no stories left." : `${manage.count} ${manage.count === 1 ? "story" : "stories"}`}
+              {manage.count === 0 ? "This highlight has no stories left." : trJoin("{0} {1}", manage.count, manage.count === 1 ? "story" : "stories")}
             </p>
             <StoryMenuRow
               icon={<Pencil size={17} color="var(--text)" />}
@@ -25768,7 +25768,7 @@ function NewHighlightSheet({ currentUserId, onClose, onCreated }) {
       </div>
 
       <p className="text-[11px] px-4 pb-2" style={{ color: "var(--text-muted)" }}>
-        {picked.length > 0 ? `${picked.length} selected` : "Pick the stories to keep"}
+        {picked.length > 0 ? trJoin("{0} selected", picked.length) : "Pick the stories to keep"}
       </p>
 
       {loading ? (
@@ -32282,7 +32282,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           <div className="flex items-center gap-1 ms-1 mb-1">
             <div className="px-3 py-2 rounded-2xl" style={{ background: "var(--surface)" }}>
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                {isGroup ? `${typingUsers.join(", ")} typing...` : "typing..."}
+                {isGroup ? trJoin("{0} typing...", typingUsers.join(", ")) : "typing..."}
               </span>
             </div>
           </div>
