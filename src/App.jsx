@@ -87,6 +87,8 @@ import {
   Check,
   Copy,
   Flag,
+  Cast,
+  Ban,
   Pencil,
   ChevronLeft,
   Star,
@@ -1347,6 +1349,142 @@ function LoopSpinner({ size = 34, color = "var(--text-muted)", className = "", s
   );
 }
 
+// ---- Placeholders while something loads (like Instagram's grey boxes) ----
+// Lists and pages show their shape at once instead of a spinner, so the app
+// feels quick. The ∞ spinner is kept only where Instagram shows a spinning
+// circle: refresh at the top of Home, "load more" at the bottom, videos and
+// stories that are still coming, and buttons that are busy.
+function Skel({ w = "100%", h = 12, r = 6, style }) {
+  return <span aria-hidden="true" className="loop-skel" style={{ display: "block", width: w, height: h, borderRadius: r, ...style }} />;
+}
+
+function SkeletonRows({ count = 5, avatar = 44 }) {
+  const widths = ["58%", "42%", "66%", "50%", "38%", "62%", "46%", "54%", "40%"];
+  return (
+    <div role="status" aria-label="Loading" className="py-1">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+          {avatar > 0 && <Skel w={avatar} h={avatar} r={avatar} style={{ flexShrink: 0 }} />}
+          <div className="flex-1 min-w-0" style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            <Skel w={widths[i % widths.length]} h={11} />
+            <Skel w={widths[(i + 3) % widths.length].replace(/\d+/, (n) => String(Math.round(n * 0.6)))} h={9} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SkeletonBlock({ lines = 4 }) {
+  return (
+    <div role="status" aria-label="Loading" className="px-4 py-4" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <Skel w="45%" h={14} />
+      {Array.from({ length: lines }, (_, i) => (
+        <Skel key={i} w={i === lines - 1 ? "60%" : "100%"} h={10} />
+      ))}
+      <Skel w="100%" h={44} r={12} style={{ marginTop: 6 }} />
+    </div>
+  );
+}
+
+function SkeletonPost() {
+  return (
+    <div aria-hidden="true" className="pb-4">
+      <div className="flex items-center gap-2.5 px-4 py-2.5">
+        <Skel w={34} h={34} r={34} style={{ flexShrink: 0 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+          <Skel w="34%" h={10} />
+          <Skel w="22%" h={8} />
+        </div>
+      </div>
+      <Skel w="100%" h={0} r={0} style={{ aspectRatio: "1 / 1", height: "auto" }} />
+      <div className="px-4 pt-3" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <Skel w="38%" h={10} />
+        <Skel w="72%" h={10} />
+      </div>
+    </div>
+  );
+}
+
+function SkeletonFeed({ count = 2 }) {
+  return (
+    <div role="status" aria-label="Loading">
+      {Array.from({ length: count }, (_, i) => (
+        <SkeletonPost key={i} />
+      ))}
+    </div>
+  );
+}
+
+function SkeletonGrid({ count = 9 }) {
+  return (
+    <div role="status" aria-label="Loading" className="grid grid-cols-3" style={{ gap: 2 }}>
+      {Array.from({ length: count }, (_, i) => (
+        <Skel key={i} w="100%" h={0} r={0} style={{ aspectRatio: "1 / 1", height: "auto" }} />
+      ))}
+    </div>
+  );
+}
+
+function SkeletonProfile() {
+  return (
+    <div role="status" aria-label="Loading" className="flex-1 overflow-hidden" style={{ background: "var(--bg)" }}>
+      <div className="flex items-center justify-between px-4" style={{ height: 52 }}>
+        <Skel w={120} h={16} />
+        <Skel w={24} h={24} r={8} />
+      </div>
+      <div className="flex items-center gap-6 px-4 pt-2">
+        <Skel w={86} h={86} r={86} style={{ flexShrink: 0 }} />
+        <div className="flex-1 flex justify-around">
+          {[0, 1, 2].map((i) => (
+            <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+              <Skel w={26} h={14} />
+              <Skel w={52} h={9} />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="px-4 pt-4" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <Skel w="40%" h={11} />
+        <Skel w="70%" h={9} />
+      </div>
+      <div className="flex gap-2 px-4 pt-4 pb-4">
+        <Skel w="50%" h={34} r={10} />
+        <Skel w="50%" h={34} r={10} />
+      </div>
+      <SkeletonGrid count={9} />
+    </div>
+  );
+}
+
+function SkeletonChat() {
+  const rows = [
+    { mine: false, w: "52%" },
+    { mine: true, w: "38%" },
+    { mine: false, w: "64%" },
+    { mine: true, w: "46%" },
+    { mine: true, w: "30%" },
+    { mine: false, w: "44%" },
+  ];
+  return (
+    <div role="status" aria-label="Loading" className="px-4 py-3" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", justifyContent: r.mine ? "flex-end" : "flex-start" }}>
+          <Skel w={r.w} h={36} r={18} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const SKEL_CSS = `
+  .loop-skel { background: rgba(128,128,128,0.2); animation: loopSkel 1.4s ease-in-out infinite; }
+  @keyframes loopSkel { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+  .loop-spinner { animation: loopSpinIn 0.2s ease 0.18s both; }
+  @keyframes loopSpinIn { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .loop-skel { animation: none; } }
+`;
+
 // ---- The only icon animations: like, save, repost ----
 // Replays a short, quick animation each time `on` turns true (liking,
 // saving, reposting). Turning it off is instant, like Instagram.
@@ -1365,7 +1503,8 @@ function PopOnTrue({ on, kind = "like", children }) {
 }
 
 const BRAND_CSS = `
-  .loop-spinner-run { animation: loopInfRun 1.15s linear infinite; }
+  .loop-spinner-run { animation: loopInfRun 0.9s linear infinite; }
+${SKEL_CSS}
   @keyframes loopInfRun { to { stroke-dashoffset: -100; } }
   .loop-pop { display: inline-flex; align-items: center; justify-content: center; }
   .loop-pop-like { animation: loopLikePop 0.42s cubic-bezier(.17,.89,.32,1.28); }
@@ -1401,7 +1540,7 @@ const BRAND_CSS = `
 // (a post with several photos, the stories row, a slider) keeps the swipe,
 // and so do sheets and pop-ups, and the first few pixels at the screen
 // edges, which belong to the phone's own Back gesture.
-const SWIPE_TAB_ORDER = ["upload", "feed", "reels", "messages", "search", "profile"];
+const SWIPE_TAB_ORDER = ["upload", "feed", "reels", "search", "messages", "profile"];
 function swipeBlockedFrom(target, frame) {
   let el = target;
   while (el && el !== frame && el.nodeType === 1) {
@@ -3416,9 +3555,7 @@ function LanguageScreen({ onBack }) {
         </p>
       )}
       {!list ? (
-        <div className="py-12 flex justify-center">
-          <LoopSpinner size={40} />
-        </div>
+        <SkeletonRows count={8} avatar={0} />
       ) : (
         <div className="pb-10">
           {shown.map((l) => (
@@ -3788,7 +3925,7 @@ function VerificationRequestScreen({ onBack }) {
         {state?.verified && (!state.until || new Date(state.until).getTime() > Date.now()) && <BadgePerksCard tier={state.tier} />}
 
         {!state ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonBlock />
         ) : pending ? (
           <div className="rounded-2xl p-4 mt-6" style={{ background: "var(--surface)" }}>
             <p className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>We're checking your payment</p>
@@ -4035,7 +4172,7 @@ function SupportLoopScreen({ onBack, Header }) {
       </div>
 
       {pay === null ? (
-        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonBlock />
       ) : open.length === 0 ? (
         <div className="mx-4 rounded-2xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Gifts are closed right now</p>
@@ -4642,7 +4779,7 @@ function SupportQueue({ flash }) {
       {err ? (
         <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{err}</p>
       ) : rows === null ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center py-12">
           <HandHeart size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -4772,7 +4909,7 @@ function BadgeQueue({ flash, switcher }) {
       {err ? (
         <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>{err}</p>
       ) : rows === null ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center py-12">
           <BadgeCheck size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -6358,6 +6495,7 @@ function saveStoryQuick(list) {
 // Pick which 8 emoji sit in your quick row.
 function QuickEmojiSheet({ current, onSave, onClose }) {
   const [picked, setPicked] = useState(current.slice(0, 8));
+  const [all, setAll] = useState(false);
   const toggle = (e) =>
     setPicked((prev) => (prev.includes(e) ? prev.filter((x) => x !== e) : prev.length >= 8 ? prev : [...prev, e]));
   return (
@@ -6387,6 +6525,23 @@ function QuickEmojiSheet({ current, onSave, onClose }) {
             );
           })}
         </div>
+        <button
+          onClick={() => setAll(true)}
+          className="w-full flex items-center justify-center gap-1.5 rounded-xl h-10 mt-2 text-[13px]"
+          style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }}
+        >
+          <SmilePlus size={16} /> <span>All emoji</span>
+        </button>
+        {all && (
+          <EmojiPickerSheet
+            title="Your quick reactions"
+            onPick={(e) => {
+              setPicked((prev) => (prev.includes(e) || prev.length >= 8 ? prev : [...prev, e]));
+              setAll(false);
+            }}
+            onClose={() => setAll(false)}
+          />
+        )}
         <div className="flex gap-2 mt-4">
           <button
             onClick={() => setPicked(STORY_QUICK_REACTIONS)}
@@ -6582,7 +6737,7 @@ function SavedAudioList() {
       );
     })();
   }, []);
-  if (rows === null) return <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>;
+  if (rows === null) return <SkeletonRows />;
   if (err) return <p className="text-xs text-center py-10 px-8" style={{ color: "var(--heart)" }}>{err}</p>;
   if (!rows.length)
     return (
@@ -7071,7 +7226,7 @@ function ChannelRepliesSheet({ post, channel, me, isOwner, canReply, onClose, on
       </div>
       <div ref={listRef} className="px-4" style={{ maxHeight: "42vh", overflowY: "auto" }}>
         {rows === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : rows.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No replies yet</p>
         ) : (
@@ -7240,7 +7395,7 @@ function ChannelPeopleScreen({ channel, owner, me, onClose }) {
         )}
         <Section>Creators with channels</Section>
         {others === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : others.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No other channels yet</p>
         ) : (
@@ -7820,7 +7975,8 @@ function ChannelScreen({ channelId, onClose, onOpenProfile }) {
       )}
 
       {/* posts */}
-      <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3" style={themed ? chatAreaStyle(theme) : { background: "var(--bg-sunken)" }}>
+      <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3" style={themed ? { ...chatAreaStyle(theme), isolation: "isolate" } : { background: "var(--bg-sunken)" }}>
+        {themed && !theme.photo && <ThemeFxPinned fx={theme.fx} />}
         {channel && (
           <div className="flex flex-col items-center text-center px-6 pt-2 pb-5">
             <ChannelAvatar channel={channel} size={72} />
@@ -8390,7 +8546,7 @@ function ChannelsTab({ currentUserId }) {
       </div>
       {error && <p className="text-xs text-center py-4 px-8" style={{ color: "var(--heart)" }}>{error}</p>}
       {mine === null ? (
-        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : (
         <>
           {mine.length > 0 && (
@@ -8714,7 +8870,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
       {error ? (
         <p className="text-xs text-center py-12 px-8" style={{ color: "var(--text-muted)" }}>{error}</p>
       ) : !snd ? (
-        <p className="text-xs text-center py-12" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonBlock />
       ) : (
         <div className="flex-1 overflow-y-auto pb-8">
           {snd.sourceUrl && (
@@ -8968,7 +9124,7 @@ function SoundPickerSheet({ onPick, onClose }) {
       <p className="px-4 pb-2 text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · tap ▶ to listen", query.trim() ? "Results" : "New on Loop")}</p>
       <div className="pb-6" style={{ maxHeight: "55vh", overflowY: "auto" }}>
         {items === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : items.length === 0 ? (
           <p className="text-xs text-center py-8 px-8" style={{ color: "var(--text-muted)" }}>
             No sounds yet. Every video posted on Loop becomes a sound others can use.
@@ -9215,7 +9371,7 @@ function LoginActivityScreen({ onBack }) {
       {error ? (
         <p className="text-xs text-center py-10 px-8" style={{ color: "var(--heart)" }}>{error}</p>
       ) : rows === null ? (
-        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : (
         <>
           <p className="px-4 pt-4 pb-1 text-[13px]" style={{ color: "var(--text-muted)", fontWeight: 600 }}>This device</p>
@@ -9636,7 +9792,83 @@ function RepostIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, acti
       <path d="M14.8 2.9 17.9 5.4 14.8 7.9" />
       <path d="M20 13.8v1.8a3 3 0 0 1-3 3H6.6" />
       <path d="M9.2 21.1 6.1 18.6 9.2 16.1" />
+      {active && <path d="M8.9 12.1l2.2 2.2 4.1-4.3" />}
     </svg>
+  );
+}
+
+let ME_LITE = null;
+async function loadMeLite() {
+  if (ME_LITE) return ME_LITE;
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data } = await supabase.from("profiles").select("id, username, avatar_url").eq("id", user.id).maybeSingle();
+    ME_LITE = data || null;
+  } catch {
+    ME_LITE = null;
+  }
+  return ME_LITE;
+}
+
+function showRepostToast(opts) {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("loop:reposted", { detail: opts || {} }));
+}
+
+function RepostToastHost() {
+  const [t, setT] = useState(null);
+  const timer = React.useRef(null);
+  useEffect(() => {
+    const on = (e) => {
+      clearTimeout(timer.current);
+      setT({ ...(e.detail || {}), k: Date.now() });
+      timer.current = setTimeout(() => setT(null), 4000);
+    };
+    window.addEventListener("loop:reposted", on);
+    return () => {
+      window.removeEventListener("loop:reposted", on);
+      clearTimeout(timer.current);
+    };
+  }, []);
+  if (!t) return null;
+  return (
+    <div className="fixed inset-x-0 z-[150] flex justify-center px-3 pointer-events-none" style={{ bottom: "calc(72px + env(safe-area-inset-bottom, 0px))" }}>
+      <div
+        key={t.k}
+        role="status"
+        className="pointer-events-auto w-full flex items-center gap-3 rounded-2xl ps-4 pe-2 py-2"
+        style={{ maxWidth: 380, background: "rgba(38,38,38,0.97)", color: "#FFFFFF", boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "loopSheetUp 0.22s ease-out" }}
+      >
+        <RepostIcon size={22} color="#FFFFFF" strokeWidth={2.1} active />
+        <span className="flex-1 text-[14px]" style={{ fontWeight: 600 }}>
+          Reposted
+        </span>
+        {t.onAddNote && (
+          <button
+            className="text-[13px] px-2 py-1.5"
+            style={{ color: "rgba(255,255,255,0.8)", fontWeight: 600 }}
+            onClick={() => {
+              setT(null);
+              t.onAddNote();
+            }}
+          >
+            Add a note…
+          </button>
+        )}
+        <button
+          className="text-[14px] px-2 py-1.5"
+          style={{ color: "#FFFFFF", fontWeight: 700 }}
+          onClick={() => {
+            setT(null);
+            t.onUndo?.();
+          }}
+        >
+          Undo
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -9831,7 +10063,7 @@ function LikesViewsPopup({ post, isOwner, onClose, onOpenProfile }) {
           </div>
           <div className="overflow-y-auto pb-6" style={{ minHeight: 120 }}>
             {likers === null ? (
-              <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+              <SkeletonRows />
             ) : likers.length === 0 ? (
               <div className="flex flex-col items-center py-8">
                 <Heart size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -9934,7 +10166,7 @@ function InThisPostSheet({ tags, isVideo, onClose, onOpenProfile }) {
     <StorySheetShell title={isVideo ? "In this video" : "In this photo"} onClose={onClose}>
       <div className="px-4 pb-6">
         {people === null ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : people.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Nobody is tagged here</p>
         ) : (
@@ -10435,6 +10667,11 @@ const STICKER_TYPES = [
   { type: "link", label: "Link", icon: Link2 },
   { type: "mention", label: "Mention", icon: AtSign },
   { type: "location", label: "Location", icon: MapPin },
+  { type: "addyours", label: "Add Yours", icon: Camera },
+  { type: "frame", label: "Frames", icon: ImagePlus },
+  { type: "highlight", label: "Highlight", icon: Star },
+  { type: "slider", label: "Emoji slider", icon: Smile },
+  { type: "hashtag", label: "Hashtag", icon: Hash },
 ];
 const MAX_STICKERS = 6;
 const newStickerId = () => "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -10453,7 +10690,7 @@ function countdownParts(endsAt) {
 
 // How a sticker looks. The same drawing is used while placing it and
 // while watching the story; `poll` carries live results when there are any.
-function StickerBody({ st, mode, poll, myVote, answers, onVote, onAsk, onOpen, tick }) {
+function StickerBody({ st, mode, poll, myVote, answers, onVote, onAsk, onOpen, tick, slider, mySlide, onSlide, onResults, joined }) {
   const card = {
     background: "#FFFFFF",
     color: "#111111",
@@ -10610,6 +10847,80 @@ function StickerBody({ st, mode, poll, myVote, answers, onVote, onAsk, onOpen, t
     );
   }
 
+  if (st.type === "gif") {
+    const w = 150;
+    const h = Math.round(w * ((Number(st.h) || 1) / (Number(st.w) || 1)));
+    return <img src={st.url} alt="" draggable={false} style={{ width: w, height: Math.max(40, Math.min(260, h)), objectFit: "contain", display: "block", pointerEvents: "none" }} />;
+  }
+
+  if (st.type === "frame") return <FrameSticker st={st} mode={mode} />;
+
+  if (st.type === "slider") return <SliderSticker st={st} mode={mode} stats={slider} mine={mySlide} onSlide={onSlide} onResults={onResults} />;
+
+  if (st.type === "addyours") {
+    return (
+      <div style={{ ...card, width: "min(62vw, 232px)" }} className="overflow-hidden text-center" data-addyours="">
+        <p className="pt-3 text-[11px]" style={{ fontWeight: 900, letterSpacing: 0.7, textTransform: "uppercase" }}>
+          <span style={{ background: "linear-gradient(90deg, #f56040, #c13584, #5851db)", WebkitBackgroundClip: "text", color: "transparent" }}>Add yours</span>
+        </p>
+        <p className="px-4 pt-1 pb-2.5 text-[15px]" style={{ fontWeight: 800, lineHeight: 1.25, wordBreak: "break-word" }}>{st.prompt || "Show your view"}</p>
+        <div className="flex items-center justify-center gap-2 pb-3 px-3">
+          {mode === "view" && joined > 0 && (
+            <span className="text-[11.5px]" style={{ color: "#666", fontWeight: 700 }}>{trJoin("{0} joined", joined)}</span>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (mode === "view") onOpen?.();
+            }}
+            className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px]"
+            style={{ background: "#EFEFEF", color: "#111", fontWeight: 800 }}
+          >
+            <Camera size={14} color="#111" />
+            <span>Add yours</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (st.type === "highlight") {
+    return (
+      <button
+        type="button"
+        style={{ ...pill, padding: "6px 14px 6px 6px" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (mode === "view") onOpen?.();
+        }}
+      >
+        <span className="rounded-full overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 28, height: 28, background: "#EFEFEF", border: "2px solid #DDD" }}>
+          {st.cover_url ? <img src={st.cover_url} alt="" className="w-full h-full object-cover" /> : <Star size={14} color="#F2A600" fill="#F2A600" />}
+        </span>
+        <span className="truncate" style={{ maxWidth: 170 }}>{st.title || "Highlight"}</span>
+        <ChevronRight size={15} color="#888" />
+      </button>
+    );
+  }
+
+  if (st.type === "hashtag") {
+    return (
+      <button
+        type="button"
+        style={pill}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (mode === "view") onOpen?.();
+        }}
+      >
+        <span translate="no" style={{ background: "linear-gradient(90deg, #F77737, #E1306C)", WebkitBackgroundClip: "text", color: "transparent", textTransform: "uppercase" }}>
+          #{st.tag}
+        </span>
+      </button>
+    );
+  }
+
   if (st.type === "location") {
     return (
       <span style={pill}>
@@ -10639,6 +10950,34 @@ function StickerEditorSheet({ type, onDone, onClose }) {
   const [q, setQ] = useState("");
   const [people, setPeople] = useState([]);
   const [err, setErr] = useState("");
+  const [prompt2, setPrompt2] = useState("");
+  const [tag, setTag] = useState("");
+  const [sliderQ, setSliderQ] = useState("");
+  const [sliderEmoji, setSliderEmoji] = useState("😍");
+  const [myHighlights, setMyHighlights] = useState(null);
+  const [frame, setFrame] = useState(null); // { canvas, url }
+  const [frameCaption, setFrameCaption] = useState("");
+  const frameInput = React.useRef(null);
+
+  useEffect(() => {
+    if (type !== "highlight") return;
+    let off = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data } = user
+        ? await supabase.from("story_highlights").select("id, title, cover_url").eq("user_id", user.id).order("created_at", { ascending: false })
+        : { data: [] };
+      if (!off) setMyHighlights((data || []).map((h) => ({ ...h, user_id: user?.id })));
+    })();
+    return () => {
+      off = true;
+    };
+  }, [type]);
+  useEffect(() => {
+    if (type === "frame" && !frame) setTimeout(() => frameInput.current?.click(), 60);
+  }, [type]);
 
   useEffect(() => {
     if (type !== "mention") return;
@@ -10693,6 +11032,22 @@ function StickerEditorSheet({ type, onDone, onClose }) {
       if (!place.trim()) return setErr("Write the place");
       return onDone({ name: place.trim().slice(0, 40) });
     }
+    if (type === "addyours") {
+      if (!prompt2.trim()) return setErr("Write a prompt");
+      return onDone({ prompt: prompt2.trim().slice(0, 70), chain: newStickerId() });
+    }
+    if (type === "hashtag") {
+      const t = tag.replace(/^#+/, "").replace(/[^\p{L}\p{N}_]/gu, "").slice(0, 30);
+      if (!t) return setErr("Write a hashtag");
+      return onDone({ tag: t });
+    }
+    if (type === "slider") {
+      return onDone({ question: (sliderQ.trim() || "How much?").slice(0, 70), emoji: sliderEmoji });
+    }
+    if (type === "frame") {
+      if (!frame) return setErr("Choose a photo");
+      return onDone({ caption: frameCaption.trim().slice(0, 30), local: frame.url, __canvas: frame.canvas });
+    }
     return null;
   };
 
@@ -10737,6 +11092,79 @@ function StickerEditorSheet({ type, onDone, onClose }) {
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Words to show (optional)" maxLength={30} className={field} style={fieldStyle} />
           </>
         )}
+        {type === "addyours" && (
+          <input value={prompt2} onChange={(e) => setPrompt2(e.target.value)} placeholder="Show your view, your pet, your lunch…" maxLength={70} className={field} style={fieldStyle} autoFocus />
+        )}
+        {type === "hashtag" && (
+          <div className="flex items-center gap-1 rounded-xl px-3 h-11 mb-2.5" style={fieldStyle}>
+            <span className="text-sm" style={{ color: "var(--text-muted)", fontWeight: 700 }}>#</span>
+            <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="hashtag" maxLength={31} autoCapitalize="none" className="flex-1 min-w-0 bg-transparent outline-none text-sm" style={{ color: "var(--text)" }} autoFocus />
+          </div>
+        )}
+        {type === "slider" && (
+          <>
+            <input value={sliderQ} onChange={(e) => setSliderQ(e.target.value)} placeholder="Ask a question…" maxLength={70} className={field} style={fieldStyle} />
+            <div className="flex flex-wrap gap-1.5 mb-2.5">
+              {SLIDER_EMOJI.map((em) => (
+                <button key={em} onClick={() => setSliderEmoji(em)} aria-pressed={sliderEmoji === em} className="rounded-xl flex items-center justify-center" style={{ width: 42, height: 42, fontSize: 24, background: sliderEmoji === em ? "var(--active-highlight)" : "var(--bg-sunken)", border: sliderEmoji === em ? "1.5px solid var(--accent-solid)" : "1.5px solid transparent" }}>
+                  {em}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {type === "frame" && (
+          <>
+            <input
+              ref={frameInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                try {
+                  const c = await fxLoadSource(f, 900);
+                  setFrame({ canvas: c, url: c.toDataURL("image/jpeg", 0.88) });
+                  setErr("");
+                } catch {
+                  setErr("This photo can't be opened here.");
+                }
+              }}
+            />
+            <div className="flex items-center gap-3 mb-2.5">
+              <button onClick={() => frameInput.current?.click()} className="shrink-0 rounded-md overflow-hidden flex items-center justify-center" style={{ width: 74, height: 88, background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+                {frame ? <img src={frame.url} alt="" className="w-full h-full object-cover" /> : <ImagePlus size={24} color="var(--text-muted)" />}
+              </button>
+              <div className="flex-1 min-w-0">
+                <button onClick={() => frameInput.current?.click()} className="text-[13px] mb-2" style={{ color: "var(--accent-solid)", fontWeight: 700 }}>
+                  {frame ? "Change photo" : "Choose a photo"}
+                </button>
+                <p className="text-[11.5px]" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>People shake their phone or tap to see it develop.</p>
+              </div>
+            </div>
+            <input value={frameCaption} onChange={(e) => setFrameCaption(e.target.value)} placeholder="Write something (optional)" maxLength={30} className={field} style={fieldStyle} />
+          </>
+        )}
+        {type === "highlight" && (
+          <div className="mb-2">
+            {myHighlights === null ? (
+              <SkeletonRows count={3} avatar={44} />
+            ) : myHighlights.length === 0 ? (
+              <p className="text-[12.5px] text-center py-5" style={{ color: "var(--text-muted)" }}>You don't have any highlights yet. Add stories to a highlight from your profile first.</p>
+            ) : (
+              myHighlights.map((h) => (
+                <button key={h.id} onClick={() => onDone({ highlight_id: h.id, title: h.title, cover_url: h.cover_url, user_id: h.user_id })} className="w-full flex items-center gap-3 py-2 text-start">
+                  <span className="rounded-full overflow-hidden shrink-0 flex items-center justify-center" style={{ width: 44, height: 44, background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+                    {h.cover_url ? <img src={h.cover_url} alt="" className="w-full h-full object-cover" /> : <Star size={18} color="var(--text-muted)" />}
+                  </span>
+                  <span className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{h.title || "Highlight"}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
         {type === "location" && (
           <input value={place} onChange={(e) => setPlace(e.target.value)} placeholder="Dhaka, Cox's Bazar, a café…" maxLength={40} className={field} style={fieldStyle} />
         )}
@@ -10755,7 +11183,7 @@ function StickerEditorSheet({ type, onDone, onClose }) {
           </>
         )}
         {err && <p className="text-xs mb-2" style={{ color: "var(--heart)" }}>{err}</p>}
-        {type !== "mention" && (
+        {type !== "mention" && type !== "highlight" && (
           <button onClick={done} className="w-full rounded-xl h-11 text-sm mt-1" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
             Add to story
           </button>
@@ -10777,7 +11205,7 @@ function StickerFrame({ children, interactive = true }) {
 }
 
 // Watching a story: votes, answers, links, mentions, a live countdown.
-function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSheetOpen, flash }) {
+function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSheetOpen, flash, onAddYours, onLeave }) {
   const stickers = Array.isArray(story.stickers) ? story.stickers : [];
   const [counts, setCounts] = useState({}); // stickerId -> [a, b]
   const [mine, setMine] = useState({}); // stickerId -> option
@@ -10788,6 +11216,48 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
   const [results, setResults] = useState(null); // { sticker, rows }
 
   const hasPoll = stickers.some((x) => x.type === "poll");
+  const hasSlider = stickers.some((x) => x.type === "slider");
+  const chains = stickers.filter((x) => x.type === "addyours" && x.chain).map((x) => x.chain);
+  const [sliders, setSliders] = useState({}); // stickerId -> { avg, votes }
+  const [mySlides, setMySlides] = useState({}); // stickerId -> value
+  const [joined, setJoined] = useState({}); // chain -> number of stories
+
+  const loadSliders = async () => {
+    if (!hasSlider) return;
+    const [{ data: s, error: e1 }, { data: m }] = await Promise.all([
+      supabase.rpc("story_slider_stats", { p_story: story.id }),
+      supabase.from("story_slider_votes").select("sticker_id, value").eq("story_id", story.id).eq("user_id", currentUserId || ""),
+    ]);
+    if (e1) return;
+    const next = {};
+    (s || []).forEach((row) => (next[row.sticker_id] = { avg: Number(row.avg) || 0, votes: Number(row.votes) || 0 }));
+    setSliders(next);
+    const my = {};
+    (m || []).forEach((row) => (my[row.sticker_id] = row.value));
+    setMySlides(my);
+  };
+  const loadJoined = async () => {
+    if (!chains.length) return;
+    const next = {};
+    for (const chain of chains) {
+      try {
+        const { count } = await supabase.from("stories").select("id", { count: "exact", head: true }).contains("stickers", JSON.stringify([{ chain }]));
+        next[chain] = Math.max(0, (count || 0) - 1);
+      } catch {}
+    }
+    setJoined(next);
+  };
+  const slide = async (st, value) => {
+    if (isOwner || !currentUserId) return;
+    setMySlides((prev) => ({ ...prev, [st.id]: value }));
+    setSliders((prev) => {
+      const cur = prev[st.id] || { avg: 0, votes: 0 };
+      const votes = cur.votes + 1;
+      return { ...prev, [st.id]: { votes, avg: (cur.avg * cur.votes + value) / votes } };
+    });
+    const { error } = await supabase.from("story_slider_votes").insert({ story_id: story.id, sticker_id: st.id, user_id: currentUserId, value });
+    if (error && !/duplicate/i.test(error.message)) flash(/story_slider_votes|relation|schema/i.test(error.message) ? "The emoji slider starts working once loop-step-22.sql has been run." : error.message);
+  };
   const hasQuestion = stickers.some((x) => x.type === "question");
   const hasCountdown = stickers.some((x) => x.type === "countdown");
 
@@ -10826,8 +11296,13 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
     setCounts({});
     setMine({});
     setAnswerCounts({});
+    setSliders({});
+    setMySlides({});
+    setJoined({});
     loadPolls();
     loadAnswers();
+    loadSliders();
+    loadJoined();
   }, [story.id]);
 
   useEffect(() => {
@@ -10849,6 +11324,15 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
   };
 
   const openResults = async (st) => {
+    if (st.type === "slider") {
+      const { data } = await supabase.from("story_slider_votes").select("user_id, value, created_at").eq("story_id", story.id).eq("sticker_id", st.id);
+      const ids = [...new Set((data || []).map((x) => x.user_id))];
+      const { data: profs } = ids.length ? await supabase.from("profiles").select("id, username, avatar_url").in("id", ids) : { data: [] };
+      const byId = {};
+      (profs || []).forEach((x) => (byId[x.id] = x));
+      setResults({ sticker: st, rows: (data || []).map((x) => ({ ...x, who: byId[x.user_id] })) });
+      return;
+    }
     if (st.type === "poll") {
       const { data } = await supabase.from("story_poll_votes").select("user_id, option, created_at").eq("story_id", story.id).eq("sticker_id", st.id);
       const ids = [...new Set((data || []).map((x) => x.user_id))];
@@ -10916,9 +11400,24 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
               answers={isOwner && st.type === "question" ? answerCounts[st.id] || 0 : undefined}
               onVote={isOwner ? null : (opt) => vote(st, opt)}
               onAsk={() => (isOwner ? openResults(st) : setAsking(st))}
+              slider={sliders[st.id]}
+              mySlide={isOwner ? null : mySlides[st.id] ?? null}
+              onSlide={isOwner ? null : (v) => slide(st, v)}
+              onResults={() => openResults(st)}
+              joined={st.chain ? joined[st.chain] || 0 : 0}
               onOpen={() => {
                 if (st.type === "link") window.open(st.url, "_blank", "noopener,noreferrer");
                 if (st.type === "mention") onOpenProfile?.(st.user_id);
+                if (st.type === "hashtag" && st.tag) onLeave?.(() => window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: st.tag })));
+                if (st.type === "highlight" && st.highlight_id && st.user_id)
+                  onLeave?.(() => {
+                    window.dispatchEvent(new CustomEvent("loop:deep-highlight", { detail: st.highlight_id }));
+                    openProfileGlobal(st.user_id);
+                  });
+                if (st.type === "addyours") {
+                  if (isOwner) flash(trJoin("{0} joined", joined[st.chain] || 0));
+                  else onAddYours?.(st);
+                }
               }}
             />
             {isOwner && st.type === "poll" && (
@@ -10964,7 +11463,7 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
       )}
 
       {results && (
-        <StorySheetShell title={results.sticker.type === "poll" ? "Votes" : "Answers"} onClose={() => setResults(null)}>
+        <StorySheetShell title={results.sticker.type === "poll" ? "Votes" : results.sticker.type === "slider" ? "Responses" : "Answers"} onClose={() => setResults(null)}>
           <div className="px-4 pb-6">
             {results.rows.length === 0 ? (
               <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>Nothing yet</p>
@@ -10977,6 +11476,8 @@ function StoryStickerLayer({ story, isOwner, currentUserId, onOpenProfile, setSh
                     <p className="text-[13px]" style={{ color: "var(--text-secondary)", wordBreak: "break-word" }}>
                       {results.sticker.type === "poll"
                         ? `Voted "${(results.sticker.options || [])[row.option] || ""}"`
+                        : results.sticker.type === "slider"
+                        ? `${results.sticker.emoji || ""} ${row.value}%`
                         : row.answer}
                     </p>
                   </div>
@@ -11100,7 +11601,7 @@ function StorySendSheet({ story, currentUserId, onClose }) {
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : filtered.length === 0 ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>No one to send to yet</p>
         ) : (
@@ -11230,7 +11731,7 @@ function StoryHighlightSheet({ story, currentUserId, onClose, onDone }) {
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : highlights.length === 0 ? (
           <p className="text-xs text-center py-6 px-8" style={{ color: "var(--text-muted)" }}>
             No highlights yet. Name one above to make your first.
@@ -11354,7 +11855,7 @@ function StoryRepliesList({ story }) {
   return (
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : replies.length === 0 ? (
           <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No replies yet</p>
         ) : (
@@ -11436,7 +11937,7 @@ function StoryActivitySheet({ story, onClose }) {
       ) : (
         <div className="pb-6">
           {viewers === null ? (
-            <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+            <SkeletonRows />
           ) : viewers.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No one has watched yet</p>
           ) : (
@@ -11807,6 +12308,16 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
         }}
         setSheetOpen={setStickerSheet}
         flash={showFlash}
+        onLeave={(go) => {
+          onClose?.();
+          go();
+        }}
+        onAddYours={(st) => {
+          window.__loopAddYours = { prompt: st.prompt, chain: st.chain, at: Date.now() };
+          setAdding(true);
+          addRef.current?.click();
+          window.addEventListener("focus", () => setTimeout(() => setAdding(false), 1500), { once: true });
+        }}
       />
 
       <input
@@ -11880,6 +12391,12 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
             <span className="flex items-center gap-1 rounded-full px-2 h-5 text-[10px] shrink-0" style={{ background: "#1CD14F", color: "#FFFFFF", fontWeight: 700 }}>
               <Star size={9} color="#FFFFFF" fill="#FFFFFF" />
               Close friends
+            </span>
+          )}
+          {story.ai_label && (
+            <span className="flex items-center gap-1 rounded-full px-2 h-5 text-[10px] shrink-0" style={{ background: "rgba(255,255,255,0.18)", color: "#FFFFFF", fontWeight: 700 }} data-ai-label="">
+              <Bot size={10} color="#FFFFFF" />
+              AI info
             </span>
           )}
         </button>
@@ -12244,7 +12761,44 @@ function StoryFace({ username, avatarUrl }) {
   );
 }
 
-function StoriesBar({ onOpenProfile }) {
+function SuggestedStoryFace({ person, onOpen, onFollow }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5 shrink-0" style={{ width: 62 }}>
+      <div className="relative" style={{ width: 62, height: 62 }}>
+        <button
+          onClick={onOpen}
+          aria-label={person.username}
+          className="rounded-full overflow-hidden flex items-center justify-center transition-transform active:scale-95"
+          style={{ width: 62, height: 62, background: "var(--surface)", border: "1px solid var(--border-subtle)" }}
+        >
+          <StoryFace username={person.username} avatarUrl={person.avatar_url} />
+        </button>
+        <button
+          onClick={onFollow}
+          aria-label={person.followed ? "Following" : "Follow"}
+          className="absolute flex items-center justify-center rounded-full transition-transform active:scale-90"
+          style={{
+            left: "50%",
+            bottom: -5,
+            transform: "translateX(-50%)",
+            minWidth: 32,
+            height: 21,
+            padding: "0 8px",
+            background: person.followed ? "var(--accent-solid)" : "rgba(20,20,20,0.78)",
+            border: "2px solid var(--bg)",
+          }}
+        >
+          {person.followed ? <Check size={12} color="#FFFFFF" strokeWidth={3} /> : <UserPlus size={13} color="#FFFFFF" strokeWidth={2.4} />}
+        </button>
+      </div>
+      <span className="text-[11px] truncate w-full text-center" style={{ color: "var(--text)" }}>
+        {person.username}
+      </span>
+    </div>
+  );
+}
+
+function StoriesBar({ onOpenProfile, suggested = [], onFollowSuggested }) {
   const [groups, setGroups] = useState([]);
   const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -12254,6 +12808,11 @@ function StoriesBar({ onOpenProfile }) {
 
   useEffect(() => {
     load();
+  }, []);
+  useEffect(() => {
+    const again = () => load();
+    window.addEventListener("loop:stories-refresh", again);
+    return () => window.removeEventListener("loop:stories-refresh", again);
   }, []);
 
   const load = async () => {
@@ -12403,6 +12962,13 @@ function StoriesBar({ onOpenProfile }) {
                   {g.username}
                 </span>
               </button>
+            ))}
+        {!loading &&
+          suggested
+            .filter((p) => !groups.some((g) => g.userId === p.id))
+            .slice(0, 12)
+            .map((p) => (
+              <SuggestedStoryFace key={`s-${p.id}`} person={p} onOpen={() => onOpenProfile?.(p.id)} onFollow={() => onFollowSuggested?.(p)} />
             ))}
       </div>
 
@@ -12795,7 +13361,7 @@ function AboutAccountSheet({ userId, onClose, onOpenProfile }) {
     <StorySheetShell title="About this account" onClose={onClose}>
       <div className="px-4 pb-6">
         {!info ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonBlock />
         ) : info.error ? (
           <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}>{info.error}</p>
         ) : (
@@ -13050,6 +13616,28 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     loadBadges();
   }, []);
 
+  // Home tapped while already on Home: back to the top and fetch new posts.
+  useEffect(() => {
+    const again = async () => {
+      const el = feedScrollRef.current;
+      if (el && el.scrollTop > 0) el.scrollTo({ top: 0, behavior: "smooth" });
+      if (refreshingRef.current) return;
+      refreshingRef.current = true;
+      setRefreshing(true);
+      try {
+        await Promise.all([loadFeed(true), new Promise((r) => setTimeout(r, 650))]);
+        loadBadges();
+        window.dispatchEvent(new Event("loop:stories-refresh"));
+      } catch {
+        // the old posts stay
+      }
+      refreshingRef.current = false;
+      setRefreshing(false);
+    };
+    window.addEventListener("loop:home-again", again);
+    return () => window.removeEventListener("loop:home-again", again);
+  }, []);
+
   const loadBadges = async () => {
     const {
       data: { user },
@@ -13074,6 +13662,9 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [loadingMore, setLoadingMore] = useState(false);
   const [followingDone, setFollowingDone] = useState(false);
   const sentinelRef = React.useRef(null);
+  const feedScrollRef = React.useRef(null);
+  const refreshingRef = React.useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const enrichPosts = async (rows, meId) => {
     if (rows.length === 0) return [];
@@ -13175,7 +13766,10 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       }
       gathered = await withoutProfileOnly(gathered);
       const enriched = boostByBadge(await attachSounds(await enrichPosts(gathered, st.me)), (p) => p.suggested);
-      setPosts((prev) => {
+      const replacing = st.replace;
+      st.replace = false;
+      setPosts((prevAll) => {
+        const prev = replacing ? [] : prevAll;
         // A post can come back in both "following" and "suggested" — keep one.
         const seen = new Set(prev.map((p) => p.id));
         const fresh = [];
@@ -13194,10 +13788,12 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     setLoadingMore(false);
   };
 
-  const loadFeed = async () => {
-    setLoading(true);
+  const loadFeed = async (soft = false) => {
+    if (!soft) {
+      setLoading(true);
+      setPosts([]);
+    }
     setLoadError("");
-    setPosts([]);
     setFollowingDone(false);
 
     const {
@@ -13205,10 +13801,11 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
-    const { data: myFollows } = await supabase
-      .from("follows")
-      .select("following_id")
-      .eq("follower_id", user?.id ?? "");
+    const [{ data: myFollows }, { data: notInterested }, { data: liked }] = await Promise.all([
+      supabase.from("follows").select("following_id").eq("follower_id", user?.id ?? ""),
+      supabase.from("post_feedback").select("post_id").eq("user_id", user?.id ?? "").eq("kind", "not_interested"),
+      supabase.from("post_feedback").select("post_id").eq("user_id", user?.id ?? "").eq("kind", "interested"),
+    ]);
     const followingIds = new Set((myFollows || []).map((f) => f.following_id));
     feedRef.current = {
       me: user?.id ?? null,
@@ -13217,22 +13814,13 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       cursor: null,
       busy: false,
       done: false,
+      replace: soft,
     };
     if (feedRef.current.followIds.length === 0) feedRef.current.followIds = ["00000000-0000-0000-0000-000000000000"];
-    const { data: notInterested } = await supabase
-      .from("post_feedback")
-      .select("post_id")
-      .eq("user_id", user?.id ?? "")
-      .eq("kind", "not_interested");
     feedRef.current.hiddenPosts = new Set((notInterested || []).map((f) => f.post_id));
 
     // "More like this" is only worth tapping if it changes something:
     // the people behind those posts come first among the suggestions.
-    const { data: liked } = await supabase
-      .from("post_feedback")
-      .select("post_id")
-      .eq("user_id", user?.id ?? "")
-      .eq("kind", "interested");
     let likedAuthors = new Set();
     const likedIds = (liked || []).map((f) => f.post_id);
     if (likedIds.length > 0) {
@@ -13447,7 +14035,12 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       setRepostNotes((m) => ({ ...m, [post.id]: null }));
     } else {
       const { error } = await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
-      if (!error) setNoteFor(post);
+      if (!error) {
+        showRepostToast({ onUndo: () => undoRepost(post) });
+        loadMeLite().then((me) =>
+          setRepostNotes((m) => ({ ...m, [post.id]: m[post.id]?.mine ? m[post.id] : { userId, note: "", noteAt: null, mine: true, username: me?.username || "", avatarUrl: me?.avatar_url || null } }))
+        );
+      }
     }
   };
 
@@ -13525,7 +14118,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   };
 
   return (
-    <div className="flex-1 overflow-y-auto pb-4">
+    <div ref={feedScrollRef} className="flex-1 overflow-y-auto pb-4">
       <TopBar
         title="Loop"
         showCreate={!!onCreate}
@@ -13535,7 +14128,12 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         unreadCount={unreadCount}
         hasNotifications={hasNotifications}
       />
-      <StoriesBar onOpenProfile={onOpenProfile} />
+      {refreshing && (
+        <div className="flex justify-center" style={{ paddingTop: 4, paddingBottom: 10 }}>
+          <LoopSpinner size={36} />
+        </div>
+      )}
+      <StoriesBar onOpenProfile={onOpenProfile} suggested={suggestedPeople} onFollowSuggested={followSuggested} />
       <InstallBanner />
 
       {saveError && (
@@ -13546,9 +14144,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       )}
 
       {loading ? (
-        <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
-          <LoopSpinner />
-        </p>
+        <SkeletonFeed />
       ) : loadError ? (
         <p className="text-center text-xs py-10 px-6" style={{ color: "var(--accent-start)" }}>
           {loadError}
@@ -13916,8 +14512,13 @@ function useTapDetector(onSingle, onDouble, delay = 260) {
 function HeartBurst({ burstKey, size = 96 }) {
   if (!burstKey) return null;
   return (
-    <div key={burstKey} className="loop-heart-burst" style={{ "--tilt": `${((burstKey % 7) - 3) * 4}deg` }}>
-      <Heart size={size} color="#FFFFFF" fill="#FFFFFF" strokeWidth={0} />
+    <div key={burstKey} className="loop-heart-burst">
+      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="#FFFFFF"
+          d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+        />
+      </svg>
     </div>
   );
 }
@@ -13965,6 +14566,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   const [wideReels, setWideReels] = useState({}); // reelId -> true when the video is wider than a phone screen
   const [quality, setQuality] = useState(getVideoQuality); // auto | high | saver
   const [qualityOpen, setQualityOpen] = useState(false);
+  const [countsOpen, setCountsOpen] = useState(false);
   const [lowFailed, setLowFailed] = useState({}); // reelId -> true if the light copy wouldn't play
   const resumeAtRef = React.useRef(null);
   const lowJobs = useLowCopyJobs();
@@ -14017,6 +14619,27 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
     }
   }, [index, reels[index]?.id]);
 
+  // Plays the reel on a TV or speaker nearby (Chromecast on Android,
+  // AirPlay on iPhone) through the browser's own picker.
+  const castReel = async () => {
+    const v = videoRef.current;
+    setMenuOpen(false);
+    try {
+      if (v && v.remote && typeof v.remote.prompt === "function") {
+        await v.remote.prompt();
+        return;
+      }
+      if (v && typeof v.webkitShowPlaybackTargetPicker === "function") {
+        v.webkitShowPlaybackTargetPicker();
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+      showToast(e && e.name === "NotFoundError" ? "No TV or speaker found nearby" : "Casting isn't available in this browser");
+      return;
+    }
+    showToast("Casting isn't available in this browser");
+  };
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 1800);
@@ -14267,7 +14890,12 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
       setRepostNotes((m) => ({ ...m, [target.id]: null }));
     } else {
       const { error } = await supabase.from("reposts").insert({ post_id: target.id, user_id: userId });
-      if (!error) setNoteFor(target);
+      if (!error) {
+        showRepostToast({ onUndo: () => undoRepost(target) });
+        loadMeLite().then((me) =>
+          setRepostNotes((m) => ({ ...m, [target.id]: m[target.id]?.mine ? m[target.id] : { userId, note: "", noteAt: null, mine: true, username: me?.username || "", avatarUrl: me?.avatar_url || null } }))
+        );
+      }
     }
   };
 
@@ -14644,6 +15272,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   style={{ color: "var(--text)" }}
                 >{trJoin("{0} Download", <Download size={15} />)}</button>
 
+                <button onClick={castReel} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm" style={{ color: "var(--text)" }}>
+                  <Cast size={15} />
+                  <span>Cast</span>
+                </button>
+
                 <button
                   onClick={() => setQualityOpen((v) => !v)}
                   className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
@@ -14689,8 +15322,20 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   </div>
                 )}
 
-                <div className="h-px my-1" style={{ background: "var(--border)" }} />
-                <div className="px-4 py-1.5 text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>My view: show counts</div>
+                <button
+                  onClick={() => setCountsOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-sm"
+                  style={{ color: "var(--text)" }}
+                >
+                  <span className="flex items-center gap-2">
+                    <BarChart3 size={15} />
+                    <span>Show counts</span>
+                  </span>
+                  <ChevronDown size={13} color="var(--text-muted)" style={{ transform: countsOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+                </button>
+                {countsOpen && (
+                <div className="pb-1" style={{ background: "var(--bg-sunken)" }}>
+                <div className="ps-10 pe-4 pt-1.5 pb-0.5 text-[10.5px]" style={{ color: "var(--text-muted)" }}>Only you see this change</div>
                 {[
                   ["likes", "Likes"],
                   ["comments", "Comments"],
@@ -14701,7 +15346,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                   <button
                     key={key}
                     onClick={() => toggleCountPref(key)}
-                    className="w-full flex items-center justify-between px-4 py-2 text-sm"
+                    className="w-full flex items-center justify-between ps-10 pe-4 py-2 text-[13px]"
                     style={{ color: "var(--text)" }}
                   >
                     <span>{label}</span>
@@ -14716,7 +15361,10 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                     </span>
                   </button>
                 ))}
+                </div>
+                )}
 
+                <div className="h-px my-1" style={{ background: "var(--border)" }} />
                 {reel.user_id === userId ? (
                   <button
                     onClick={deleteReel}
@@ -14729,10 +15377,11 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                       setMenuOpen(false);
                       onOpenReport(reel.id);
                     }}
-                    className="w-full text-start px-4 py-2.5 text-sm"
-                    style={{ color: "var(--accent-start)" }}
+                    className="w-full flex items-center gap-2 text-start px-4 py-2.5 text-sm"
+                    style={{ color: "var(--heart)" }}
                   >
-                    Report
+                    <Flag size={15} />
+                    <span>Report</span>
                   </button>
                 )}
               </div>
@@ -15565,6 +16214,11 @@ function ReelCommentsSheet({
               {attachment && (
                 <div className="relative mb-2" style={{ width: 72, height: 72 }}>
                   <img src={attachment.url} alt="" className="w-full h-full object-cover rounded-xl" style={{ border: "1px solid var(--border)" }} />
+                  {attachment.gif && (
+                    <span className="absolute bottom-1 start-1 rounded px-1 text-[9px]" style={{ background: "rgba(0,0,0,0.6)", color: "#FFFFFF", fontWeight: 800 }}>
+                      GIF
+                    </span>
+                  )}
                   <button
                     onClick={() => {
                       URL.revokeObjectURL(attachment.url);
@@ -15594,25 +16248,29 @@ function ReelCommentsSheet({
                   setAttachment({ file: f, url: URL.createObjectURL(f) });
                 }}
               />
-              <div className="flex items-end gap-2">
+              <div
+                className="flex items-end gap-1 rounded-3xl ps-3.5 pe-1.5 py-1.5"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+              >
                 <textarea
                   ref={inputRef}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder={replyingTo ? `Reply to ${replyingTo.username}...` : "Add a comment..."}
                   rows={1}
-                  className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
+                  className="flex-1 min-w-0 bg-transparent py-1.5 text-sm outline-none resize-none"
+                  style={{ color: "var(--text)", maxHeight: 110 }}
                 />
                 <button
                   disabled={posting}
                   onClick={() => setGifOpen(true)}
                   aria-label="GIF"
-                  className="pb-2 transition-transform active:scale-90"
+                  className="shrink-0 flex items-center justify-center transition-transform active:scale-90"
+                  style={{ width: 36, height: 34 }}
                 >
                   <span
-                    className="inline-flex items-center justify-center rounded-[5px] text-[9px] px-1"
-                    style={{ height: 18, border: `1.7px solid ${attachment?.gif ? "var(--accent-solid)" : "var(--text-muted)"}`, color: attachment?.gif ? "var(--accent-solid)" : "var(--text-muted)", fontWeight: 800, letterSpacing: 0.3 }}
+                    className="inline-flex items-center justify-center rounded-[6px] text-[11px] px-1.5"
+                    style={{ height: 23, border: `2px solid ${attachment?.gif ? "var(--accent-solid)" : "var(--text-muted)"}`, color: attachment?.gif ? "var(--accent-solid)" : "var(--text-muted)", fontWeight: 800, letterSpacing: 0.3 }}
                   >
                     GIF
                   </span>
@@ -15630,19 +16288,23 @@ function ReelCommentsSheet({
                 <button
                   disabled={posting}
                   onClick={() => attachRef.current?.click()}
-                  title="Add a photo or GIF"
-                  className="pb-2 transition-transform active:scale-90"
+                  aria-label="Add a photo or GIF"
+                  className="shrink-0 flex items-center justify-center transition-transform active:scale-90"
+                  style={{ width: 36, height: 34 }}
                 >
-                  <ImagePlus size={19} color={attachment ? "var(--accent-solid)" : "var(--text-muted)"} />
+                  <ImagePlus size={23} color={attachment && !attachment.gif ? "var(--accent-solid)" : "var(--text-muted)"} />
                 </button>
-                <button
-                  onClick={submitComment}
-                  disabled={posting || (!text.trim() && !attachment)}
-                  className="text-sm pb-2"
-                  style={{ color: text.trim() ? "var(--accent-start)" : "var(--text-muted)", fontWeight: 700 }}
-                >
-                  Post
-                </button>
+                {(text.trim() || attachment) && (
+                  <button
+                    onClick={submitComment}
+                    disabled={posting}
+                    aria-label="Send"
+                    className="shrink-0 rounded-full flex items-center justify-center transition-transform active:scale-90"
+                    style={{ width: 34, height: 34, background: ACCENT, animation: "loopPop 0.18s ease-out", opacity: posting ? 0.6 : 1 }}
+                  >
+                    <ShareIcon size={16} color="var(--on-accent)" style={{ marginLeft: 2 }} />
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -15919,9 +16581,7 @@ function GifModeration({ flash }) {
   };
   if (rows === null)
     return (
-      <div className="flex justify-center py-10">
-        <LoopSpinner />
-      </div>
+      <SkeletonRows count={4} avatar={56} />
     );
   return (
     <div>
@@ -16964,18 +17624,18 @@ const FX_TOOLS = [
 // Loop's own looks, named after places and things from home.
 const FX_FILTERS = [
   { key: "normal", name: "Normal", p: {} },
-  { key: "dhaka", name: "Dhaka", p: { contrast: 18, saturation: 14, warmth: 8, vignette: 16 } },
-  { key: "sylhet", name: "Sylhet", p: { saturation: 22, warmth: -8, shadows: 14, lift: [0, 0.035, 0.01] } },
-  { key: "coxs", name: "Cox's", p: { brightness: 12, warmth: -16, fade: 12, saturation: 8, gain: [0.98, 1.0, 1.05] } },
-  { key: "padma", name: "Padma", p: { warmth: 20, fade: 18, contrast: -8, lift: [0.05, 0.025, 0] } },
-  { key: "monsoon", name: "Monsoon", p: { saturation: -28, warmth: -20, contrast: 12, fade: 10 } },
+  { key: "dhaka", name: "Vivid", p: { contrast: 18, saturation: 14, warmth: 8, vignette: 16 } },
+  { key: "sylhet", name: "Lush", p: { saturation: 22, warmth: -8, shadows: 14, lift: [0, 0.035, 0.01] } },
+  { key: "coxs", name: "Breeze", p: { brightness: 12, warmth: -16, fade: 12, saturation: 8, gain: [0.98, 1.0, 1.05] } },
+  { key: "padma", name: "Retro", p: { warmth: 20, fade: 18, contrast: -8, lift: [0.05, 0.025, 0] } },
+  { key: "monsoon", name: "Storm", p: { saturation: -28, warmth: -20, contrast: 12, fade: 10 } },
   { key: "golden", name: "Golden", p: { warmth: 32, brightness: 6, highlights: -12, saturation: 10, gain: [1.04, 1.0, 0.94] } },
-  { key: "shapla", name: "Shapla", p: { brightness: 8, saturation: -6, fade: 14, gain: [1.05, 0.98, 1.03] } },
-  { key: "jamdani", name: "Jamdani", p: { contrast: 22, saturation: -14, sepia: 0.22, vignette: 24 } },
-  { key: "rickshaw", name: "Rickshaw", p: { saturation: 42, contrast: 14, brightness: 4 } },
-  { key: "sundarban", name: "Sundarban", p: { saturation: 16, warmth: -6, shadows: -12, vignette: 30, lift: [0, 0.03, 0.015] } },
-  { key: "kuakata", name: "Kuakata", p: { warmth: 24, highlights: 14, fade: 8, lift: [0.05, 0.015, 0.04] } },
-  { key: "boishakh", name: "Boishakh", p: { saturation: 30, warmth: 10, contrast: 12, gain: [1.06, 0.99, 0.95] } },
+  { key: "shapla", name: "Blush", p: { brightness: 8, saturation: -6, fade: 14, gain: [1.05, 0.98, 1.03] } },
+  { key: "jamdani", name: "Vintage", p: { contrast: 22, saturation: -14, sepia: 0.22, vignette: 24 } },
+  { key: "rickshaw", name: "Pop", p: { saturation: 42, contrast: 14, brightness: 4 } },
+  { key: "sundarban", name: "Forest", p: { saturation: 16, warmth: -6, shadows: -12, vignette: 30, lift: [0, 0.03, 0.015] } },
+  { key: "kuakata", name: "Sunset", p: { warmth: 24, highlights: 14, fade: 8, lift: [0.05, 0.015, 0.04] } },
+  { key: "boishakh", name: "Glow", p: { saturation: 30, warmth: 10, contrast: 12, gain: [1.06, 0.99, 0.95] } },
   { key: "noir", name: "Noir", p: { mono: 1, contrast: 30, vignette: 26 } },
   { key: "mono", name: "Mono", p: { mono: 1, fade: 12 } },
 ];
@@ -18384,6 +19044,11 @@ function drawStoryElement(ctx, el, W, H) {
   ctx.save();
   ctx.translate(el.x * W, el.y * H);
   ctx.rotate(((el.r || 0) * Math.PI) / 180);
+  if (el.kind === "image") {
+    if (el.canvas) drawImageElement(ctx, el, k);
+    ctx.restore();
+    return;
+  }
   if (el.kind === "emoji") {
     const size = 72 * k;
     ctx.font = `${size}px "Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif`;
@@ -18440,6 +19105,7 @@ function drawStoryElement(ctx, el, W, H) {
 
 // Text and emoji on screen — the same layout as the saved picture.
 function StoryElementView({ el, scale }) {
+  if (el.kind === "image") return <ImageElementView el={el} scale={scale} />;
   if (el.kind === "emoji") {
     return <span style={{ fontSize: 72 * scale, lineHeight: 1, display: "block", userSelect: "none" }}>{el.emoji}</span>;
   }
@@ -18621,7 +19287,336 @@ function StoryTextEditor({ initial, onDone, onCancel, canPremium }) {
   );
 }
 
-const STORY_EMOJI = ["😍", "😂", "🥰", "😎", "🔥", "❤️", "✨", "🎉", "💯", "🙏", "👏", "😭", "🤩", "😇", "🥳", "😘", "🌸", "🌙", "⭐", "☀️", "🌈", "🍀", "🎂", "🎁", "📍", "🇧🇩", "💐", "🕌", "☕", "🍔", "⚽", "🏏", "🎵", "📸", "✈️", "💪", "👑", "💎", "🦋", "🐱"];
+// ---- Story editor, part 2: the sticker tray, new stickers, photo stickers ----
+// The tray works like Instagram's: a search box, every sticker as a small
+// tile, then all the emoji. Cutouts and avatars are not here — they need a
+// phone-side AI model and an avatar maker that Loop doesn't have.
+const STORY_TILES = [
+  { type: "location", label: "Location", icon: "📍", color: "#C13584" },
+  { type: "mention", label: "Mention", icon: "@", color: "#F56040" },
+  { type: "gif", label: "GIF", icon: "GIF", color: "#1D9BF0" },
+  { type: "addyours", label: "Add Yours", icon: "📸", color: "#7B3FE4" },
+  { type: "frame", label: "Frames", icon: "🖼️", color: "#E1306C" },
+  { type: "photostrip", label: "Photostrip", icon: "🎞️", color: "#2E7D32" },
+  { type: "photo", label: "Photo", icon: "🏞️", color: "#0095F6" },
+  { type: "highlight", label: "Highlight", icon: "⭐", color: "#F2A600" },
+  { type: "question", label: "Questions", icon: "❓", color: "#1D6FE0" },
+  { type: "slider", label: "Emoji slider", icon: "😍", color: "#E1306C" },
+  { type: "poll", label: "Poll", icon: "📊", color: "#111111" },
+  { type: "link", label: "Link", icon: "🔗", color: "#1D6FE0" },
+  { type: "hashtag", label: "Hashtag", icon: "#", color: "#F77737" },
+  { type: "countdown", label: "Countdown", icon: "⏱️", color: "#7B3FE4" },
+];
+const SLIDER_EMOJI = ["😍", "😂", "🔥", "😮", "🥰", "🤩", "😢", "❤️", "👏", "💯"];
+const PHOTO_SHAPES = ["rounded", "circle", "frame", "plain"];
+
+function StickerTray({ onPick, onEmoji, onClose }) {
+  const [q, setQ] = useState("");
+  const term = q.trim().toLowerCase();
+  const tiles = STORY_TILES.filter((t) => !term || t.label.toLowerCase().includes(term) || String(trText(t.label)).toLowerCase().includes(term));
+  return (
+    <>
+      <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.55)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
+      <div
+        className="fixed start-0 end-0 bottom-0 z-[71] rounded-t-3xl flex flex-col"
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", height: "min(88dvh, 780px)", animation: "loopSheetUp 0.2s ease-out", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        data-no-swipe=""
+        data-sticker-tray=""
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1.5 shrink-0">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        <div className="flex items-center gap-2 px-3 pb-2.5 shrink-0">
+          <div className="flex-1 flex items-center gap-2 rounded-xl px-3 h-10" style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}>
+            <Search size={16} color="var(--text-muted)" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="flex-1 min-w-0 bg-transparent outline-none text-sm" style={{ color: "var(--text)" }} />
+          </div>
+          <button onClick={onClose} aria-label="Close" className="p-1">
+            <X size={20} color="var(--text-muted)" />
+          </button>
+        </div>
+        <div className="grid grid-cols-3 gap-2 px-3 pb-2 shrink-0">
+          {tiles.map((t) => (
+            <button
+              key={t.type}
+              onClick={() => onPick(t.type)}
+              data-tile={t.type}
+              className="flex items-center justify-center gap-1.5 rounded-xl px-1.5 transition-transform active:scale-95"
+              style={{ height: 44, background: "#FFFFFF", boxShadow: "0 1px 4px rgba(0,0,0,0.18)", border: "1px solid rgba(0,0,0,0.06)" }}
+            >
+              {t.icon === "GIF" ? (
+                <span className="rounded-[5px] px-1 text-[10px]" style={{ border: `2px solid ${t.color}`, color: t.color, fontWeight: 900, lineHeight: "14px" }}>GIF</span>
+              ) : t.icon === "@" || t.icon === "#" ? (
+                <span className="text-[17px]" style={{ color: t.color, fontWeight: 900, lineHeight: 1 }}>{t.icon}</span>
+              ) : (
+                <span className="text-[16px]" style={{ lineHeight: 1 }} aria-hidden="true">{t.icon}</span>
+              )}
+              {t.icon !== "GIF" && (
+                <span className="text-[10.5px] text-center" style={{ color: t.color, fontWeight: 800, textTransform: "uppercase", lineHeight: 1.12, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", wordBreak: "break-word" }}>
+                  {t.label}
+                </span>
+              )}
+            </button>
+          ))}
+          {tiles.length === 0 && (
+            <p className="col-span-3 text-center text-[12.5px] py-3" style={{ color: "var(--text-muted)" }}>No stickers found</p>
+          )}
+        </div>
+        <p className="px-4 pt-1 pb-1 text-[12px] shrink-0" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Emoji</p>
+        <EmojiKeyboard onPick={onEmoji} cols={8} size={27} />
+      </div>
+    </>
+  );
+}
+
+// A Polaroid-style photo that "develops" when someone shakes the phone or
+// taps it.
+function FrameSticker({ st, mode }) {
+  const [dev, setDev] = useState(mode !== "view");
+  const [anim, setAnim] = useState(false);
+  const develop = () => {
+    setAnim(true);
+    setDev(true);
+  };
+  useEffect(() => {
+    if (mode !== "view" || dev || typeof window === "undefined" || !("DeviceMotionEvent" in window)) return;
+    let last = 0;
+    const on = (e) => {
+      const a = e.accelerationIncludingGravity || e.acceleration;
+      if (!a) return;
+      const m = Math.abs(a.x || 0) + Math.abs(a.y || 0) + Math.abs(a.z || 0);
+      if (m > 38 && Date.now() - last > 300) {
+        last = Date.now();
+        develop();
+      }
+    };
+    window.addEventListener("devicemotion", on);
+    return () => window.removeEventListener("devicemotion", on);
+  }, [mode, dev]);
+  const src = st.url || st.local;
+  return (
+    <div
+      data-frame-sticker=""
+      onClick={(e) => {
+        if (mode !== "view") return;
+        e.stopPropagation();
+        if (!dev) develop();
+      }}
+      style={{ background: "#FAFAF7", padding: "9px 9px 0", borderRadius: 3, boxShadow: "0 8px 26px rgba(0,0,0,0.42)", width: 170 }}
+    >
+      <div style={{ position: "relative", width: 152, height: 172, overflow: "hidden", background: "#1d1d1d" }}>
+        {src && (
+          <img
+            src={src}
+            alt=""
+            draggable={false}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", opacity: dev ? 1 : 0, filter: dev ? "none" : "sepia(1) brightness(1.7)", transition: anim ? "opacity 1.4s ease-out, filter 2.6s ease-out" : "none" }}
+          />
+        )}
+        {!dev && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-center px-3" style={{ background: "linear-gradient(160deg, #343a48, #151821)" }}>
+            <span style={{ fontSize: 22 }} aria-hidden="true">📸</span>
+            <span style={{ color: "#FFFFFF", fontSize: 11.5, fontWeight: 800, lineHeight: 1.3 }}>Shake or tap to develop</span>
+          </div>
+        )}
+      </div>
+      <p style={{ height: 34, fontFamily: '"Segoe Print","Bradley Hand","Comic Sans MS",cursive', fontSize: 14, color: "#222", textAlign: "center", lineHeight: "34px", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", padding: "0 4px" }}>
+        {st.caption || ""}
+      </p>
+    </div>
+  );
+}
+
+// Emoji slider: drag the emoji to show how much you feel it.
+function SliderSticker({ st, mode, stats, mine, onSlide, onResults }) {
+  const [drag, setDrag] = useState(null);
+  const trackRef = React.useRef(null);
+  const voted = mine !== null && mine !== undefined;
+  const isOwnerView = mode === "view" && !onSlide;
+  const canSlide = mode === "view" && !!onSlide && !voted;
+  const pos = (e) => {
+    const r = trackRef.current.getBoundingClientRect();
+    return Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * 100);
+  };
+  const value = drag ?? (voted ? mine : isOwnerView && stats?.votes ? stats.avg : 0);
+  const showAvg = mode === "view" && stats && stats.votes > 0 && (voted || isOwnerView);
+  return (
+    <div
+      data-slider-sticker=""
+      onClick={(e) => {
+        if (mode === "view" && isOwnerView) {
+          e.stopPropagation();
+          onResults?.();
+        }
+      }}
+      style={{ background: "#FFFFFF", color: "#111", borderRadius: 18, boxShadow: "0 6px 22px rgba(0,0,0,0.35)", width: "min(64vw, 240px)" }}
+      className="px-4 pt-3.5 pb-4"
+    >
+      <p className="text-center text-[15px] mb-3" style={{ fontWeight: 800, lineHeight: 1.25 }}>{st.question || "How much?"}</p>
+      <div
+        ref={trackRef}
+        className="relative"
+        style={{ height: 30, touchAction: "none", cursor: canSlide ? "pointer" : "default" }}
+        onPointerDown={(e) => {
+          if (!canSlide) return;
+          e.stopPropagation();
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {}
+          setDrag(pos(e));
+        }}
+        onPointerMove={(e) => {
+          if (canSlide && drag !== null) setDrag(pos(e));
+        }}
+        onPointerUp={(e) => {
+          if (!canSlide || drag === null) return;
+          e.stopPropagation();
+          const v = pos(e);
+          setDrag(null);
+          onSlide(v);
+        }}
+      >
+        <div className="absolute start-0 end-0 rounded-full" style={{ top: 11, height: 8, background: "#E9E9E9" }} />
+        <div className="absolute start-0 rounded-full" style={{ top: 11, height: 8, width: `${value}%`, background: "linear-gradient(90deg, #f56040, #c13584, #5851db)" }} />
+        {showAvg && (
+          <span className="absolute rounded-full" title="Average" style={{ top: 8, left: `calc(${stats.avg}% - 7px)`, width: 14, height: 14, background: "#111", border: "2px solid #fff", boxShadow: "0 1px 4px rgba(0,0,0,0.3)" }} />
+        )}
+        <span
+          className="absolute"
+          style={{ top: 15, left: `${value}%`, transform: `translate(-50%, -50%) scale(${1 + (value / 100) * 0.55})`, fontSize: 26, lineHeight: 1, transition: drag === null ? "left .25s, transform .25s" : "none", pointerEvents: "none" }}
+        >
+          {st.emoji || "😍"}
+        </span>
+      </div>
+      {mode === "view" && (voted || isOwnerView) && (
+        <p className="text-center text-[11px] mt-2" style={{ color: "#777", fontWeight: 700 }}>
+          {stats?.votes ? trJoin("Average {0}% · {1}", Math.round(stats.avg), stats.votes === 1 ? "1 response" : trJoin("{0} responses", stats.votes)) : "No responses yet"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// The extra settings behind "More" in the story editor.
+function StoryMoreSheet({ aiLabel, onAiLabel, noComments, onNoComments, onClose }) {
+  const row = (icon, label, hint, on, flip) => (
+    <button onClick={flip} className="w-full flex items-center gap-3 px-4 py-3 text-start" role="switch" aria-checked={on}>
+      <span className="shrink-0">{icon}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[14px]" style={{ color: "var(--text)", fontWeight: 600 }}>{label}</span>
+        <span className="block text-[12px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{hint}</span>
+      </span>
+      <NewPostToggle on={on} />
+    </button>
+  );
+  return (
+    <StorySheetShell title="More" onClose={onClose}>
+      <div className="pb-6">
+        {row(<Bot size={21} color="var(--text)" />, "Add AI label", "Lets people know this story was made or changed with AI.", aiLabel, () => onAiLabel(!aiLabel))}
+        {row(<MessageCircle size={21} color="var(--text)" />, "Turn off commenting", "People can't reply to this story.", noComments, () => onNoComments(!noComments))}
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- photo stickers (drawn into the finished picture) ----
+function imgElBox(el) {
+  const w = el.bw || 150;
+  return { w, h: el.shape === "circle" ? w : w / (el.aspect || 1) };
+}
+function drawCover(ctx, img, x, y, w, h) {
+  const iw = img.width || img.naturalWidth;
+  const ih = img.height || img.naturalHeight;
+  const s = Math.max(w / iw, h / ih);
+  const sw = w / s;
+  const sh = h / s;
+  ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, y, w, h);
+}
+function drawImageElement(ctx, el, k) {
+  const { w: bw, h: bh } = imgElBox(el);
+  const w = bw * k;
+  const h = bh * k;
+  const shape = el.shape || "plain";
+  const path = () => {
+    ctx.beginPath();
+    if (shape === "circle") ctx.arc(0, 0, w / 2, 0, Math.PI * 2);
+    else roundRectPath(ctx, -w / 2, -h / 2, w, h, shape === "rounded" ? w * 0.08 : shape === "frame" ? 4 * k : 0);
+  };
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.35)";
+  ctx.shadowBlur = 18 * k;
+  ctx.shadowOffsetY = 6 * k;
+  path();
+  ctx.fillStyle = shape === "frame" ? "#FFFFFF" : "#000000";
+  ctx.fill();
+  ctx.restore();
+  ctx.save();
+  path();
+  ctx.clip();
+  if (shape === "frame") {
+    const b = Math.max(3, w * 0.035);
+    drawCover(ctx, el.canvas, -w / 2 + b, -h / 2 + b, w - b * 2, h - b * 2);
+  } else {
+    drawCover(ctx, el.canvas, -w / 2, -h / 2, w, h);
+  }
+  ctx.restore();
+}
+function ImageElementView({ el, scale }) {
+  const { w, h } = imgElBox(el);
+  const shape = el.shape || "plain";
+  return (
+    <img
+      src={el.url}
+      alt=""
+      draggable={false}
+      style={{
+        width: w * scale,
+        height: h * scale,
+        objectFit: "cover",
+        display: "block",
+        borderRadius: shape === "circle" ? "50%" : shape === "rounded" ? w * scale * 0.08 : shape === "frame" ? 4 * scale : 0,
+        border: shape === "frame" ? `${Math.max(3, w * 0.035) * scale}px solid #FFFFFF` : "none",
+        boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+        userSelect: "none",
+        pointerEvents: "none",
+        background: shape === "frame" ? "#FFFFFF" : "transparent",
+      }}
+    />
+  );
+}
+// Up to four photos, one under the other, like a photo booth strip.
+function makePhotostrip(canvases) {
+  const cw = 300;
+  const ch = 230;
+  const pad = 16;
+  const gap = 12;
+  const foot = 46;
+  const n = canvases.length;
+  const c = document.createElement("canvas");
+  c.width = cw + pad * 2;
+  c.height = pad + n * ch + (n - 1) * gap + foot;
+  const x = c.getContext("2d");
+  x.fillStyle = "#FFFFFF";
+  x.fillRect(0, 0, c.width, c.height);
+  canvases.forEach((img, i) => drawCover(x, img, pad, pad + i * (ch + gap), cw, ch));
+  x.fillStyle = "#9A9A9A";
+  x.font = '600 15px "Segoe Print","Bradley Hand","Comic Sans MS",cursive';
+  x.textAlign = "center";
+  x.textBaseline = "middle";
+  x.fillText(new Date().toLocaleDateString(I18N_LOCALE, { day: "numeric", month: "short", year: "numeric" }), c.width / 2, c.height - foot / 2 + 2);
+  return c;
+}
+function saveBlobAs(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
 
 function StoryEditor({ file, onCancel, onPublished }) {
   const isVideo = (file.type || "").startsWith("video");
@@ -18645,6 +19640,13 @@ function StoryEditor({ file, onCancel, onPublished }) {
   const [error, setError] = useState("");
   const [stage, setStage] = useState({ w: 360, h: 640 });
   const [badge, setBadge] = useState(null);
+  const [aiLabel, setAiLabel] = useState(false);
+  const [noComments, setNoComments] = useState(() => !getStoryPrefs().allowReplies);
+  const [gifPick, setGifPick] = useState(false);
+  const [note, setNote] = useState("");
+  const noteTimer = React.useRef(null);
+  const photoInput = React.useRef(null);
+  const stripInput = React.useRef(null);
   const wrapRef = React.useRef(null);
   const stageRef = React.useRef(null);
   const drawRef = React.useRef(null);
@@ -18655,6 +19657,14 @@ function StoryEditor({ file, onCancel, onPublished }) {
 
   useEffect(() => {
     loadMyBadge().then(setBadge).catch(() => {});
+  }, []);
+  // Joining someone's "Add Yours": their prompt comes along on this story.
+  useEffect(() => {
+    const p = typeof window !== "undefined" ? window.__loopAddYours : null;
+    if (!p) return;
+    window.__loopAddYours = null;
+    if (Date.now() - (p.at || 0) > 3 * 60 * 1000) return;
+    setElements((prev) => [...prev, { id: storyId(), kind: "sticker", st: { id: newStickerId(), type: "addyours", prompt: p.prompt, chain: p.chain }, x: 0.5, y: 0.7, s: 1, r: 0 }]);
   }, []);
   const canPremium = (tier) => !!badge?.active && (tier === "elite" ? tierRank(badge.tier) >= 2 : tierRank(badge.tier) >= 3);
 
@@ -18864,6 +19874,9 @@ function StoryEditor({ file, onCancel, onPublished }) {
         if (el?.kind === "text") {
           setTextEditing(el);
           setMode("text");
+        } else if (el?.kind === "image" && !el.strip) {
+          const next = PHOTO_SHAPES[(PHOTO_SHAPES.indexOf(el.shape) + 1) % PHOTO_SHAPES.length];
+          setElements((prev) => prev.map((x) => (x.id === el.id ? { ...x, shape: next } : x)));
         }
       }
       setDragId(null);
@@ -18946,6 +19959,59 @@ function StoryEditor({ file, onCancel, onPublished }) {
       }, type, q)
     );
 
+  const flashNote = (m) => {
+    setNote(m);
+    clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => setNote(""), 2000);
+  };
+  const pickTile = (type) => {
+    setMode(null);
+    if (elements.filter((x) => x.kind === "sticker").length >= MAX_STICKERS && !["photo", "photostrip"].includes(type)) {
+      flashNote(trJoin("Up to {0} stickers on one story", MAX_STICKERS));
+      return;
+    }
+    if (type === "gif") return setGifPick(true);
+    if (type === "photo") return photoInput.current?.click();
+    if (type === "photostrip") return stripInput.current?.click();
+    setStickerType(type);
+  };
+  const addPhotoElement = async (f) => {
+    if (!f) return;
+    try {
+      const c = await fxLoadSource(f, 900);
+      setElements((prev) => [...prev, { id: storyId(), kind: "image", canvas: c, url: c.toDataURL("image/jpeg", 0.9), aspect: c.width / c.height, bw: 150, shape: "rounded", x: 0.5, y: 0.42, s: 1, r: 0 }]);
+    } catch {
+      flashNote("This photo can't be opened here.");
+    }
+  };
+  const addPhotostrip = async (files) => {
+    const list = [...(files || [])].filter((f) => (f.type || "").startsWith("image")).slice(0, 4);
+    if (!list.length) return;
+    try {
+      const canvases = [];
+      for (const f of list) canvases.push(await fxLoadSource(f, 700));
+      const c = makePhotostrip(canvases);
+      setElements((prev) => [...prev, { id: storyId(), kind: "image", strip: true, canvas: c, url: c.toDataURL("image/jpeg", 0.9), aspect: c.width / c.height, bw: 118, shape: "plain", x: 0.5, y: 0.45, s: 1, r: -4 }]);
+      if ((files || []).length > 4) flashNote("Up to 4 photos in a strip");
+    } catch {
+      flashNote("This photo can't be opened here.");
+    }
+  };
+  const download = async () => {
+    try {
+      if (isVideo) {
+        saveBlobAs(file, file.name || "loop-story.mp4");
+      } else {
+        if (!shown) return;
+        const pic = await renderPicture({ withPhoto: true });
+        saveBlobAs(await toFile(pic, "image/jpeg", 0.92, "loop-story.jpg"), `loop-story-${Date.now()}.jpg`);
+      }
+      flashNote("Saved to your phone");
+    } catch {
+      flashNote("Couldn't save it");
+    }
+  };
+
   const publish = async (audience) => {
     setBusy("Sharing…");
     setError("");
@@ -18974,9 +20040,16 @@ function StoryEditor({ file, onCancel, onPublished }) {
         const pic = await renderPicture({ withPhoto: true });
         mediaUrl = await upload(await toFile(pic, "image/jpeg", 0.9, "story.jpg"));
       }
+      // Frames: the photo goes up first, then the sticker points to it.
+      const frameUrls = {};
+      for (const x of elements) {
+        if (x.kind === "sticker" && x.st.type === "frame" && x.st.__canvas && !x.st.url) {
+          frameUrls[x.id] = await upload(await toFile(x.st.__canvas, "image/jpeg", 0.88, "frame.jpg"));
+        }
+      }
       const interactive = elements
         .filter((x) => x.kind === "sticker")
-        .map((x) => ({ ...x.st, x: Math.round(x.x * 1000) / 10, y: Math.round(x.y * 1000) / 10, s: Math.round((x.s || 1) * 100) / 100, r: Math.round(x.r || 0) }));
+        .map(({ id: elId, st: { __canvas, local, ...st }, ...x }) => ({ ...st, ...(frameUrls[elId] ? { url: frameUrls[elId] } : {}), x: Math.round(x.x * 1000) / 10, y: Math.round(x.y * 1000) / 10, s: Math.round((x.s || 1) * 100) / 100, r: Math.round(x.r || 0) }));
       const stickers = [...interactive, ...extra];
       const prefs = getStoryPrefs();
       const row = {
@@ -18984,11 +20057,17 @@ function StoryEditor({ file, onCancel, onPublished }) {
         media_url: mediaUrl,
         media_type: isVideo ? "video" : "photo",
         caption: caption.trim() || null,
-        comments_disabled: !prefs.allowReplies,
+        comments_disabled: noComments,
+        ...(aiLabel ? { ai_label: true } : {}),
         ...(stickers.length ? { stickers } : {}),
         ...(audience === "close_friends" ? { audience: "close_friends" } : {}),
       };
-      const { error: insErr } = await supabase.from("stories").insert(row);
+      let { error: insErr } = await supabase.from("stories").insert(row);
+      if (insErr && row.ai_label && /ai_label/.test(insErr.message)) {
+        // The database doesn't have the AI label yet — share without it.
+        const { ai_label, ...plain } = row;
+        ({ error: insErr } = await supabase.from("stories").insert(plain));
+      }
       if (insErr) {
         throw new Error(
           /audience/.test(insErr.message)
@@ -19121,14 +20200,17 @@ function StoryEditor({ file, onCancel, onPublished }) {
                   )}
                 </div>
               ) : (
-                <div className="absolute top-3 end-3 flex flex-col gap-2.5" onPointerDown={(e) => e.stopPropagation()}>
+                <div className="absolute top-3 end-3 flex flex-col gap-2" onPointerDown={(e) => e.stopPropagation()} data-story-rail="">
                   {toolBtn("Text", <Type size={21} color="#FFFFFF" />, () => {
                     setTextEditing(null);
                     setMode("text");
                   })}
                   {toolBtn("Stickers", <Sticker size={21} color="#FFFFFF" />, () => setMode("tray"))}
+                  {toolBtn("Effects", <Sparkles size={20} color={mode === "filters" ? "#000" : "#FFFFFF"} />, () => setMode((m) => (m === "filters" ? null : "filters")), mode === "filters")}
+                  {toolBtn("Mention", <AtSign size={20} color="#FFFFFF" />, () => pickTile("mention"))}
                   {toolBtn("Draw", <PenLine size={20} color="#FFFFFF" />, () => setMode("draw"))}
-                  {toolBtn("Filters", <Sparkles size={20} color={mode === "filters" ? "#000" : "#FFFFFF"} />, () => setMode((m) => (m === "filters" ? null : "filters")), mode === "filters")}
+                  {toolBtn("Download", <Download size={20} color="#FFFFFF" />, download)}
+                  {toolBtn("More", <Ellipsis size={21} color={mode === "more" || aiLabel ? "#000" : "#FFFFFF"} />, () => setMode("more"), mode === "more" || aiLabel)}
                 </div>
               )}
             </>
@@ -19207,39 +20289,53 @@ function StoryEditor({ file, onCancel, onPublished }) {
       )}
 
       {mode === "tray" && (
-        <StorySheetShell title="Stickers" onClose={() => setMode(null)}>
-          <div className="grid grid-cols-3 gap-2.5 px-4 pb-4">
-            {STICKER_TYPES.map(({ type, label, icon: Icon }) => (
-              <button
-                key={type}
-                onClick={() => {
-                  setMode(null);
-                  setStickerType(type);
-                }}
-                className="flex flex-col items-center justify-center gap-1.5 rounded-2xl py-4 transition-transform active:scale-95"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-              >
-                <Icon size={22} color="var(--text)" />
-                <span className="text-[12px]" style={{ color: "var(--text)", fontWeight: 700 }}>{label}</span>
-              </button>
-            ))}
-          </div>
-          <p className="px-4 text-[12px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Emoji</p>
-          <div className="grid grid-cols-8 gap-1 px-3 pb-6">
-            {STORY_EMOJI.map((em) => (
-              <button
-                key={em}
-                onClick={() => {
-                  setMode(null);
-                  setElements((prev) => [...prev, { id: storyId(), kind: "emoji", emoji: em, x: 0.5, y: 0.45, s: 1, r: 0 }]);
-                }}
-                className="aspect-square flex items-center justify-center text-[28px] rounded-lg active:scale-125 transition-transform"
-              >
-                {em}
-              </button>
-            ))}
-          </div>
-        </StorySheetShell>
+        <StickerTray
+          onClose={() => setMode(null)}
+          onPick={pickTile}
+          onEmoji={(em) => {
+            setMode(null);
+            setElements((prev) => [...prev, { id: storyId(), kind: "emoji", emoji: em, x: 0.5, y: 0.45, s: 1, r: 0 }]);
+          }}
+        />
+      )}
+      {gifPick && (
+        <GifPickerSheet
+          onClose={() => setGifPick(false)}
+          onPick={(g) => {
+            setGifPick(false);
+            addSticker("gif", { url: g.url, w: g.width || 1, h: g.height || 1 });
+            if (g.id) supabase.rpc("gif_use", { p_id: g.id }).then(() => {}, () => {});
+          }}
+        />
+      )}
+      {mode === "more" && <StoryMoreSheet aiLabel={aiLabel} onAiLabel={setAiLabel} noComments={noComments} onNoComments={setNoComments} onClose={() => setMode(null)} />}
+      <input
+        ref={photoInput}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          addPhotoElement(f);
+        }}
+      />
+      <input
+        ref={stripInput}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const fs = [...(e.target.files || [])];
+          e.target.value = "";
+          addPhotostrip(fs);
+        }}
+      />
+      {note && (
+        <div className="absolute left-1/2 -translate-x-1/2 z-[65] rounded-full px-4 py-2.5 text-xs pointer-events-none" style={{ bottom: 150, background: "rgba(255,255,255,0.95)", color: "#000", fontWeight: 700, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", whiteSpace: "nowrap" }}>
+          {note}
+        </div>
       )}
       {stickerType && <StickerEditorSheet type={stickerType} onDone={(data) => addSticker(stickerType, data)} onClose={() => setStickerType(null)} />}
 
@@ -20594,7 +21690,7 @@ function NotificationsSettings({ userId, onBack }) {
       {error && <p className="text-xs px-4 pt-3" style={{ color: "var(--heart)" }}>{error}</p>}
 
       {loading ? (
-        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows count={6} avatar={0} />
       ) : (
         <div className="px-4 pt-4">
           {/* On the web each device must opt in once; this is that switch,
@@ -20904,8 +22000,8 @@ function SettingsScreen({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
+      <div className="flex-1 overflow-hidden" style={{ background: "var(--bg)" }}>
+        <SkeletonRows count={10} avatar={26} />
       </div>
     );
   }
@@ -21707,7 +22803,14 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
       await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
     } else {
       const { error } = await supabase.from("reposts").insert({ post_id: post.id, user_id: userId });
-      if (!error) setNoteFor(post);
+      if (!error)
+        showRepostToast({
+          onAddNote: () => setNoteFor(post),
+          onUndo: async () => {
+            setPost((prev) => ({ ...prev, reposted: false, repostCount: Math.max(0, (prev.repostCount || 1) - 1) }));
+            await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", userId);
+          },
+        });
     }
   };
 
@@ -21727,8 +22830,8 @@ function PostDetailScreen({ postId, onBack, onOpenProfile, onOpenReport, onDelet
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
+      <div className="flex-1 overflow-hidden" style={{ background: "var(--bg)" }}>
+        <SkeletonPost />
       </div>
     );
   }
@@ -22393,7 +23496,7 @@ function AccountStatusScreen({ onBack }) {
     <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
       <ScreenHeader title="Account status" onBack={onBack} />
       {!state ? (
-        <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonBlock />
       ) : (
         <>
           <div className="flex flex-col items-center text-center px-6 pt-8 pb-6">
@@ -22481,7 +23584,7 @@ function FavouritesScreen({ onBack, onOpenProfile }) {
         Posts from your favourites show with a ★ in your feed. Add someone from the ⋯ menu on their post. They won't be told.
       </p>
       {rows === null ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : rows.length === 0 ? (
         <div className="flex flex-col items-center py-12">
           <Star size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -22710,7 +23813,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
         {error ? (
           <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
         ) : loading ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : items.length === 0 ? (
           <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Nothing here yet</p>
         ) : isLikes ? (
@@ -22753,7 +23856,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
         {error ? (
           <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
         ) : loading ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : items.length === 0 ? (
           <p className="text-xs text-center py-10 px-8" style={{ color: "var(--text-muted)" }}>
             Nothing yet. Reels you watch turn up here, newest first.
@@ -23150,7 +24253,7 @@ function ArchiveScreen({ currentUserId, onBack, onOpenPost }) {
       {error ? (
         <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
       ) : loading ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonGrid />
       ) : shown.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-16 px-8 text-center">
           <Archive size={28} color="var(--toggle-off)" />
@@ -23510,7 +24613,7 @@ function ProfileTabButton({ me, active, onTap, onDoubleTap, onLongPress }) {
       onContextMenu={(e) => e.preventDefault()}
       aria-label="Profile"
       className="flex flex-col items-center justify-center gap-1"
-      style={{ width: 44, height: 36, WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
+      style={{ flex: "1 1 0", minWidth: 0, height: 36, WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
     >
       {me && (me.avatar_url || me.username) ? (
         <span className="rounded-full flex items-center justify-center" style={{ width: 28, height: 28, border: `2px solid ${ring}`, padding: 1 }}>
@@ -23841,7 +24944,7 @@ function PeopleListScreen({ kind, title, hint, currentUserId, onBack, onOpenProf
 
       <p className="text-[11px] px-4 pt-3 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>{trJoin("{0} on this list", members.length)}</p>
       {loading ? (
-        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : members.length === 0 ? (
         <p className="text-xs px-4 pb-1" style={{ color: "var(--text-muted)" }}>Nobody yet</p>
       ) : (
@@ -24307,8 +25410,8 @@ function EditProfileScreen({ currentUserId: passedUserId, onBack, onSaved }) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
+      <div className="flex-1 overflow-hidden" style={{ background: "var(--bg)" }}>
+        <SkeletonBlock lines={6} />
       </div>
     );
   }
@@ -24843,7 +25946,14 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
     const { error: err } = was
       ? await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", currentUserId)
       : await supabase.from("reposts").insert({ post_id: post.id, user_id: currentUserId });
-    if (!err && !was) setNoteFor(post);
+    if (!err && !was)
+      showRepostToast({
+        onAddNote: () => setNoteFor(post),
+        onUndo: async () => {
+          setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, reposted: false, repostCount: Math.max(0, (p.repostCount || 1) - 1) } : p)));
+          await supabase.from("reposts").delete().eq("post_id", post.id).eq("user_id", currentUserId);
+        },
+      });
     if (err) {
       setPosts((prev) =>
         prev.map((p) =>
@@ -24886,7 +25996,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
         {error ? (
           <p className="text-xs text-center py-10 px-6" style={{ color: "var(--heart)" }}>{error}</p>
         ) : loading ? (
-          <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonFeed />
         ) : posts.length === 0 ? (
           <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>Nothing here</p>
         ) : (
@@ -25294,7 +26404,7 @@ function EditHighlightScreen({ highlight, currentUserId, onClose, onSaved }) {
         </div>
 
         {loading ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonGrid />
         ) : list.length === 0 ? (
           <p className="text-xs text-center py-10 px-8" style={{ color: "var(--text-muted)" }}>
             {tab === "selected"
@@ -25772,7 +26882,7 @@ function NewHighlightSheet({ currentUserId, onClose, onCreated }) {
       </p>
 
       {loading ? (
-        <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonGrid />
       ) : stories.length === 0 ? (
         <p className="text-xs text-center py-8 px-8" style={{ color: "var(--text-muted)" }}>
           You haven't posted any stories yet. Post one and it can live here afterwards.
@@ -26064,7 +27174,7 @@ function FollowListScreen({ targetId, mode, title, currentUserId, onBack, onOpen
       {error ? (
         <p className="text-xs text-center py-8 px-6" style={{ color: "var(--heart)" }}>{error}</p>
       ) : loading ? (
-        <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : shown.length === 0 ? (
         <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>
           {q ? "No one matches that" : mode === "followers" ? "No followers yet" : "Not following anyone yet"}
@@ -26238,6 +27348,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
     return () => window.removeEventListener("loop:grid-pos", on);
   }, []);
   const [sheet, setSheet] = useState(null); // note | newHighlight | avatar
+  const [storyHidden, setStoryHidden] = useState(null); // null = not loaded yet
   const [highlightsKey, setHighlightsKey] = useState(0);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [privacyBusy, setPrivacyBusy] = useState(false);
@@ -26557,6 +27668,31 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
     };
   }, [profile?.id, myId, viewStoryFor]);
 
+  // "Hide your story": they stop seeing your stories; they aren't told.
+  useEffect(() => {
+    if (sheet !== "safety" || !myId || !profile?.id || storyHidden !== null) return;
+    supabase
+      .from("story_hidden_from")
+      .select("viewer_id")
+      .eq("owner_id", myId)
+      .eq("viewer_id", profile.id)
+      .maybeSingle()
+      .then(({ data, error }) => setStoryHidden(error ? false : !!data));
+  }, [sheet, myId, profile?.id]);
+  const toggleStoryHidden = async () => {
+    if (!myId || !profile?.id) return;
+    const next = !storyHidden;
+    setStoryHidden(next);
+    const { error } = next
+      ? await supabase.from("story_hidden_from").insert({ owner_id: myId, viewer_id: profile.id })
+      : await supabase.from("story_hidden_from").delete().eq("owner_id", myId).eq("viewer_id", profile.id);
+    if (error && !/duplicate/i.test(error.message || "")) {
+      setStoryHidden(!next);
+      flashNote("That didn't work");
+      return;
+    }
+    flashNote(next ? "Your story is hidden from them" : "They can see your story again");
+  };
   const flashNote = (msg) => {
     setReportNote(msg);
     setTimeout(() => setReportNote(""), 2200);
@@ -26723,9 +27859,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "var(--bg)" }}>
-        <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
-      </div>
+      <SkeletonProfile />
     );
   }
 
@@ -26990,16 +28124,6 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
               {isFollowing ? "Following" : "Follow"}
               {isFollowing && <ChevronDown size={14} />}
             </button>
-            {isFollowing && (
-              <button
-                onClick={() => setSheet("notifyPrefs")}
-                aria-label={bellOn ? "Notifications are on" : "Turn on notifications"}
-                className="rounded-lg h-9 w-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)", color: bellOn ? "var(--accent-solid)" : "var(--text)" }}
-              >
-                {bellOn ? <BellRing key="on" size={17} className="loop-bell-on" /> : <Bell size={17} />}
-              </button>
-            )}
             {!myRel.blockedBy && (
               <button
                 onClick={() => onMessage?.(profile)}
@@ -27040,7 +28164,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
           {showSuggest && (
             <div className="mb-2">
               {similar === null ? (
-                <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+                <SkeletonRows count={2} />
               ) : similar.length === 0 ? (
                 <p className="text-xs text-center py-4" style={{ color: "var(--text-muted)" }}>No suggestions right now</p>
               ) : (
@@ -27338,6 +28462,17 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
                 </span>
               }
             />
+            <StoryMenuRow
+              icon={<Ban size={17} color="var(--text)" />}
+              label={storyHidden ? "Show your story" : "Hide your story"}
+              onClick={toggleStoryHidden}
+              trailing={
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  {storyHidden ? "Hidden" : "They won't be told"}
+                </span>
+              }
+            />
+            <StoryMenuRow icon={<Info size={17} color="var(--text)" />} label="About this account" onClick={() => setSheet("about")} />
             <div className="h-px my-1.5 mx-4" style={{ background: "var(--border)" }} />
             <StoryMenuRow
               icon={<UserMinus size={17} color="var(--heart)" />}
@@ -27461,6 +28596,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
         />
       )}
 
+      {sheet === "about" && !isOwnProfile && <AboutAccountSheet userId={profile.id} onClose={() => setSheet(null)} onOpenProfile={() => setSheet(null)} />}
       {sheet === "reportAccount" && !isOwnProfile && (
         <StorySheetShell title={`Report ${profile.username}`} onClose={() => setSheet(null)}>
           <div className="pb-6">
@@ -27814,7 +28950,14 @@ function ConvoPeek({ conversationId, meId }) {
         With a verified badge you can peek at new messages here without them seeing you read them.
       </p>
     );
-  const label = (m) => (m.deleted ? "Message deleted" : m.content || (m.image_url || m.media_url ? "Photo" : m.audio_url ? "Voice message" : "Attachment"));
+  const label = (m) =>
+    m.deleted
+      ? "Message deleted"
+      : m.effect === "gift" && m.sender_id !== meId
+      ? "🎁 Gift"
+      : m.effect === "secret" && m.sender_id !== meId
+      ? "🤫 Secret"
+      : m.content || (m.image_url || m.media_url ? (/\.gif(\?|$)/i.test(m.image_url || "") ? "GIF" : "Photo") : m.audio_url ? "Voice message" : "Attachment");
   return (
     <div className="mx-4 mb-2 rounded-2xl p-3" style={{ background: "var(--bg-sunken)" }}>
       <p className="text-[11px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Peek · they won't see that you read this</p>
@@ -28240,7 +29383,7 @@ function MessagesScreen({ onBack, startWith, asTab = false, onChatOpenChange }) 
             ))
           )
         ) : loading ? (
-          <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows count={8} avatar={56} />
         ) : conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center mt-16 px-8 text-center gap-2">
             <Send size={30} color="var(--toggle-off)" />
@@ -28497,16 +29640,6 @@ function NewGroupScreen({ currentUserId, onBack, onCreated }) {
 
 const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🔥", "👍"];
 
-// Shown when you tap "+" on the quick row.
-const EMOJI_LIBRARY = {
-  Smileys: ["😀","😃","😄","😁","😆","😅","🤣","😊","🙂","😉","😍","🥰","😘","😗","😋","😛","🤪","🤨","🧐","🤓","😎","🥳","😏","😒","😞","😔","😟","😕","🙁","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","🤗","🤔","🤭","🤫","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕"],
-  Gestures: ["👍","👎","👌","🤌","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👏","🙌","👐","🤲","🤝","🙏","💪","🦾","✍️","💅","👀","👋","🖐️","✋","🖖"],
-  Hearts: ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","♥️"],
-  Fun: ["🔥","✨","🌟","💫","⭐","🎉","🎊","🎈","🎁","🏆","🥇","💯","💥","💦","💨","🕳️","💣","🎵","🎶","👑","💎","🌈","☀️","🌙","⚡","❄️","🍀","🌸","🌹","🥀"],
-  Food: ["🍎","🍌","🍇","🍓","🍑","🍍","🥭","🍔","🍟","🍕","🌭","🥪","🌮","🌯","🍜","🍝","🍣","🍤","🍩","🍪","🎂","🍰","🍫","🍬","☕","🍵","🧋","🥤","🍺","🍻"],
-  Animals: ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔","🐧","🐦","🦆","🦅","🦉","🐴","🦄","🐝","🦋","🐌","🐞","🐢","🐍","🐙"],
-};
-
 // ---- The full emoji keyboard ----
 // Same height whichever group is open (like Gboard), so the tabs never
 // jump. Recently used emoji come first.
@@ -28526,15 +29659,271 @@ function pushRecentEmoji(e) {
   } catch {}
 }
 
-function EmojiPickerSheet({ onPick, onClose, title = "Choose a reaction" }) {
-  const recent = React.useMemo(() => readRecentEmoji(), []);
-  const groups = React.useMemo(() => (recent.length ? { Recent: recent, ...EMOJI_LIBRARY } : EMOJI_LIBRARY), [recent]);
-  const tabs = Object.keys(groups);
-  const [tab, setTab] = useState(recent.length ? "Recent" : "Smileys");
-  const gridRef = React.useRef(null);
+// Every emoji (Unicode 16), in the order phone keyboards use. "§" marks
+// where a skin tone goes; "¤" is a spot that takes a tone or, without one,
+// the usual emoji style mark. Some are left out on purpose (see PROGRESS.md).
+const EMOJI_CATS = [
+  { key: "people", label: "Smileys & people", list: "😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃 🫠 😉 😊 😇 🥰 😍 🤩 😘 😗 ☺️ 😚 😙 🥲 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🫢 🫣 🤫 🤔 🫡 🤐 🤨 😐 😑 😶 🫥 😶‍🌫️ 😏 😒 🙄 😬 😮‍💨 🤥 🫨 🙂‍↔️ 🙂‍↕️ 😌 😔 😪 🤤 😴 🫩 😷 🤒 🤕 🤢 🤮 🤧 🥵 🥶 🥴 😵 😵‍💫 🤯 🤠 🥳 🥸 😎 🤓 🧐 😕 🫤 😟 🙁 ☹️ 😮 😯 😲 😳 🥺 🥹 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 👿 💀 ☠️ 💩 🤡 👹 👺 👻 👽 👾 🤖 😺 😸 😹 😻 😼 😽 🙀 😿 😾 🙈 🙉 🙊 💌 💘 💝 💖 💗 💓 💞 💕 💟 ❣️ 💔 ❤️‍🔥 ❤️‍🩹 ❤️ 🩷 🧡 💛 💚 💙 🩵 💜 🤎 🖤 🩶 🤍 💋 💯 💢 💥 💫 💦 💨 🕳️ 💬 👁️‍🗨️ 🗨️ 🗯️ 💭 💤 👋§ 🤚§ 🖐¤ ✋§ 🖖§ 🫱§ 🫲§ 🫳§ 🫴§ 🫷§ 🫸§ 👌§ 🤌§ 🤏§ ✌¤ 🤞§ 🫰§ 🤟§ 🤘§ 🤙§ 👈§ 👉§ 👆§ 🖕§ 👇§ ☝¤ 🫵§ 👍§ 👎§ ✊§ 👊§ 🤛§ 🤜§ 👏§ 🙌§ 🫶§ 👐§ 🤲§ 🤝§ 🙏§ ✍¤ 💅§ 🤳§ 💪§ 🦾 🦿 🦵§ 🦶§ 👂§ 🦻§ 👃§ 🧠 🫀 🫁 🦷 🦴 👀 👁️ 👅 👄 🫦 👶§ 🧒§ 👦§ 👧§ 🧑§ 👱§ 👨§ 🧔§ 🧔§‍♂️ 🧔§‍♀️ 👨§‍🦰 👨§‍🦱 👨§‍🦳 👨§‍🦲 👩§ 👩§‍🦰 🧑§‍🦰 👩§‍🦱 🧑§‍🦱 👩§‍🦳 🧑§‍🦳 👩§‍🦲 🧑§‍🦲 👱§‍♀️ 👱§‍♂️ 🧓§ 👴§ 👵§ 🙍§ 🙍§‍♂️ 🙍§‍♀️ 🙎§ 🙎§‍♂️ 🙎§‍♀️ 🙅§ 🙅§‍♂️ 🙅§‍♀️ 🙆§ 🙆§‍♂️ 🙆§‍♀️ 💁§ 💁§‍♂️ 💁§‍♀️ 🙋§ 🙋§‍♂️ 🙋§‍♀️ 🧏§ 🧏§‍♂️ 🧏§‍♀️ 🙇§ 🙇§‍♂️ 🙇§‍♀️ 🤦§ 🤦§‍♂️ 🤦§‍♀️ 🤷§ 🤷§‍♂️ 🤷§‍♀️ 🧑§‍⚕️ 👨§‍⚕️ 👩§‍⚕️ 🧑§‍🎓 👨§‍🎓 👩§‍🎓 🧑§‍🏫 👨§‍🏫 👩§‍🏫 🧑§‍⚖️ 👨§‍⚖️ 👩§‍⚖️ 🧑§‍🌾 👨§‍🌾 👩§‍🌾 🧑§‍🍳 👨§‍🍳 👩§‍🍳 🧑§‍🔧 👨§‍🔧 👩§‍🔧 🧑§‍🏭 👨§‍🏭 👩§‍🏭 🧑§‍💼 👨§‍💼 👩§‍💼 🧑§‍🔬 👨§‍🔬 👩§‍🔬 🧑§‍💻 👨§‍💻 👩§‍💻 🧑§‍🎤 👨§‍🎤 👩§‍🎤 🧑§‍🎨 👨§‍🎨 👩§‍🎨 🧑§‍✈️ 👨§‍✈️ 👩§‍✈️ 🧑§‍🚀 👨§‍🚀 👩§‍🚀 🧑§‍🚒 👨§‍🚒 👩§‍🚒 👮§ 👮§‍♂️ 👮§‍♀️ 🕵¤ 🕵§‍♂️ 🕵§‍♀️ 💂§ 💂§‍♂️ 💂§‍♀️ 🥷§ 👷§ 👷§‍♂️ 👷§‍♀️ 🫅§ 🤴§ 👸§ 👳§ 👳§‍♂️ 👳§‍♀️ 👲§ 🧕§ 🤵§ 🤵§‍♂️ 🤵§‍♀️ 👰§ 👰§‍♂️ 👰§‍♀️ 🤰§ 🫄§ 🤱§ 👩§‍🍼 👨§‍🍼 🧑§‍🍼 👼§ 🎅§ 🤶§ 🧑§‍🎄 🦸§ 🦸§‍♂️ 🦸§‍♀️ 🦹§ 🦹§‍♂️ 🦹§‍♀️ 🧙§ 🧙§‍♂️ 🧙§‍♀️ 🧚§ 🧚§‍♂️ 🧚§‍♀️ 🧛§ 🧛§‍♂️ 🧛§‍♀️ 🧜§ 🧜§‍♂️ 🧜§‍♀️ 🧝§ 🧝§‍♂️ 🧝§‍♀️ 🧞 🧞‍♂️ 🧞‍♀️ 🧟 🧟‍♂️ 🧟‍♀️ 🧌 💆§ 💆§‍♂️ 💆§‍♀️ 💇§ 💇§‍♂️ 💇§‍♀️ 🚶§ 🚶§‍♂️ 🚶§‍♀️ 🚶§‍➡️ 🚶§‍♀️‍➡️ 🚶§‍♂️‍➡️ 🧍§ 🧍§‍♂️ 🧍§‍♀️ 🧎§ 🧎§‍♂️ 🧎§‍♀️ 🧎§‍➡️ 🧎§‍♀️‍➡️ 🧎§‍♂️‍➡️ 🧑§‍🦯 🧑§‍🦯‍➡️ 👨§‍🦯 👨§‍🦯‍➡️ 👩§‍🦯 👩§‍🦯‍➡️ 🧑§‍🦼 🧑§‍🦼‍➡️ 👨§‍🦼 👨§‍🦼‍➡️ 👩§‍🦼 👩§‍🦼‍➡️ 🧑§‍🦽 🧑§‍🦽‍➡️ 👨§‍🦽 👨§‍🦽‍➡️ 👩§‍🦽 👩§‍🦽‍➡️ 🏃§ 🏃§‍♂️ 🏃§‍♀️ 🏃§‍➡️ 🏃§‍♀️‍➡️ 🏃§‍♂️‍➡️ 💃§ 🕺§ 🕴¤ 👯 👯‍♂️ 👯‍♀️ 🧖§ 🧖§‍♂️ 🧖§‍♀️ 🧗§ 🧗§‍♂️ 🧗§‍♀️ 🤺 🏇§ ⛷️ 🏂§ 🏌¤ 🏌§‍♂️ 🏌§‍♀️ 🏄§ 🏄§‍♂️ 🏄§‍♀️ 🚣§ 🚣§‍♂️ 🚣§‍♀️ 🏊§ 🏊§‍♂️ 🏊§‍♀️ ⛹¤ ⛹§‍♂️ ⛹§‍♀️ 🏋¤ 🏋§‍♂️ 🏋§‍♀️ 🚴§ 🚴§‍♂️ 🚴§‍♀️ 🚵§ 🚵§‍♂️ 🚵§‍♀️ 🤸§ 🤸§‍♂️ 🤸§‍♀️ 🤼 🤼‍♂️ 🤼‍♀️ 🤽§ 🤽§‍♂️ 🤽§‍♀️ 🤾§ 🤾§‍♂️ 🤾§‍♀️ 🤹§ 🤹§‍♂️ 🤹§‍♀️ 🧘§ 🧘§‍♂️ 🧘§‍♀️ 🛀§ 🛌§ 🧑§‍🤝‍🧑§ 👭§ 👫§ 👬§ 💏§ 👩§‍❤️‍💋‍👨§ 💑§ 👩§‍❤️‍👨§ 👨‍👩‍👦 👨‍👩‍👧 👨‍👩‍👧‍👦 👨‍👩‍👦‍👦 👨‍👩‍👧‍👧 👨‍👦 👨‍👦‍👦 👨‍👧 👨‍👧‍👦 👨‍👧‍👧 👩‍👦 👩‍👦‍👦 👩‍👧 👩‍👧‍👦 👩‍👧‍👧 🗣️ 👤 👥 🫂 👪 🧑‍🧑‍🧒 🧑‍🧑‍🧒‍🧒 🧑‍🧒 🧑‍🧒‍🧒 👣 🫆" },
+  { key: "nature", label: "Animals & nature", list: "🐵 🐒 🦍 🦧 🐶 🐕 🦮 🐕‍🦺 🐩 🐺 🦊 🦝 🐱 🐈 🐈‍⬛ 🦁 🐯 🐅 🐆 🐴 🫎 🫏 🐎 🦄 🦓 🦌 🦬 🐮 🐂 🐃 🐄 🐷 🐖 🐗 🐽 🐏 🐑 🐐 🐪 🐫 🦙 🦒 🐘 🦣 🦏 🦛 🐭 🐁 🐀 🐹 🐰 🐇 🐿️ 🦫 🦔 🦇 🐻 🐻‍❄️ 🐨 🐼 🦥 🦦 🦨 🦘 🦡 🐾 🦃 🐔 🐓 🐣 🐤 🐥 🐦 🐧 🕊️ 🦅 🦆 🦢 🦉 🦤 🪶 🦩 🦚 🦜 🪽 🐦‍⬛ 🪿 🐦‍🔥 🐸 🐊 🐢 🦎 🐍 🐲 🐉 🦕 🦖 🐳 🐋 🐬 🦭 🐟 🐠 🐡 🦈 🐙 🐚 🪸 🪼 🦀 🦞 🦐 🦑 🦪 🐌 🦋 🐛 🐜 🐝 🪲 🐞 🦗 🪳 🕷️ 🕸️ 🦂 🦟 🪰 🪱 🦠 💐 🌸 💮 🪷 🏵️ 🌹 🥀 🌺 🌻 🌼 🌷 🪻 🌱 🪴 🌲 🌳 🌴 🌵 🌾 🌿 ☘️ 🍀 🍁 🍂 🍃 🪹 🪺 🍄 🪾" },
+  { key: "food", label: "Food & drink", list: "🍇 🍈 🍉 🍊 🍋 🍋‍🟩 🍌 🍍 🥭 🍎 🍏 🍐 🍑 🍒 🍓 🫐 🥝 🍅 🫒 🥥 🥑 🍆 🥔 🥕 🌽 🌶️ 🫑 🥒 🥬 🥦 🧄 🧅 🥜 🫘 🌰 🫚 🫛 🍄‍🟫 🫜 🍞 🥐 🥖 🫓 🥨 🥯 🥞 🧇 🧀 🍖 🍗 🥩 🥓 🍔 🍟 🍕 🌭 🥪 🌮 🌯 🫔 🥙 🧆 🥚 🍳 🥘 🍲 🫕 🥣 🥗 🍿 🧈 🧂 🥫 🍱 🍘 🍙 🍚 🍛 🍜 🍝 🍠 🍢 🍣 🍤 🍥 🥮 🍡 🥟 🥠 🥡 🍦 🍧 🍨 🍩 🍪 🎂 🍰 🧁 🥧 🍫 🍬 🍭 🍮 🍯 🍼 🥛 ☕ 🫖 🍵 🍶 🍾 🍷 🍸 🍹 🍺 🍻 🥂 🥃 🫗 🥤 🧋 🧃 🧉 🧊 🥢 🍽️ 🍴 🥄 🔪 🫙 🏺" },
+  { key: "travel", label: "Travel & places", list: "🌍 🌎 🌏 🌐 🗺️ 🗾 🧭 🏔️ ⛰️ 🌋 🗻 🏕️ 🏖️ 🏜️ 🏝️ 🏞️ 🏟️ 🏛️ 🏗️ 🧱 🪨 🪵 🛖 🏘️ 🏚️ 🏠 🏡 🏢 🏣 🏤 🏥 🏦 🏨 🏩 🏪 🏫 🏬 🏭 🏯 🏰 💒 🗼 🗽 ⛪ 🕌 🛕 🕍 ⛩️ 🕋 ⛲ ⛺ 🌁 🌃 🏙️ 🌄 🌅 🌆 🌇 🌉 ♨️ 🎠 🛝 🎡 🎢 💈 🎪 🚂 🚃 🚄 🚅 🚆 🚇 🚈 🚉 🚊 🚝 🚞 🚋 🚌 🚍 🚎 🚐 🚑 🚒 🚓 🚔 🚕 🚖 🚗 🚘 🚙 🛻 🚚 🚛 🚜 🏎️ 🏍️ 🛵 🦽 🦼 🛺 🚲 🛴 🛹 🛼 🚏 🛣️ 🛤️ 🛢️ ⛽ 🛞 🚨 🚥 🚦 🛑 🚧 ⚓ 🛟 ⛵ 🛶 🚤 🛳️ ⛴️ 🛥️ 🚢 ✈️ 🛩️ 🛫 🛬 🪂 💺 🚁 🚟 🚠 🚡 🛰️ 🚀 🛸 🛎️ 🧳 ⌛ ⏳ ⌚ ⏰ ⏱️ ⏲️ 🕰️ 🕛 🕧 🕐 🕜 🕑 🕝 🕒 🕞 🕓 🕟 🕔 🕠 🕕 🕡 🕖 🕢 🕗 🕣 🕘 🕤 🕙 🕥 🕚 🕦 🌑 🌒 🌓 🌔 🌕 🌖 🌗 🌘 🌙 🌚 🌛 🌜 🌡️ ☀️ 🌝 🌞 🪐 ⭐ 🌟 🌠 🌌 ☁️ ⛅ ⛈️ 🌤️ 🌥️ 🌦️ 🌧️ 🌨️ 🌩️ 🌪️ 🌫️ 🌬️ 🌀 🌈 🌂 ☂️ ☔ ⛱️ ⚡ ❄️ ☃️ ⛄ ☄️ 🔥 💧 🌊" },
+  { key: "activities", label: "Activities", list: "🎃 🎄 🎆 🎇 🧨 ✨ 🎈 🎉 🎊 🎋 🎍 🎎 🎏 🎐 🎑 🧧 🎀 🎁 🎗️ 🎟️ 🎫 🎖️ 🏆 🏅 🥇 🥈 🥉 ⚽ ⚾ 🥎 🏀 🏐 🏈 🏉 🎾 🥏 🎳 🏏 🏑 🏒 🥍 🏓 🏸 🥊 🥋 🥅 ⛳ ⛸️ 🎣 🤿 🎽 🎿 🛷 🥌 🎯 🪀 🪁 🔫 🎱 🔮 🪄 🎮 🕹️ 🎰 🎲 🧩 🧸 🪅 🪩 🪆 ♠️ ♥️ ♦️ ♣️ ♟️ 🃏 🀄 🎴 🎭 🖼️ 🎨 🧵 🪡 🧶 🪢" },
+  { key: "objects", label: "Objects", list: "👓 🕶️ 🥽 🥼 🦺 👔 👕 👖 🧣 🧤 🧥 🧦 👗 👘 🥻 🩱 🩲 🩳 👙 👚 🪭 👛 👜 👝 🛍️ 🎒 🩴 👞 👟 🥾 🥿 👠 👡 🩰 👢 🪮 👑 👒 🎩 🎓 🧢 🪖 ⛑️ 📿 💄 💍 💎 🔇 🔈 🔉 🔊 📢 📣 📯 🔔 🔕 🎼 🎵 🎶 🎙️ 🎚️ 🎛️ 🎤 🎧 📻 🎷 🪗 🎸 🎹 🎺 🎻 🪕 🥁 🪘 🪇 🪈 🪉 📱 📲 ☎️ 📞 📟 📠 🔋 🪫 🔌 💻 🖥️ 🖨️ ⌨️ 🖱️ 🖲️ 💽 💾 💿 📀 🧮 🎥 🎞️ 📽️ 🎬 📺 📷 📸 📹 📼 🔍 🔎 🕯️ 💡 🔦 🏮 🪔 📔 📕 📖 📗 📘 📙 📚 📓 📒 📃 📜 📄 📰 🗞️ 📑 🔖 🏷️ 💰 🪙 💴 💵 💶 💷 💸 💳 🧾 💹 ✉️ 📧 📨 📩 📤 📥 📦 📫 📪 📬 📭 📮 🗳️ ✏️ ✒️ 🖋️ 🖊️ 🖌️ 🖍️ 📝 💼 📁 📂 🗂️ 📅 📆 🗒️ 🗓️ 📇 📈 📉 📊 📋 📌 📍 📎 🖇️ 📏 📐 ✂️ 🗃️ 🗄️ 🗑️ 🔒 🔓 🔏 🔐 🔑 🗝️ 🔨 🪓 ⛏️ ⚒️ 🛠️ 🗡️ ⚔️ 💣 🪃 🏹 🛡️ 🪚 🔧 🪛 🔩 ⚙️ 🗜️ ⚖️ 🦯 🔗 ⛓️‍💥 ⛓️ 🪝 🧰 🧲 🪜 🪏 ⚗️ 🧪 🧫 🧬 🔬 🔭 📡 💉 🩸 💊 🩹 🩼 🩺 🩻 🚪 🛗 🪞 🪟 🛏️ 🛋️ 🪑 🚽 🪠 🚿 🛁 🪤 🪒 🧴 🧷 🧹 🧺 🧻 🪣 🧼 🫧 🪥 🧽 🧯 🛒 🚬 ⚰️ 🪦 ⚱️ 🧿 🪬 🗿 🪧 🪪" },
+  { key: "symbols", label: "Symbols", list: "🏧 🚮 🚰 ♿ 🚹 🚺 🚻 🚼 🚾 🛂 🛃 🛄 🛅 ⚠️ 🚸 ⛔ 🚫 🚳 🚭 🚯 🚱 🚷 📵 🔞 ☢️ ☣️ ⬆️ ↗️ ➡️ ↘️ ⬇️ ↙️ ⬅️ ↖️ ↕️ ↔️ ↩️ ↪️ ⤴️ ⤵️ 🔃 🔄 🔙 🔚 🔛 🔜 🔝 🛐 ⚛️ 🕉️ ✡️ ☸️ ☯️ ✝️ ☦️ ☪️ ☮️ 🕎 🔯 🪯 ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ ⛎ 🔀 🔁 🔂 ▶️ ⏩ ⏭️ ⏯️ ◀️ ⏪ ⏮️ 🔼 ⏫ 🔽 ⏬ ⏸️ ⏹️ ⏺️ ⏏️ 🎦 🔅 🔆 📶 🛜 📳 📴 ♀️ ♂️ ✖️ ➕ ➖ ➗ 🟰 ♾️ ‼️ ⁉️ ❓ ❔ ❕ ❗ 〰️ 💱 💲 ⚕️ ♻️ ⚜️ 🔱 📛 🔰 ⭕ ✅ ☑️ ✔️ ❌ ❎ ➰ ➿ 〽️ ✳️ ✴️ ❇️ ©️ ®️ ™️ 🫟 #️⃣ *️⃣ 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 🔠 🔡 🔢 🔣 🔤 🅰️ 🆎 🅱️ 🆑 🆒 🆓 ℹ️ 🆔 Ⓜ️ 🆕 🆖 🅾️ 🆗 🅿️ 🆘 🆙 🆚 🈁 🈂️ 🈷️ 🈶 🈯 🉐 🈹 🈚 🈲 🉑 🈸 🈴 🈳 ㊗️ ㊙️ 🈺 🈵 🔴 🟠 🟡 🟢 🔵 🟣 🟤 ⚫ ⚪ 🟥 🟧 🟨 🟩 🟦 🟪 🟫 ⬛ ⬜ ◼️ ◻️ ◾ ◽ ▪️ ▫️ 🔶 🔷 🔸 🔹 🔺 🔻 💠 🔘 🔳 🔲" },
+  { key: "flags", label: "Flags", list: "🏁 🚩 🎌 🏴 🏳️ 🏴‍☠️ 🇦🇨 🇦🇩 🇦🇪 🇦🇫 🇦🇬 🇦🇮 🇦🇱 🇦🇲 🇦🇴 🇦🇶 🇦🇷 🇦🇸 🇦🇹 🇦🇺 🇦🇼 🇦🇽 🇦🇿 🇧🇦 🇧🇧 🇧🇩 🇧🇪 🇧🇫 🇧🇬 🇧🇭 🇧🇮 🇧🇯 🇧🇱 🇧🇲 🇧🇳 🇧🇴 🇧🇶 🇧🇷 🇧🇸 🇧🇹 🇧🇻 🇧🇼 🇧🇾 🇧🇿 🇨🇦 🇨🇨 🇨🇩 🇨🇫 🇨🇬 🇨🇭 🇨🇮 🇨🇰 🇨🇱 🇨🇲 🇨🇳 🇨🇴 🇨🇵 🇨🇶 🇨🇷 🇨🇺 🇨🇻 🇨🇼 🇨🇽 🇨🇾 🇨🇿 🇩🇪 🇩🇬 🇩🇯 🇩🇰 🇩🇲 🇩🇴 🇩🇿 🇪🇦 🇪🇨 🇪🇪 🇪🇬 🇪🇭 🇪🇷 🇪🇸 🇪🇹 🇪🇺 🇫🇮 🇫🇯 🇫🇰 🇫🇲 🇫🇴 🇫🇷 🇬🇦 🇬🇧 🇬🇩 🇬🇪 🇬🇫 🇬🇬 🇬🇭 🇬🇮 🇬🇱 🇬🇲 🇬🇳 🇬🇵 🇬🇶 🇬🇷 🇬🇸 🇬🇹 🇬🇺 🇬🇼 🇬🇾 🇭🇰 🇭🇲 🇭🇳 🇭🇷 🇭🇹 🇭🇺 🇮🇨 🇮🇩 🇮🇪 🇮🇲 🇮🇳 🇮🇴 🇮🇶 🇮🇷 🇮🇸 🇮🇹 🇯🇪 🇯🇲 🇯🇴 🇯🇵 🇰🇪 🇰🇬 🇰🇭 🇰🇮 🇰🇲 🇰🇳 🇰🇵 🇰🇷 🇰🇼 🇰🇾 🇰🇿 🇱🇦 🇱🇧 🇱🇨 🇱🇮 🇱🇰 🇱🇷 🇱🇸 🇱🇹 🇱🇺 🇱🇻 🇱🇾 🇲🇦 🇲🇨 🇲🇩 🇲🇪 🇲🇫 🇲🇬 🇲🇭 🇲🇰 🇲🇱 🇲🇲 🇲🇳 🇲🇴 🇲🇵 🇲🇶 🇲🇷 🇲🇸 🇲🇹 🇲🇺 🇲🇻 🇲🇼 🇲🇽 🇲🇾 🇲🇿 🇳🇦 🇳🇨 🇳🇪 🇳🇫 🇳🇬 🇳🇮 🇳🇱 🇳🇴 🇳🇵 🇳🇷 🇳🇺 🇳🇿 🇴🇲 🇵🇦 🇵🇪 🇵🇫 🇵🇬 🇵🇭 🇵🇰 🇵🇱 🇵🇲 🇵🇳 🇵🇷 🇵🇸 🇵🇹 🇵🇼 🇵🇾 🇶🇦 🇷🇪 🇷🇴 🇷🇸 🇷🇺 🇷🇼 🇸🇦 🇸🇧 🇸🇨 🇸🇩 🇸🇪 🇸🇬 🇸🇭 🇸🇮 🇸🇯 🇸🇰 🇸🇱 🇸🇲 🇸🇳 🇸🇴 🇸🇷 🇸🇸 🇸🇹 🇸🇻 🇸🇽 🇸🇾 🇸🇿 🇹🇦 🇹🇨 🇹🇩 🇹🇫 🇹🇬 🇹🇭 🇹🇯 🇹🇰 🇹🇱 🇹🇲 🇹🇳 🇹🇴 🇹🇷 🇹🇹 🇹🇻 🇹🇼 🇹🇿 🇺🇦 🇺🇬 🇺🇲 🇺🇳 🇺🇸 🇺🇾 🇺🇿 🇻🇦 🇻🇨 🇻🇪 🇻🇬 🇻🇮 🇻🇳 🇻🇺 🇼🇫 🇼🇸 🇽🇰 🇾🇪 🇾🇹 🇿🇦 🇿🇲 🇿🇼 🏴󠁧󠁢󠁥󠁮󠁧󠁿 🏴󠁧󠁢󠁳󠁣󠁴󠁿 🏴󠁧󠁢󠁷󠁬󠁳󠁿" },
+];
+const EMOJI_TAB_ICON = { recent: "🕘", people: "😀", nature: "🐻", food: "🍔", travel: "🚗", activities: "⚽", objects: "💡", symbols: "🔣", flags: "🏳️" };
+const EMOJI_TONES = ["", "\u{1F3FB}", "\u{1F3FC}", "\u{1F3FD}", "\u{1F3FE}", "\u{1F3FF}"];
+const emojiWithTone = (tpl, tone) => tpl.replace(/§/g, tone || "").replace(/¤/g, tone || "️");
+const EMOJI_TONE_KEY = "loop_emoji_tone";
+function readEmojiTones() {
+  try {
+    const v = JSON.parse(localStorage.getItem(EMOJI_TONE_KEY) || "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+// Newer emoji only show if this phone can draw them (an older phone would
+// show an empty box). One emoji from each newer batch is test-drawn once.
+const EMOJI_NEWER = [
+  { probe: "\u{1FAE8}", list: "🫨 🩷 🩵 🩶 🫷§ 🫸§ 🫎 🫏 🪽 🐦‍⬛ 🪿 🪼 🪻 🫚 🫛 🪭 🪮 🪇 🪈 🪯 🛜" },
+  { probe: "🐦‍🔥", zwj: true, list: "🙂‍↔️ 🙂‍↕️ 🐦‍🔥 🍋‍🟩 🍄‍🟫 ⛓️‍💥 🧑‍🧑‍🧒 🧑‍🧑‍🧒‍🧒 🧑‍🧒 🧑‍🧒‍🧒" },
+  { probe: "\u{1FAE9}", list: "🫩 🫆 🪾 🫜 🪉 🪏 🫟 🇨🇶" },
+];
+let emojiHiddenCache = null;
+function emojiHidden() {
+  if (emojiHiddenCache) return emojiHiddenCache;
+  const hidden = new Set();
+  let works = () => true;
+  try {
+    const c = document.createElement("canvas");
+    c.width = 48;
+    c.height = 48;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    if (x && typeof x.getImageData === "function") {
+      x.textBaseline = "top";
+      x.font = "32px sans-serif";
+      const ref = x.measureText("\u{1F600}").width || 32;
+      works = (e, zwj) => {
+        if (zwj && x.measureText(e).width > ref * 1.5) return false; // drawn as two separate emoji
+        x.clearRect(0, 0, 48, 48);
+        x.fillStyle = "#000";
+        x.fillText(e, 0, 0);
+        const d = x.getImageData(0, 0, 48, 48).data;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] > 40 && (Math.abs(d[i] - d[i + 1]) > 24 || Math.abs(d[i + 1] - d[i + 2]) > 24)) return true;
+        }
+        return false;
+      };
+    }
+  } catch {}
+  let off = false;
+  EMOJI_NEWER.forEach((batch) => {
+    if (!off && !works(batch.probe, batch.zwj)) off = true; // each batch needs the one before it
+    if (off) batch.list.split(" ").forEach((e) => hidden.add(e));
+  });
+  // A "facing right" person needs the 2023 batch too.
+  if (hidden.has("🙂‍↔️")) EMOJI_CATS[0].list.split(" ").forEach((e) => e.includes("➡") && hidden.add(e));
+  emojiHiddenCache = hidden;
+  return hidden;
+}
+
+// The emoji keyboard: every group in one long list, like a phone keyboard —
+// scroll past the end of one group and the next begins, and the tabs follow.
+// Press and hold an emoji with a small corner mark to pick a skin tone.
+function EmojiKeyboard({ onPick, cols = 8, size = 26, dark = false }) {
+  const [recent] = useState(() => readRecentEmoji());
+  const [tones, setTones] = useState(() => readEmojiTones());
+  const [toneFor, setToneFor] = useState(null); // { tpl, rect }
+  const sections = React.useMemo(() => {
+    const hidden = emojiHidden();
+    const all = EMOJI_CATS.map((c) => ({ key: c.key, label: c.label, items: c.list.split(" ").filter((e) => e && !hidden.has(e)) }));
+    return recent.length ? [{ key: "recent", label: "Recently used", items: recent, plain: true }, ...all] : all;
+  }, []);
+  const [active, setActive] = useState(sections[0].key);
+  const scrollRef = React.useRef(null);
+  const secRefs = React.useRef({});
+  const lockRef = React.useRef(0);
+  const holdRef = React.useRef(null);
+  const heldRef = React.useRef(false);
+  // Real sizes of one emoji and one heading, so groups not drawn yet still
+  // take exactly the right space (tabs then land in the right place).
+  const [cell, setCell] = useState(44);
+  const [head, setHead] = useState(30);
   useEffect(() => {
-    if (gridRef.current) gridRef.current.scrollTop = 0;
-  }, [tab]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const btn = el.querySelector("section button");
+    const h = el.querySelector("section p");
+    if (btn && btn.getBoundingClientRect().height) setCell(btn.getBoundingClientRect().height);
+    else if (el.clientWidth) setCell((el.clientWidth - 16) / cols);
+    if (h && h.getBoundingClientRect().height) setHead(h.getBoundingClientRect().height);
+  }, []);
+
+  const onScroll = () => {
+    if (Date.now() < lockRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    let cur = sections[0].key;
+    for (const s of sections) {
+      const node = secRefs.current[s.key];
+      if (node && node.offsetTop - el.scrollTop <= 24) cur = s.key;
+    }
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 4) cur = sections[sections.length - 1].key;
+    if (cur !== active) setActive(cur);
+  };
+  const goTo = (key) => {
+    const el = scrollRef.current;
+    const node = secRefs.current[key];
+    if (!el || !node) return;
+    lockRef.current = Date.now() + 750;
+    setActive(key);
+    el.scrollTo ? el.scrollTo({ top: node.offsetTop, behavior: "smooth" }) : (el.scrollTop = node.offsetTop);
+    // Groups drawn on the way can shift things a little — settle exactly.
+    setTimeout(() => {
+      if (Math.abs(node.offsetTop - el.scrollTop) > 2) el.scrollTop = node.offsetTop;
+    }, 620);
+  };
+  const pick = (e) => {
+    pushRecentEmoji(e);
+    onPick(e);
+  };
+  const setTone = (tpl, tone) => {
+    const next = { ...tones, [tpl]: tone };
+    if (!tone) delete next[tpl];
+    setTones(next);
+    try {
+      localStorage.setItem(EMOJI_TONE_KEY, JSON.stringify(next));
+    } catch {}
+  };
+  const muted = dark ? "rgba(255,255,255,0.6)" : "var(--text-muted)";
+
+  return (
+    <div className="flex flex-col min-h-0 flex-1 relative" data-emoji-keyboard="">
+      <div className="flex items-center justify-between gap-0.5 px-2 pb-1.5 shrink-0" role="tablist">
+        {sections.map((s) => (
+          <button
+            key={s.key}
+            role="tab"
+            aria-selected={active === s.key}
+            aria-label={s.label}
+            onClick={() => goTo(s.key)}
+            className="flex-1 flex items-center justify-center rounded-xl h-9 transition-transform active:scale-90"
+            style={{ background: active === s.key ? (dark ? "rgba(255,255,255,0.16)" : "var(--bg-sunken)") : "transparent" }}
+          >
+            <span style={{ fontSize: 19, lineHeight: 1, filter: active === s.key ? "none" : "grayscale(1)", opacity: active === s.key ? 1 : 0.55 }}>{EMOJI_TAB_ICON[s.key]}</span>
+          </button>
+        ))}
+      </div>
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto px-2 pb-3" style={{ overscrollBehavior: "contain" }} data-no-swipe="">
+        {sections.map((s) => {
+          const rows = Math.ceil(s.items.length / cols);
+          return (
+            <section
+              key={s.key}
+              ref={(n) => {
+                if (n) secRefs.current[s.key] = n;
+              }}
+              data-emoji-section={s.key}
+              style={s.key === sections[0].key || s.key === "people" ? undefined : { contentVisibility: "auto", containIntrinsicSize: `auto ${Math.round(rows * cell + head)}px` }}
+            >
+              <p className="text-[11.5px] px-1.5 pt-2 pb-1" style={{ color: muted, fontWeight: 700 }}>{s.label}</p>
+              <div className="grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+                {s.items.map((tpl) => {
+                  const toneable = !s.plain && /[§¤]/.test(tpl);
+                  const shown = s.plain ? tpl : emojiWithTone(tpl, tones[tpl]);
+                  return (
+                    <button
+                      key={tpl}
+                      onClick={() => {
+                        if (heldRef.current) {
+                          heldRef.current = false;
+                          return;
+                        }
+                        pick(shown);
+                      }}
+                      onPointerDown={
+                        toneable
+                          ? (ev) => {
+                              heldRef.current = false;
+                              clearTimeout(holdRef.current);
+                              const target = ev.currentTarget;
+                              holdRef.current = setTimeout(() => {
+                                heldRef.current = true;
+                                setToneFor({ tpl, rect: target.getBoundingClientRect() });
+                              }, 420);
+                            }
+                          : undefined
+                      }
+                      onPointerUp={toneable ? () => clearTimeout(holdRef.current) : undefined}
+                      onPointerLeave={toneable ? () => clearTimeout(holdRef.current) : undefined}
+                      onPointerCancel={toneable ? () => clearTimeout(holdRef.current) : undefined}
+                      onContextMenu={(ev) => {
+                        ev.preventDefault();
+                        if (toneable) {
+                          heldRef.current = true;
+                          setToneFor({ tpl, rect: ev.currentTarget.getBoundingClientRect() });
+                        }
+                      }}
+                      className="relative aspect-square flex items-center justify-center rounded-lg transition-transform active:scale-125"
+                      style={{ fontSize: size, lineHeight: 1, WebkitTouchCallout: "none", userSelect: "none", WebkitUserSelect: "none" }}
+                    >
+                      {shown}
+                      {toneable && (
+                        <span aria-hidden="true" style={{ position: "absolute", right: 3, bottom: 3, width: 0, height: 0, borderLeft: "5px solid transparent", borderBottom: `5px solid ${muted}`, opacity: 0.7 }} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      {toneFor && (
+        <>
+          <div className="fixed inset-0 z-[96]" onClick={() => setToneFor(null)} onContextMenu={(e) => e.preventDefault()} />
+          <div
+            className="fixed z-[97] flex items-center gap-0.5 rounded-2xl p-1"
+            data-tone-picker=""
+            style={{
+              left: Math.max(8, Math.min(window.innerWidth - 8 - 6 * 44, toneFor.rect.left + toneFor.rect.width / 2 - 3 * 44)),
+              top: Math.max(8, toneFor.rect.top - 56),
+              background: "var(--surface-raised)",
+              border: "1px solid var(--border)",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+              animation: "loopPop 0.15s ease-out",
+            }}
+          >
+            {EMOJI_TONES.map((t) => {
+              const e = emojiWithTone(toneFor.tpl, t);
+              const on = (tones[toneFor.tpl] || "") === t;
+              return (
+                <button
+                  key={t || "none"}
+                  onClick={() => {
+                    setTone(toneFor.tpl, t);
+                    setToneFor(null);
+                    heldRef.current = false;
+                    pick(e);
+                  }}
+                  className="flex items-center justify-center rounded-xl transition-transform active:scale-110"
+                  style={{ width: 42, height: 42, fontSize: 26, lineHeight: 1, background: on ? "var(--bg-sunken)" : "transparent" }}
+                >
+                  {e}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function EmojiPickerSheet({ onPick, onClose, title = "Choose a reaction" }) {
   return (
     <>
       <div className="fixed inset-0 z-[70]" style={{ background: "rgba(0,0,0,0.6)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
@@ -28543,7 +29932,7 @@ function EmojiPickerSheet({ onPick, onClose, title = "Choose a reaction" }) {
         style={{
           background: "var(--bg)",
           border: "1px solid var(--border)",
-          height: "min(58dvh, 440px)",
+          height: "min(64dvh, 500px)",
           animation: "loopSheetUp 0.2s ease-out",
           paddingBottom: "env(safe-area-inset-bottom, 0px)",
         }}
@@ -28557,40 +29946,7 @@ function EmojiPickerSheet({ onPick, onClose, title = "Choose a reaction" }) {
             <X size={18} color="var(--text-muted)" />
           </button>
         </div>
-        <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto shrink-0" style={{ scrollbarWidth: "none" }}>
-          {tabs.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className="rounded-full px-3 h-8 text-xs shrink-0"
-              style={{
-                background: tab === t ? ACCENT : "var(--bg-sunken)",
-                color: tab === t ? "var(--on-accent)" : "var(--text-muted)",
-                border: tab === t ? "none" : "1px solid var(--border)",
-                fontWeight: 600,
-              }}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <div ref={gridRef} className="flex-1 min-h-0 overflow-y-auto px-3 pb-3" style={{ overscrollBehavior: "contain" }}>
-          <div className="grid grid-cols-8 gap-1">
-            {groups[tab].map((e) => (
-              <button
-                key={e}
-                onClick={() => {
-                  pushRecentEmoji(e);
-                  onPick(e);
-                }}
-                className="aspect-square flex items-center justify-center rounded-lg transition-transform active:scale-125"
-                style={{ fontSize: 26, lineHeight: 1 }}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
-        </div>
+        <EmojiKeyboard onPick={onPick} />
       </div>
     </>
   );
@@ -28810,7 +30166,7 @@ function ForwardSheet({ message, currentUserId, onClose, onDone }) {
       {error && <p className="text-xs px-4 pb-2" style={{ color: "var(--heart)" }}>{error}</p>}
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : (
           <>
             {shownGroups.length > 0 && (
@@ -29070,7 +30426,7 @@ function GroupManageSheet({ conversationId, title, avatarUrl, currentUserId, onC
       </div>
 
       {loading ? (
-        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : (
         members.map((m) => (
           <div key={m.user_id} className="flex items-center gap-3 px-4 py-2.5">
@@ -29301,61 +30657,61 @@ const CHAT_THEMES = [
   },
   // ---- Premium: Elite and Supreme badges ----
   {
-    key: "pe_golden", name: "Golden Hour", tier: "elite",
+    key: "pe_golden", name: "Golden Hour", tier: "elite", fx: "bokeh",
     bg: `${PAT.bokeh("#FFD27A")}, linear-gradient(160deg, #2B1A05 0%, #6B3F0A 45%, #C88A1B 100%)`,
     bubble: "linear-gradient(135deg, #FDE68A 0%, #F59E0B 55%, #B45309 100%)", on: "#2B1500",
     other: "rgba(255,255,255,0.14)", otherText: "#FFF6E0", muted: "rgba(255,246,224,0.65)",
   },
   {
-    key: "pe_sakura", name: "Sakura", tier: "elite",
+    key: "pe_sakura", name: "Sakura", tier: "elite", fx: "petals",
     bg: `${PAT.petals("rgba(255,138,175,0.5)", "rgba(255,255,255,0.7)")}, linear-gradient(180deg, #FFF0F5 0%, #FFD6E5 100%)`,
     bubble: "linear-gradient(135deg, #FF8FB1 0%, #FF5C8A 100%)", on: "#FFFFFF",
     other: "#FFFFFF", otherText: "#4A1026", muted: "rgba(74,16,38,0.55)",
   },
   {
-    key: "pe_eid", name: "Moonlit Eid", tier: "elite",
+    key: "pe_eid", name: "Moonlit Eid", tier: "elite", fx: "lanterns",
     bg: `${PAT.lanterns("rgba(255,214,120,0.75)", "rgba(255,190,80,0.25)")}, radial-gradient(120% 70% at 50% 0%, #1D3A6B 0%, #0A1733 60%, #050B1C 100%)`,
     bubble: "linear-gradient(135deg, #F6D365 0%, #FDA085 100%)", on: "#2A1300",
     other: "rgba(255,255,255,0.12)", otherText: "#FFF7E0", muted: "rgba(255,247,224,0.62)",
   },
   {
-    key: "pe_rain", name: "Rainy Dhaka", tier: "elite",
+    key: "pe_rain", name: "Rainy City", tier: "elite", fx: "rain",
     bg: `${PAT.rain("rgba(200,225,255,0.32)")}, linear-gradient(180deg, #2C3E50 0%, #3E5A74 55%, #4C6A85 100%)`,
     bubble: "linear-gradient(135deg, #89F7FE 0%, #66A6FF 100%)", on: "#0A1A2C",
     other: "rgba(255,255,255,0.14)", otherText: "#EEF6FF", muted: "rgba(238,246,255,0.62)",
   },
   {
-    key: "ps_aurora", name: "Aurora", tier: "supreme",
+    key: "ps_aurora", name: "Aurora", tier: "supreme", fx: "aurora",
     bg: `${PAT.stars("rgba(255,255,255,0.5)")}, radial-gradient(120% 55% at 15% 8%, rgba(64,255,170,0.5), transparent 62%), radial-gradient(100% 50% at 85% 22%, rgba(80,140,255,0.45), transparent 62%), radial-gradient(90% 55% at 50% 0%, rgba(190,90,255,0.4), transparent 70%), linear-gradient(180deg, #04101A 0%, #0A1F2E 100%)`,
     bubble: "linear-gradient(135deg, #43E97B 0%, #38F9D7 50%, #7F7FD5 100%)", on: "#03131A",
     other: "rgba(255,255,255,0.12)", otherText: "#E8FFF6", muted: "rgba(232,255,246,0.62)",
   },
   {
-    key: "ps_royal", name: "Royal", tier: "supreme",
+    key: "ps_royal", name: "Royal", tier: "supreme", fx: "royal",
     bg: `${PAT.damask("rgba(232,196,104,0.32)")}, radial-gradient(circle at 50% 30%, #4B1A6B 0%, #2A0A3D 60%, #16041F 100%)`,
     bubble: "linear-gradient(135deg, #F8E08E 0%, #D4A72C 50%, #A8781B 100%)", on: "#2A1700",
     other: "rgba(255,255,255,0.12)", otherText: "#FBEFFF", muted: "rgba(251,239,255,0.62)",
   },
   {
-    key: "ps_neon", name: "Neon City", tier: "supreme",
+    key: "ps_neon", name: "Neon City", tier: "supreme", fx: "neon",
     bg: `${PAT.grid("rgba(255,64,200,0.55)")} center bottom / 100% 40% no-repeat, radial-gradient(circle at 50% 62%, #FF7AC6 0 10%, rgba(255,122,198,0.25) 10.5% 15%, transparent 16%), linear-gradient(180deg, #0B0221 0%, #2B0A4A 58%, #120018 100%)`,
     bubble: "linear-gradient(135deg, #FF00CC 0%, #3333FF 100%)", on: "#FFFFFF",
-    other: "rgba(255,255,255,0.1)", otherText: "#FFE8FB", muted: "rgba(255,232,251,0.62)",
+    other: "rgba(36,8,64,0.84)", otherText: "#FFE8FB", muted: "rgba(255,232,251,0.62)",
   },
   {
-    key: "ps_diamond", name: "Diamond", tier: "supreme",
+    key: "ps_diamond", name: "Diamond", tier: "supreme", fx: "diamond",
     bg: `${PAT.facets("rgba(255,255,255,0.22)", "rgba(255,255,255,0.08)")}, linear-gradient(160deg, #D7F1FF 0%, #9BD3F5 50%, #6FA8DC 100%)`,
     bubble: "linear-gradient(135deg, #E0F7FF 0%, #7FC8F8 50%, #3A86C8 100%)", on: "#04223A",
     other: "rgba(255,255,255,0.78)", otherText: "#0A2A44", muted: "rgba(10,42,68,0.6)",
   },
   {
-    key: "ps_tiger", name: "Bengal Tiger", tier: "supreme",
+    key: "ps_tiger", name: "Royal Bengal Tiger", tier: "supreme", fx: "tiger",
     bg: `${PAT.stripes("rgba(20,10,0,0.72)")}, linear-gradient(160deg, #FFB347 0%, #F28A1C 55%, #D9650A 100%)`,
     bubble: "linear-gradient(135deg, #1A1A1A 0%, #3A2A12 100%)", on: "#FFD9A0",
     other: "rgba(255,255,255,0.88)", otherText: "#2A1400", muted: "rgba(42,20,0,0.6)",
   },
   {
-    key: "ps_lotus", name: "Shapla", tier: "supreme",
+    key: "ps_lotus", name: "Shapla / Water Lily", tier: "supreme", fx: "lotus",
     bg: `${PAT.lotus("rgba(255,120,170,0.75)", "rgba(255,170,205,0.7)", "rgba(40,140,90,0.45)")}, linear-gradient(180deg, #0F5C5A 0%, #0B3F49 100%)`,
     bubble: "linear-gradient(135deg, #FF9AC1 0%, #F0568C 100%)", on: "#FFFFFF",
     other: "rgba(255,255,255,0.13)", otherText: "#EFFFFB", muted: "rgba(239,255,251,0.62)",
@@ -29405,6 +30761,222 @@ function PremiumLock({ tier }) {
   );
 }
 
+// ---- Live layers for the premium chat themes ----
+// Each premium theme gets its own slow, gentle motion drawn behind the
+// messages: petals falling, rain, a drifting aurora, lanterns swaying...
+// Only transform and opacity move (cheap for phones), nothing is
+// downloaded, and it stands still when the phone asks for less motion.
+const FX_SEED = [
+  [6, 0.0, 0.9], [18, 2.4, 1.15], [31, 5.1, 0.8], [44, 1.2, 1.05], [57, 3.8, 0.95],
+  [69, 6.3, 1.2], [80, 0.7, 0.85], [91, 4.6, 1.1], [24, 7.2, 1], [62, 8.4, 0.9],
+  [12, 9.1, 1.05], [86, 2.9, 0.95],
+];
+
+function FxStars({ n = 12, color = "#FFFFFF" }) {
+  return FX_SEED.slice(0, n).map(([x, d, s], i) => (
+    <span
+      key={`st${i}`}
+      className="loop-fx-twinkle"
+      style={{ left: `${x}%`, top: `${(i * 37) % 70 + 4}%`, width: 2.2 * s, height: 2.2 * s, background: color, color, animationDelay: `${d * 0.4}s` }}
+    />
+  ));
+}
+
+let FX_CSS_ADDED = false;
+function ThemeFx({ fx, small = false }) {
+  if (!fx) return null;
+  if (!FX_CSS_ADDED && typeof document !== "undefined") {
+    const el = document.createElement("style");
+    el.textContent = THEME_FX_CSS;
+    document.head.appendChild(el);
+    FX_CSS_ADDED = true;
+  }
+  const k = small ? 0.45 : 1;
+  let parts = null;
+  if (fx === "bokeh") {
+    parts = FX_SEED.slice(0, 8).map(([x, d, s], i) => (
+      <span
+        key={i}
+        className="loop-fx-rise"
+        style={{
+          left: `${x}%`,
+          width: 70 * s * k,
+          height: 70 * s * k,
+          background: "radial-gradient(circle, rgba(255,214,120,0.55) 0%, rgba(255,170,60,0.18) 45%, transparent 70%)",
+          animationDuration: `${11 + i * 1.3}s`,
+          animationDelay: `-${d}s`,
+        }}
+      />
+    ));
+  } else if (fx === "petals") {
+    parts = FX_SEED.map(([x, d, s], i) => (
+      <span
+        key={i}
+        className="loop-fx-fall loop-fx-petal"
+        style={{
+          left: `${x}%`,
+          width: 13 * s * k,
+          height: 10 * s * k,
+          background: i % 3 ? "linear-gradient(135deg, #FFD3E2, #FF8FB1)" : "linear-gradient(135deg, #FFFFFF, #FFC2D6)",
+          animationDuration: `${9 + (i % 5) * 1.6}s`,
+          animationDelay: `-${d}s`,
+        }}
+      />
+    ));
+  } else if (fx === "lanterns") {
+    parts = (
+      <>
+        <FxStars n={12} color="#FFE7A8" />
+        <span className="loop-fx-glow" style={{ right: "10%", top: "9%", width: 90 * k, height: 90 * k, background: "radial-gradient(circle, rgba(255,226,150,0.35), transparent 65%)" }} />
+        {[14, 46, 78].map((x, i) => (
+          <span key={i} className="loop-fx-sway" style={{ left: `${x}%`, top: 0, animationDelay: `-${i * 1.3}s` }}>
+            <span style={{ display: "block", width: 1.2, height: (40 + i * 26) * k, margin: "0 auto", background: "rgba(255,214,120,0.7)" }} />
+            <span
+              style={{
+                display: "block",
+                width: 18 * k,
+                height: 26 * k,
+                borderRadius: 7 * k,
+                background: "linear-gradient(180deg, #FFE6A0 0%, #F6B94A 60%, #C9802A 100%)",
+                boxShadow: `0 0 ${18 * k}px rgba(255,200,90,0.85)`,
+              }}
+            />
+          </span>
+        ))}
+      </>
+    );
+  } else if (fx === "rain") {
+    parts = (
+      <>
+        {FX_SEED.concat(FX_SEED.slice(0, 8)).map(([x, d], i) => (
+          <span
+            key={i}
+            className="loop-fx-drop"
+            style={{ left: `${(x + i * 7) % 100}%`, height: (46 + (i % 4) * 14) * k, animationDuration: `${0.75 + (i % 5) * 0.12}s`, animationDelay: `-${d / 3}s` }}
+          />
+        ))}
+        <span className="loop-fx-city" style={{ height: 70 * k }} />
+      </>
+    );
+  } else if (fx === "aurora") {
+    parts = (
+      <>
+        <FxStars n={10} />
+        <span className="loop-fx-ribbon" style={{ top: "4%", background: "linear-gradient(90deg, transparent, rgba(64,255,170,0.55), rgba(56,249,215,0.35), transparent)", animationDuration: "14s" }} />
+        <span className="loop-fx-ribbon" style={{ top: "16%", background: "linear-gradient(90deg, transparent, rgba(127,127,213,0.5), rgba(190,90,255,0.4), transparent)", animationDuration: "19s", animationDelay: "-6s" }} />
+        <span className="loop-fx-ribbon" style={{ top: "26%", background: "linear-gradient(90deg, transparent, rgba(80,200,255,0.4), transparent)", animationDuration: "23s", animationDelay: "-11s" }} />
+      </>
+    );
+  } else if (fx === "royal" || fx === "tiger" || fx === "diamond") {
+    parts = (
+      <>
+        <span className="loop-fx-sheen" style={{ background: fx === "diamond" ? "linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.55) 45%, rgba(190,230,255,0.35) 50%, rgba(255,210,250,0.3) 55%, transparent 65%)" : fx === "tiger" ? "linear-gradient(105deg, transparent 38%, rgba(255,236,190,0.35) 50%, transparent 62%)" : "linear-gradient(105deg, transparent 38%, rgba(255,226,140,0.32) 50%, transparent 62%)" }} />
+        {(fx === "tiger" ? [] : FX_SEED.slice(0, fx === "diamond" ? 9 : 6)).map(([x, d, s], i) => (
+          <span
+            key={i}
+            className="loop-fx-spark"
+            style={{ left: `${x}%`, top: `${(i * 41) % 80 + 6}%`, width: 14 * s * k, height: 14 * s * k, color: fx === "diamond" ? "#FFFFFF" : "#F8E08E", animationDelay: `-${d * 0.45}s` }}
+          >
+            <svg viewBox="0 0 20 20" width="100%" height="100%">
+              <path d="M10 0C10.8 6 14 9.2 20 10 14 10.8 10.8 14 10 20 9.2 14 6 10.8 0 10 6 9.2 9.2 6 10 0Z" fill="currentColor" />
+            </svg>
+          </span>
+        ))}
+      </>
+    );
+  } else if (fx === "neon") {
+    parts = (
+      <>
+        <FxStars n={8} color="#FFB3F0" />
+        <span className="loop-fx-grid" style={{ height: `${small ? 38 : 34}%` }} />
+        <span className="loop-fx-glow" style={{ left: "50%", bottom: `${small ? 30 : 28}%`, width: 120 * k, height: 120 * k, marginLeft: -60 * k, background: "radial-gradient(circle, rgba(255,122,198,0.55), transparent 62%)" }} />
+      </>
+    );
+  } else if (fx === "lotus") {
+    parts = (
+      <>
+        {[[22, 70, 0], [74, 48, 1.7], [46, 86, 3.1], [84, 80, 4.2]].map(([x, y, d], i) => (
+          <span key={`r${i}`} className="loop-fx-ripple" style={{ left: `${x}%`, top: `${y}%`, width: 70 * k, height: 26 * k, marginLeft: -35 * k, animationDelay: `-${d}s` }} />
+        ))}
+        {[[18, 64, 0], [70, 42, 1.4], [44, 80, 2.6]].map(([x, y, d], i) => (
+          <span key={`l${i}`} className="loop-fx-bob" style={{ left: `${x}%`, top: `${y}%`, width: 30 * k, height: 22 * k, animationDelay: `-${d}s` }}>
+            <svg viewBox="0 0 30 22" width="100%" height="100%">
+              <ellipse cx="15" cy="18" rx="14" ry="4" fill="rgba(40,140,90,0.6)" />
+              <path d="M15 17c-3-3-4-9 0-14 4 5 3 11 0 14z" fill="#FF9AC1" />
+              <path d="M15 17c-6 0-9-5-9-9 5 0 8 4 9 9z" fill="#FFC2D9" />
+              <path d="M15 17c6 0 9-5 9-9-5 0-8 4-9 9z" fill="#FFC2D9" />
+            </svg>
+          </span>
+        ))}
+      </>
+    );
+  }
+  return (
+    <span aria-hidden="true" className="loop-fx" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: -1 }}>
+      {parts}
+    </span>
+  );
+}
+
+// Inside a scrolling chat: stays put while the messages scroll over it.
+function ThemeFxPinned({ fx }) {
+  if (!fx) return null;
+  return (
+    <div aria-hidden="true" data-themefx="" style={{ position: "sticky", top: 0, height: 0, zIndex: -1 }}>
+      <div style={{ position: "absolute", insetInline: -12, top: -12, height: "100vh", overflow: "hidden", pointerEvents: "none", isolation: "isolate" }}>
+        <ThemeFx fx={fx} />
+      </div>
+    </div>
+  );
+}
+
+const THEME_FX_CSS = `
+  .loop-fx > span { position: absolute; display: block; }
+  .loop-fx-twinkle { border-radius: 50%; animation: loopFxTwinkle 3.2s ease-in-out infinite; box-shadow: 0 0 6px currentColor; }
+  @keyframes loopFxTwinkle { 0%, 100% { opacity: 0.25; transform: scale(0.7); } 50% { opacity: 1; transform: scale(1.15); } }
+  .loop-fx-rise { bottom: -20%; border-radius: 50%; animation: loopFxRise linear infinite; }
+  @keyframes loopFxRise { 0% { transform: translateY(0) scale(0.8); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 0.9; } 100% { transform: translateY(-140vh) scale(1.15); opacity: 0; } }
+  .loop-fx-fall { top: -6%; animation: loopFxFallSway linear infinite; }
+  .loop-fx-petal { border-radius: 150% 0 150% 0; box-shadow: 0 1px 3px rgba(160,40,80,0.25); }
+  @keyframes loopFxFallSway {
+    0% { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 0; }
+    10% { opacity: 1; }
+    50% { transform: translate3d(28px, 55vh, 0) rotate(200deg); }
+    100% { transform: translate3d(-12px, 112vh, 0) rotate(420deg); opacity: 0.9; }
+  }
+  .loop-fx-glow { border-radius: 50%; animation: loopFxGlow 5s ease-in-out infinite; }
+  @keyframes loopFxGlow { 0%, 100% { opacity: 0.7; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.06); } }
+  .loop-fx-sway { transform-origin: 50% 0; animation: loopFxSway 4.5s ease-in-out infinite alternate; }
+  @keyframes loopFxSway { from { transform: rotate(-5deg); } to { transform: rotate(5deg); } }
+  .loop-fx-drop { top: -12%; width: 1.4px; border-radius: 2px; background: linear-gradient(180deg, transparent, rgba(210,232,255,0.75)); animation: loopFxDrop linear infinite; }
+  @keyframes loopFxDrop { from { transform: translate3d(0, 0, 0) rotate(12deg); } to { transform: translate3d(-36px, 118vh, 0) rotate(12deg); } }
+  .loop-fx-city { left: 0; right: 0; bottom: 0; background: linear-gradient(180deg, transparent, rgba(10,20,34,0.55)), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 70' preserveAspectRatio='none'%3E%3Cpath d='M0 70V40h18V22h14v18h10V10h22v30h12V28h16v42h8V18h20v52h10V34h18v36h12V14h24v56h10V30h14v40h12V20h18v50h10V36h16v34h14V26h20v44h12V8h22v62h10V38h16v32z' fill='%230b1622'/%3E%3C/svg%3E") bottom / 100% 100% no-repeat; opacity: 0.85; }
+  .loop-fx-ribbon { left: -40%; width: 180%; height: 26%; filter: blur(18px); border-radius: 50%; animation: loopFxRibbon ease-in-out infinite alternate; }
+  @keyframes loopFxRibbon { from { transform: translateX(-12%) skewY(-6deg) scaleY(0.8); opacity: 0.55; } to { transform: translateX(12%) skewY(5deg) scaleY(1.15); opacity: 1; } }
+  .loop-fx-sheen { inset: -20% -60%; animation: loopFxSheen 7s ease-in-out infinite; }
+  @keyframes loopFxSheen { 0% { transform: translateX(-60%); } 55%, 100% { transform: translateX(60%); } }
+  .loop-fx-spark { animation: loopFxSpark 2.8s ease-in-out infinite; filter: drop-shadow(0 0 4px currentColor); }
+  @keyframes loopFxSpark { 0%, 100% { transform: scale(0) rotate(0deg); opacity: 0; } 45% { transform: scale(1) rotate(45deg); opacity: 1; } 70% { transform: scale(0.4) rotate(70deg); opacity: 0.5; } }
+  .loop-fx-grid { left: -50%; right: -50%; bottom: 0; transform-origin: 50% 100%; transform: perspective(120px) rotateX(58deg); background-image: linear-gradient(rgba(255,64,200,0.75) 1.5px, transparent 1.5px), linear-gradient(90deg, rgba(255,64,200,0.75) 1.5px, transparent 1.5px); background-size: 34px 34px; animation: loopFxGrid 1.6s linear infinite; box-shadow: inset 0 40px 40px -10px rgba(11,2,33,0.9); }
+  @keyframes loopFxGrid { from { background-position: 0 0; } to { background-position: 0 34px; } }
+  .loop-fx-ripple { border-radius: 50%; border: 1.5px solid rgba(190,255,240,0.55); animation: loopFxRipple 4.6s ease-out infinite; }
+  @keyframes loopFxRipple { 0% { transform: scale(0.2); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
+  .loop-fx-bob { animation: loopFxBob 3.8s ease-in-out infinite alternate; }
+  @keyframes loopFxBob { from { transform: translateY(-3px) rotate(-3deg); } to { transform: translateY(3px) rotate(3deg); } }
+  @media (prefers-reduced-motion: reduce) { .loop-fx * { animation: none !important; } }
+`;
+
+// A different theme every day, picked for you. "daily" uses the free
+// themes; "pe_daily" adds the Elite ones and "ps_daily" all of them (the
+// database checks the badge for those, like any premium theme).
+const DAILY_LEVEL = { daily: 1, pe_daily: 2, ps_daily: 3 };
+function dailyThemeFor(level) {
+  const pool = CHAT_THEMES.filter((t) => t.key !== "default" && t.bg && (!t.tier || (t.tier === "elite" ? level >= 2 : level >= 3)));
+  const d = new Date();
+  const day = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+  return pool[day % pool.length] || CHAT_THEMES[0];
+}
+
 // Style for the message area of a themed chat: the background, plus the
 // colours used inside it so received bubbles and times stay readable.
 function chatAreaStyle(t) {
@@ -29419,7 +30991,7 @@ function chatAreaStyle(t) {
   };
 }
 
-const themeOf = (key) => CHAT_THEMES.find((t) => t.key === key) || CHAT_THEMES[0];
+const themeOf = (key) => (DAILY_LEVEL[key] ? { ...dailyThemeFor(DAILY_LEVEL[key]), dailyKey: key } : CHAT_THEMES.find((t) => t.key === key) || CHAT_THEMES[0]);
 const fontOf = (key) => ALL_CHAT_FONTS.find((f) => f.key === key) || CHAT_FONTS[0];
 
 function CustomiseSheet({ conversationId, table = "conversations", rowId, theme, font, image = null, title = "Chat theme", onClose, onApplied }) {
@@ -29509,7 +31081,8 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
       {/* Live preview — stays at the top while you scroll the themes */}
       <div className="sticky top-0 z-10 px-4 pb-3" style={{ background: "var(--bg)" }}>
       <div className="rounded-3xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-        <div className="px-3.5 pt-2.5 pb-3" style={{ background: "var(--bg)", fontFamily: f.stack, ...chatAreaStyle(t) }}>
+        <div className="relative px-3.5 pt-2.5 pb-3" style={{ background: "var(--bg)", fontFamily: f.stack, ...chatAreaStyle(t), isolation: "isolate" }}>
+          {!t.photo && <ThemeFx fx={t.fx} />}
           <p className="text-center text-[10px] mb-2.5" style={{ color: "var(--text-muted)" }}>Today 9:41 PM</p>
           <div className="flex justify-start mb-1.5">
             <div className="px-3.5 py-2 text-[13px]" style={{ background: "var(--surface)", color: "var(--text)", borderRadius: "18px 18px 18px 5px", border: t.bg ? "none" : "1px solid var(--border)" }}>
@@ -29537,6 +31110,30 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
       )}
       </div>
 
+      <button
+        onClick={() => {
+          if (DAILY_LEVEL[pickedTheme]) {
+            setPickedTheme("default");
+            return;
+          }
+          setPickedTheme(premiumAllowed(badge, "supreme") ? "ps_daily" : premiumAllowed(badge, "elite") ? "pe_daily" : "daily");
+          setPickedImage(null);
+          setError("");
+        }}
+        className="flex items-center gap-3 rounded-2xl px-3.5 py-3 text-start mx-4 mb-4"
+        style={{ width: "calc(100% - 2rem)", background: "var(--surface)", border: `1px solid ${DAILY_LEVEL[pickedTheme] ? "var(--accent-solid)" : "var(--border)"}` }}
+      >
+        <Sparkles size={20} color="var(--accent-solid)" className="shrink-0" />
+        <span className="flex-1 min-w-0">
+          <span className="block text-[13.5px]" style={{ color: "var(--text)", fontWeight: 700 }}>New theme every day</span>
+          <span className="block text-[11.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            {DAILY_LEVEL[pickedTheme] ? trJoin("Today: {0}", t.name) : "Loop picks a different theme for this chat each day"}
+          </span>
+        </span>
+        <span className="rounded-full shrink-0" style={{ width: 34, height: 20, background: DAILY_LEVEL[pickedTheme] ? ACCENT : "var(--toggle-off)", position: "relative" }}>
+          <span className="rounded-full bg-white absolute" style={{ width: 16, height: 16, top: 2, left: DAILY_LEVEL[pickedTheme] ? 16 : 2, transition: "left 0.15s" }} />
+        </span>
+      </button>
       <p className="px-4 text-[12px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 600 }}>Themes</p>
       <div className="grid grid-cols-3 gap-2.5 px-4">
         <button onClick={() => photoRef.current?.click()} disabled={uploading} className="flex flex-col items-center gap-1.5 transition-transform active:scale-95">
@@ -29619,8 +31216,9 @@ function CustomiseSheet({ conversationId, table = "conversations", rowId, theme,
             >
               <span
                 className="relative w-full rounded-2xl overflow-hidden flex flex-col justify-end gap-1 p-2"
-                style={{ aspectRatio: "3 / 4", background: th.bg, border: on ? "2.5px solid var(--accent-solid)" : "1px solid var(--border)" }}
+                style={{ aspectRatio: "3 / 4", background: th.bg, border: on ? "2.5px solid var(--accent-solid)" : "1px solid var(--border)", isolation: "isolate" }}
               >
+                <ThemeFx fx={th.fx} small />
                 <span className="self-start rounded-full" style={{ width: "62%", height: 10, background: th.other }} />
                 <span className="self-end rounded-full" style={{ width: "55%", height: 10, background: th.bubble }} />
                 <span className="self-end rounded-full" style={{ width: "40%", height: 10, background: th.bubble }} />
@@ -29892,7 +31490,7 @@ function NicknamesSheet({ conversationId, currentUserId, onClose, onSaved }) {
       </p>
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : (
           rows.map((r) => {
             const changed = (drafts[r.user_id] || "") !== (r.nickname || "");
@@ -30155,7 +31753,7 @@ function ShareSheet({ item, currentUserId, onClose, onShared }) {
 
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : (
           <>
             {shownGroups.length > 0 && (
@@ -30355,7 +31953,7 @@ function AddToCollectionSheet({ postIds, currentUserId, onClose, onDone }) {
 
       <div className="pb-6">
         {loading ? (
-          <p className="text-xs text-center py-6" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : collections.length === 0 ? (
           <p className="text-xs text-center py-6 px-8" style={{ color: "var(--text-muted)" }}>
             No collections yet. Name one above to make your first.
@@ -30481,7 +32079,7 @@ function CollaboratorsSheet({ collection, currentUserId, onClose, onChanged }) {
 
       <p className="text-[11px] px-4 pb-1.5 uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.4px" }}>{trJoin("{0} collaborator{1}", rows.length, rows.length === 1 ? "" : "s")}</p>
       {loading ? (
-        <p className="text-xs text-center py-5" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+        <SkeletonRows />
       ) : rows.length === 0 ? (
         <p className="text-xs px-4 pb-2" style={{ color: "var(--text-muted)" }}>No one added yet</p>
       ) : (
@@ -31312,6 +32910,292 @@ function ScheduleMessageSheet({ conversationId, currentUserId, presetText, onClo
   );
 }
 
+// ---- Message effects ----
+// A message can be sent "with an effect": the chat fills with hearts,
+// confetti, flames or fireworks; a gift-wrapped message waits to be opened;
+// a secret one stays blurred until tapped; a shout arrives with a shake.
+// Each effect plays once for the person receiving it, and anyone can tap the
+// small label under the message to see it again.
+const MSG_EFFECTS = [
+  { key: "love", label: "Love", emoji: "💗" },
+  { key: "confetti", label: "Celebrate", emoji: "🎉" },
+  { key: "fire", label: "Fire", emoji: "🔥" },
+  { key: "gift", label: "Gift", emoji: "🎁" },
+  { key: "fireworks", label: "Fireworks", emoji: "🎆" },
+  { key: "secret", label: "Secret", emoji: "🤫" },
+  { key: "shout", label: "Shout", emoji: "📣" },
+];
+const effectOf = (k) => MSG_EFFECTS.find((e) => e.key === k) || null;
+// Effects that fill the screen (the others change the message itself).
+const FX_OVERLAY = { love: 1, confetti: 1, fire: 1, fireworks: 1, gift: 1 };
+
+const fxStore = {
+  read(key) {
+    try {
+      const v = JSON.parse(localStorage.getItem(key) || "[]");
+      return new Set(Array.isArray(v) ? v : []);
+    } catch {
+      return new Set();
+    }
+  },
+  add(key, ids) {
+    try {
+      const s = fxStore.read(key);
+      ids.forEach((id) => s.add(id));
+      localStorage.setItem(key, JSON.stringify([...s].slice(-400)));
+    } catch {}
+  },
+};
+
+let chatFxCssDone = false;
+function useChatFxCss() {
+  useEffect(() => {
+    if (chatFxCssDone || typeof document === "undefined") return;
+    chatFxCssDone = true;
+    const el = document.createElement("style");
+    el.setAttribute("data-loop-chatfx", "");
+    el.textContent = CHAT_FX_CSS;
+    document.head.appendChild(el);
+  }, []);
+}
+
+const FX_HEART = "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
+const FX_CONFETTI = ["#FF3D7F", "#FFC93C", "#3DDC97", "#3DA5FF", "#B26BFF", "#FF8A3D", "#FFFFFF"];
+
+// The full-screen layer. It sits on top of the chat but never takes taps.
+function ChatFxOverlay({ kind, onDone, contained }) {
+  useChatFxCss();
+  const parts = React.useMemo(() => {
+    const r = (a, b) => a + Math.random() * (b - a);
+    if (kind === "love") {
+      return Array.from({ length: 24 }, (_, i) => ({ i, x: r(4, 92), s: r(16, 40), d: r(1.9, 2.9), dl: r(0, 0.7), sway: r(-40, 40), c: ["#FF3D7F", "#FF6FA5", "#FF1F4B", "#FFB3CB"][i % 4] }));
+    }
+    if (kind === "confetti" || kind === "gift") {
+      const n = kind === "gift" ? 46 : 80;
+      return Array.from({ length: n }, (_, i) => ({ i, x: r(0, 100), w: r(6, 10), h: r(10, 16), d: r(1.8, 3), dl: r(0, kind === "gift" ? 0.25 : 0.6), rot: r(360, 1080) * (i % 2 ? 1 : -1), drift: r(-60, 60), c: FX_CONFETTI[i % FX_CONFETTI.length] }));
+    }
+    if (kind === "fire") {
+      return Array.from({ length: 34 }, (_, i) => ({ i, x: r(-4, 100), s: r(26, 70), d: r(1.1, 2.1), dl: r(0, 0.9), rise: r(35, 75), c: ["#FFB000", "#FF6A00", "#FF3D00", "#FFD54A"][i % 4] }));
+    }
+    if (kind === "fireworks") {
+      const bursts = [
+        { x: 28, y: 30, dl: 0, c: "#FFC93C" },
+        { x: 70, y: 22, dl: 0.45, c: "#FF3D7F" },
+        { x: 52, y: 52, dl: 0.9, c: "#3DA5FF" },
+        { x: 20, y: 60, dl: 1.25, c: "#3DDC97" },
+      ];
+      return bursts.map((b, bi) => ({
+        ...b,
+        bi,
+        sparks: Array.from({ length: 18 }, (_, k) => {
+          const a = (k / 18) * Math.PI * 2;
+          const dist = r(70, 110);
+          return { k, dx: Math.cos(a) * dist, dy: Math.sin(a) * dist };
+        }),
+      }));
+    }
+    return [];
+  }, [kind]);
+
+  useEffect(() => {
+    const t = setTimeout(() => onDone && onDone(), kind === "fireworks" ? 3000 : 3100);
+    return () => clearTimeout(t);
+  }, [kind]);
+
+  if (!FX_OVERLAY[kind]) return null;
+  return (
+    <div aria-hidden="true" data-chatfx={kind} className={contained ? "absolute inset-0" : "absolute inset-0 z-[84]"} style={{ pointerEvents: "none", overflow: "hidden" }}>
+      {kind === "love" &&
+        parts.map((p) => (
+          <span key={p.i} className="loop-cfx-rise" style={{ left: `${p.x}%`, width: p.s, height: p.s, animationDuration: `${p.d}s`, animationDelay: `${p.dl}s`, "--sway": `${p.sway}px` }}>
+            <svg viewBox="0 0 24 24" width="100%" height="100%">
+              <path d={FX_HEART} fill={p.c} />
+            </svg>
+          </span>
+        ))}
+      {(kind === "confetti" || kind === "gift") &&
+        parts.map((p) => (
+          <span
+            key={p.i}
+            className={kind === "gift" ? "loop-cfx-pop" : "loop-cfx-fall"}
+            style={{ left: kind === "gift" ? "50%" : `${p.x}%`, width: p.w, height: p.h, background: p.c, borderRadius: p.i % 3 === 0 ? 99 : 2, animationDuration: `${p.d}s`, animationDelay: `${p.dl}s`, "--rot": `${p.rot}deg`, "--drift": `${p.drift}px`, "--dx": `${(p.x - 50) * 4}px` }}
+          />
+        ))}
+      {kind === "fire" && (
+        <>
+          <span className="loop-cfx-heat" />
+          {parts.map((p) => (
+            <span key={p.i} className="loop-cfx-flame" style={{ left: `${p.x}%`, width: p.s, height: p.s * 1.25, animationDuration: `${p.d}s`, animationDelay: `${p.dl}s`, "--rise": `-${p.rise}vh`, background: `radial-gradient(ellipse at 50% 70%, #FFF3B0 0%, ${p.c} 38%, rgba(255,61,0,0) 70%)` }} />
+          ))}
+        </>
+      )}
+      {kind === "fireworks" &&
+        parts.map((b) => (
+          <span key={b.bi} className="loop-cfx-burst" style={{ left: `${b.x}%`, top: `${b.y}%` }}>
+            <span className="loop-cfx-trail" style={{ animationDelay: `${b.dl}s`, background: b.c }} />
+            {b.sparks.map((s) => (
+              <span key={s.k} className="loop-cfx-spark" style={{ animationDelay: `${b.dl + 0.35}s`, background: b.c, boxShadow: `0 0 8px ${b.c}`, "--dx": `${s.dx}px`, "--dy": `${s.dy}px` }} />
+            ))}
+          </span>
+        ))}
+    </div>
+  );
+}
+
+// A gift-wrapped message, before it's opened.
+function GiftBox({ onOpen, mine, opening }) {
+  useChatFxCss();
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!mine && onOpen) onOpen();
+      }}
+      aria-label="Tap to open"
+      className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl px-6 py-3 ${opening ? "loop-cfx-unwrap" : "loop-cfx-wiggle"}`}
+      style={{ background: "linear-gradient(135deg, #FF5C8A 0%, #B44CFF 100%)", minWidth: 132, boxShadow: "0 6px 18px rgba(180,76,255,0.35)" }}
+    >
+      <svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true">
+        <rect x="7" y="20" width="34" height="22" rx="3" fill="#FFFFFF" opacity="0.95" />
+        <rect x="5" y="13" width="38" height="9" rx="2.5" fill="#FFFFFF" />
+        <rect x="21.5" y="13" width="5" height="29" fill="#FFC93C" />
+        <path d="M24 13c-3-6-11-7-11-2 0 3 5 3 11 2zM24 13c3-6 11-7 11-2 0 3-5 3-11 2z" fill="#FFC93C" />
+      </svg>
+      <span className="text-[12px]" style={{ color: "#FFFFFF", fontWeight: 800 }}>Tap to open</span>
+    </button>
+  );
+}
+
+// Secret text: blurred, with drifting specks, until tapped.
+function SecretCover({ children, onReveal }) {
+  useChatFxCss();
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        onReveal();
+      }}
+      className="relative block"
+      style={{ cursor: "pointer", minWidth: 112 }}
+    >
+      <span className="block" style={{ filter: "blur(7px)", userSelect: "none", WebkitUserSelect: "none" }} aria-hidden="true">
+        {children}
+      </span>
+      <span className="loop-cfx-specks absolute inset-0" aria-hidden="true" />
+      <span className="absolute inset-0 flex items-center justify-center text-[11.5px]" style={{ fontWeight: 800, textShadow: "0 1px 4px rgba(0,0,0,0.45)" }}>
+        <span>Tap to reveal</span>
+      </span>
+    </span>
+  );
+}
+
+// "Send with effect": pick one, see it play, then send.
+function EffectPickerSheet({ text, onSend, onClose }) {
+  useChatFxCss();
+  const [pick, setPick] = useState("love");
+  const [run, setRun] = useState(1);
+  const choose = (k) => {
+    setPick(k);
+    setRun((n) => n + 1);
+  };
+  const shown = String(text || "").slice(0, 160);
+  return (
+    <>
+      <div className="fixed inset-0 z-[72]" style={{ background: "rgba(0,0,0,0.6)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
+      <div
+        className="fixed start-0 end-0 bottom-0 z-[73] rounded-t-3xl"
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", animation: "loopSheetUp 0.2s ease-out", paddingBottom: "calc(14px + env(safe-area-inset-bottom, 0px))" }}
+        data-no-swipe=""
+      >
+        <div className="flex items-center justify-center pt-2.5 pb-1">
+          <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
+        </div>
+        <div className="flex items-center justify-between px-4 pb-2">
+          <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Send with effect</span>
+          <button onClick={onClose} aria-label="Close">
+            <X size={18} color="var(--text-muted)" />
+          </button>
+        </div>
+        <div className="relative mx-4 rounded-2xl overflow-hidden flex items-end justify-end px-3 py-4" style={{ height: 196, background: "var(--bg-sunken)", border: "1px solid var(--border-subtle)" }}>
+          <ChatFxOverlay key={`${pick}-${run}`} kind={pick} contained />
+          <div key={`b-${pick}-${run}`} className={pick === "shout" ? "loop-cfx-shake" : ""} style={{ maxWidth: "80%", position: "relative" }}>
+            {pick === "gift" ? (
+              <GiftBox mine />
+            ) : (
+              <div
+                className={`px-3.5 py-2 ${pick === "fire" ? "loop-cfx-firebubble" : ""}`}
+                style={{ background: ACCENT, color: "var(--on-accent)", borderRadius: "16px 16px 4px 16px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: pick === "shout" ? 22 : 14, fontWeight: pick === "shout" ? 800 : 400, lineHeight: pick === "shout" ? 1.15 : 1.4, maxHeight: 150, overflow: "hidden" }}
+              >
+                {pick === "secret" ? <SecretCover onReveal={() => {}}>{shown}</SecretCover> : shown}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-2 px-4 pt-3">
+          {MSG_EFFECTS.map((e) => (
+            <button
+              key={e.key}
+              onClick={() => choose(e.key)}
+              aria-pressed={pick === e.key}
+              className="flex flex-col items-center gap-1 rounded-2xl py-2 transition-transform active:scale-95"
+              style={{ background: pick === e.key ? "var(--surface-raised)" : "transparent", border: pick === e.key ? "1.5px solid var(--accent-solid)" : "1.5px solid transparent" }}
+            >
+              <span className="flex items-center justify-center rounded-full" style={{ width: 44, height: 44, background: "var(--bg-sunken)", fontSize: 24 }} aria-hidden="true">
+                {e.emoji}
+              </span>
+              <span className="text-[11.5px]" style={{ color: "var(--text)", fontWeight: pick === e.key ? 700 : 500 }}>{e.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="px-4 pt-3">
+          <button
+            onClick={() => onSend(pick)}
+            className="w-full h-11 rounded-xl flex items-center justify-center gap-2 text-sm transition-transform active:scale-[0.98]"
+            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
+          >
+            <ShareIcon size={16} color="var(--on-accent)" /> <span>Send</span>
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+const CHAT_FX_CSS = `
+.loop-cfx-rise { position: absolute; bottom: -60px; animation-name: loopCfxRise; animation-timing-function: cubic-bezier(.3,.6,.4,1); animation-fill-mode: both; }
+@keyframes loopCfxRise { 0% { transform: translate(0, 0) scale(.6); opacity: 0; } 12% { opacity: 1; } 50% { transform: translate(var(--sway), -55vh) scale(1); } 100% { transform: translate(calc(var(--sway) * -0.6), -115vh) scale(1.1); opacity: 0; } }
+.loop-cfx-fall { position: absolute; top: -24px; animation-name: loopCfxFall; animation-timing-function: cubic-bezier(.25,.5,.5,1); animation-fill-mode: both; }
+@keyframes loopCfxFall { 0% { transform: translate(0, 0) rotate(0); opacity: 1; } 85% { opacity: 1; } 100% { transform: translate(var(--drift), 112vh) rotate(var(--rot)); opacity: 0; } }
+.loop-cfx-pop { position: absolute; top: 55%; animation-name: loopCfxPop; animation-timing-function: cubic-bezier(.15,.7,.4,1); animation-fill-mode: both; }
+@keyframes loopCfxPop { 0% { transform: translate(-50%, 0) rotate(0) scale(.4); opacity: 0; } 10% { opacity: 1; } 45% { transform: translate(calc(-50% + var(--dx)), -38vh) rotate(calc(var(--rot) * .5)) scale(1); opacity: 1; } 100% { transform: translate(calc(-50% + var(--dx) + var(--drift)), 30vh) rotate(var(--rot)); opacity: 0; } }
+.loop-cfx-heat { position: absolute; left: -10%; right: -10%; bottom: -10%; height: 45%; background: radial-gradient(ellipse at 50% 100%, rgba(255,106,0,.55), rgba(255,61,0,.18) 45%, transparent 70%); animation: loopCfxHeat 3s ease-out both; }
+@keyframes loopCfxHeat { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: .9; } 100% { opacity: 0; } }
+.loop-cfx-flame { position: absolute; bottom: -40px; border-radius: 50% 50% 45% 45%; filter: blur(2px); mix-blend-mode: screen; animation-name: loopCfxFlame; animation-timing-function: ease-out; animation-fill-mode: both; }
+@keyframes loopCfxFlame { 0% { transform: translateY(0) scale(1); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(var(--rise)) scale(.25); opacity: 0; } }
+.loop-cfx-burst { position: absolute; width: 0; height: 0; }
+.loop-cfx-trail { position: absolute; left: -2px; top: 0; width: 4px; height: 26px; border-radius: 4px; opacity: 0; animation: loopCfxTrail .4s ease-out both; }
+@keyframes loopCfxTrail { 0% { transform: translateY(46vh) scaleY(1.4); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(0) scaleY(.4); opacity: 0; } }
+.loop-cfx-spark { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 99px; opacity: 0; animation: loopCfxSpark 1.3s cubic-bezier(.1,.7,.3,1) both; }
+@keyframes loopCfxSpark { 0% { transform: translate(0, 0) scale(1.2); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(var(--dx), calc(var(--dy) + 40px)) scale(.3); opacity: 0; } }
+.loop-cfx-wiggle { animation: loopCfxWiggle 2.6s ease-in-out infinite; }
+@keyframes loopCfxWiggle { 0%, 70%, 100% { transform: rotate(0); } 75% { transform: rotate(-5deg) scale(1.03); } 82% { transform: rotate(5deg) scale(1.03); } 89% { transform: rotate(-3deg); } 95% { transform: rotate(2deg); } }
+.loop-cfx-unwrap { animation: loopCfxUnwrap .55s ease-in both; }
+@keyframes loopCfxUnwrap { 0% { transform: scale(1); } 40% { transform: scale(1.12) rotate(-4deg); } 100% { transform: scale(.2) rotate(8deg); opacity: 0; } }
+.loop-cfx-reveal { animation: loopCfxReveal .5s ease-out both; }
+@keyframes loopCfxReveal { 0% { filter: blur(7px); opacity: .6; } 100% { filter: blur(0); opacity: 1; } }
+.loop-cfx-shake { animation: loopCfxShake .75s cubic-bezier(.36,.07,.19,.97) both; transform-origin: 80% 80%; }
+@keyframes loopCfxShake { 0% { transform: scale(.4); } 25% { transform: scale(1.25) rotate(-3deg); } 40% { transform: scale(1.1) rotate(3deg) translateX(-4px); } 55% { transform: rotate(-3deg) translateX(4px); } 70% { transform: rotate(2deg) translateX(-3px); } 85% { transform: rotate(-1deg) translateX(2px); } 100% { transform: none; } }
+.loop-cfx-firebubble { animation: loopCfxFireGlow 1.6s ease-in-out infinite; }
+@keyframes loopCfxFireGlow { 0%, 100% { box-shadow: 0 0 8px 1px rgba(255,106,0,.55), 0 0 20px 2px rgba(255,61,0,.25); } 50% { box-shadow: 0 0 14px 3px rgba(255,176,0,.7), 0 0 28px 6px rgba(255,61,0,.35); } }
+.loop-cfx-specks { background-image: radial-gradient(rgba(255,255,255,.75) 1px, transparent 1.4px), radial-gradient(rgba(255,255,255,.5) 1px, transparent 1.4px); background-size: 9px 9px, 13px 13px; background-position: 0 0, 4px 6px; animation: loopCfxSpecks 1.8s linear infinite; border-radius: 10px; }
+@keyframes loopCfxSpecks { 0% { background-position: 0 0, 4px 6px; } 100% { background-position: 9px -9px, -9px 19px; } }
+.loop-msg-flash { animation: loopMsgFlash 1.6s ease-out both; border-radius: 14px; }
+@keyframes loopMsgFlash { 0%, 35% { background-color: rgba(128,128,128,.3); box-shadow: 0 0 0 6px rgba(128,128,128,.3); } 100% { background-color: rgba(128,128,128,0); box-shadow: 0 0 0 6px rgba(128,128,128,0); } }
+@media (prefers-reduced-motion: reduce) { .loop-cfx-rise, .loop-cfx-fall, .loop-cfx-pop, .loop-cfx-flame, .loop-cfx-spark, .loop-cfx-trail { animation-duration: .01s !important; } .loop-cfx-wiggle, .loop-cfx-firebubble, .loop-cfx-specks { animation: none; } }
+`;
+
 function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack, isRequest, onAccepted }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31338,6 +33222,24 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [chatToast, setChatToast] = useState("");
   const msgRefs = React.useRef({});
+  useChatFxCss();
+  const [flashId, setFlashId] = useState(null); // the message we just jumped to
+  const flashTimerRef = React.useRef(null);
+  const stickRef = React.useRef(true); // reading the newest messages (not scrolled up)
+  const lastMsgIdRef = React.useRef(null);
+  const [jumpPill, setJumpPill] = useState(null); // { id, label } — "new message" or "reacted"
+  const pillTimerRef = React.useRef(null);
+  const [gifOpen, setGifOpen] = useState(false);
+  const [fxSheet, setFxSheet] = useState(false);
+  const [fxPlay, setFxPlay] = useState(null); // { kind, n }
+  const [shakeId, setShakeId] = useState(null);
+  const [giftOpen, setGiftOpen] = useState(() => fxStore.read("loop_gift_open"));
+  const [openingGift, setOpeningGift] = useState(null);
+  const [revealed, setRevealed] = useState(() => new Set());
+  const sendHoldRef = React.useRef(null);
+  const sendHeldRef = React.useRef(false);
+  const incomingRef = React.useRef(null); // read by the realtime handlers
+  const rxNoticeRef = React.useRef(null);
   const [emojiSheetFor, setEmojiSheetFor] = useState(null);
   const [sheet, setSheet] = useState(null); // customise | invite | nicknames
   const [convoMeta, setConvoMeta] = useState({ theme: "default", chat_font: "default", theme_image: null, invite_code: null, avatar_url: null });
@@ -31415,7 +33317,10 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${conversationId}` },
         (payload) => {
           setMessages((prev) => (prev.some((m) => m.id === payload.new.id) ? prev : [...prev, payload.new]));
-          if (payload.new.sender_id !== currentUserId) markRead();
+          if (payload.new.sender_id !== currentUserId) {
+            markRead();
+            incomingRef.current && incomingRef.current(payload.new);
+          }
         }
       )
       .on(
@@ -31435,8 +33340,9 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       // Reactions live on their own table, which can't be filtered by
       // conversation — so we take everything RLS lets through and keep
       // only the rows belonging to messages in this chat.
-      .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, () => {
+      .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, (payload) => {
         loadReactions(messageIdsRef.current);
+        rxNoticeRef.current && rxNoticeRef.current(payload);
       })
       // Someone tapped a big emoji: play the same shower here.
       .on("broadcast", { event: "emoji_fx" }, ({ payload }) => {
@@ -31469,7 +33375,16 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
 
   useEffect(() => {
     if (searchOpen) return; // don't yank the view while searching
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const last = messages[messages.length - 1];
+    const fresh = last && last.id !== lastMsgIdRef.current;
+    const mineNew = fresh && lastMsgIdRef.current !== null && last.sender_id === currentUserId;
+    if (last) lastMsgIdRef.current = last.id;
+    if (stickRef.current || mineNew) {
+      el.scrollTop = el.scrollHeight;
+      stickRef.current = true;
+    }
   }, [messages, typingUsers, searchOpen, vanishOn, sharedInfo]);
 
   useEffect(() => {
@@ -31482,10 +33397,13 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     setLoading(true);
     const q = (cols) => supabase.from("messages").select(cols).eq("conversation_id", conversationId).order("created_at", { ascending: true });
     // "vanish" exists once loop-step-14.sql has run.
-    let { data, error } = await q(`${MSG_COLS}, vanish`);
+    // "effect" exists once loop-step-22.sql has run.
+    let { data, error } = await q(`${MSG_COLS}, vanish, effect`);
+    if (error) ({ data, error } = await q(`${MSG_COLS}, vanish`));
     if (error) ({ data } = await q(MSG_COLS));
     setMessages(data || []);
     setLoading(false);
+    setTimeout(() => playUnseenFx(data || []), 450);
   };
 
   // Takes plain ids so the realtime callback can pass a ref and never work
@@ -31584,13 +33502,21 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   };
 
   const insertMessage = async (payload, summary) => {
-    const { data: inserted, error } = await supabase
-      .from("messages")
-      .insert({ conversation_id: conversationId, sender_id: currentUserId, reply_to_id: replyTo?.id || null, ...(vanishOn ? { vanish: true } : {}), ...payload })
-      .select(MSG_COLS)
-      .single();
+    const base = { conversation_id: conversationId, sender_id: currentUserId, reply_to_id: replyTo?.id || null, ...(vanishOn ? { vanish: true } : {}) };
+    let { data: inserted, error } = await supabase.from("messages").insert({ ...base, ...payload }).select(MSG_COLS).single();
+    if (error && payload.effect && /effect/i.test(error.message || "")) {
+      // The database doesn't know effects yet — send it plain.
+      const { effect, ...plain } = payload;
+      ({ data: inserted, error } = await supabase.from("messages").insert({ ...base, ...plain }).select(MSG_COLS).single());
+      if (!error) {
+        payload = plain;
+        setChatToast("Effects start working once loop-step-22.sql has been run.");
+        setTimeout(() => setChatToast(""), 3000);
+      }
+    }
     if (error) throw error;
-    setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev : [...prev, inserted]));
+    if (payload.effect) inserted = { ...inserted, effect: payload.effect };
+    setMessages((prev) => (prev.some((m) => m.id === inserted.id) ? prev.map((m) => (m.id === inserted.id ? { ...m, ...inserted } : m)) : [...prev, inserted]));
     setReplyTo(null);
     afterSend(summary);
     return inserted;
@@ -31608,6 +33534,126 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       alert(e.message);
     }
     setSending(false);
+  };
+
+  const fxSummary = (eff, t) => (eff === "gift" ? "🎁 Gift" : eff === "secret" ? "🤫 Secret" : t);
+  const sendWithEffect = async (eff) => {
+    const trimmed = text.trim();
+    setFxSheet(false);
+    if (!trimmed || !currentUserId || sending) return;
+    setSending(true);
+    setText("");
+    try {
+      const row = await insertMessage({ content: trimmed, effect: eff }, fxSummary(eff, trimmed));
+      if (row?.effect) playFx(row);
+    } catch (e) {
+      setText(trimmed);
+      alert(e.message);
+    }
+    setSending(false);
+  };
+
+  const sendGif = async (g) => {
+    setGifOpen(false);
+    if (!g?.url || !currentUserId) return;
+    try {
+      await insertMessage({ image_url: g.url }, "GIF");
+      if (g.id) supabase.rpc("gif_use", { p_id: g.id }).then(() => {}, () => {});
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  // ---- effects ----
+  const playFx = (m) => {
+    if (!m?.effect) return;
+    if (m.effect === "shout") {
+      setShakeId(m.id);
+      setTimeout(() => setShakeId((v) => (v === m.id ? null : v)), 900);
+      return;
+    }
+    if (m.effect === "secret") return;
+    if (m.effect === "gift" && m.sender_id !== currentUserId && !giftOpen.has(m.id)) return; // plays when opened
+    if (FX_OVERLAY[m.effect]) setFxPlay((p) => ({ kind: m.effect, n: (p?.n || 0) + 1 }));
+  };
+  const replayFx = (m) => {
+    if (m.effect === "secret") {
+      setRevealed((prev) => {
+        const next = new Set(prev);
+        next.delete(m.id);
+        return next;
+      });
+      return;
+    }
+    playFx(m);
+  };
+  // Opening the chat: play the newest effect you haven't seen yet.
+  const playUnseenFx = (list) => {
+    const seen = fxStore.read("loop_fx_seen");
+    const fresh = list.filter((m) => m.effect && !m.deleted && m.sender_id !== currentUserId && !seen.has(m.id));
+    if (!fresh.length) return;
+    fxStore.add("loop_fx_seen", fresh.map((m) => m.id));
+    const recent = fresh.filter((m) => Date.now() - new Date(m.created_at).getTime() < 3 * 86400000);
+    const last = recent[recent.length - 1];
+    if (last) playFx(last);
+  };
+  const openGift = (m) => {
+    if (openingGift) return;
+    setOpeningGift(m.id);
+    setTimeout(() => {
+      fxStore.add("loop_gift_open", [m.id]);
+      setGiftOpen((prev) => new Set(prev).add(m.id));
+      setOpeningGift(null);
+      setFxPlay((p) => ({ kind: "gift", n: (p?.n || 0) + 1 }));
+    }, 520);
+  };
+  const revealSecret = (m) => setRevealed((prev) => new Set(prev).add(m.id));
+
+  // ---- jumping around ----
+  const showPill = (pill) => {
+    setJumpPill(pill);
+    clearTimeout(pillTimerRef.current);
+    pillTimerRef.current = setTimeout(() => setJumpPill(null), 7000);
+  };
+  const jumpToMessage = (id) => {
+    const el = msgRefs.current[id];
+    setJumpPill(null);
+    if (!el) {
+      setChatToast("That message isn't in this chat anymore");
+      setTimeout(() => setChatToast(""), 2200);
+      return;
+    }
+    stickRef.current = false;
+    if (el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setFlashId(null);
+    requestAnimationFrame(() => setFlashId(id));
+    clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => setFlashId(null), 1800);
+  };
+  const jumpToBottom = () => {
+    setJumpPill(null);
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    el.scrollTo ? el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }) : (el.scrollTop = el.scrollHeight);
+  };
+  const inView = (id) => {
+    const el = msgRefs.current[id];
+    const box = scrollRef.current;
+    if (!el || !box) return false;
+    const a = el.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    return a.bottom > b.top + 20 && a.top < b.bottom - 20;
+  };
+  incomingRef.current = (m) => {
+    playFx(m);
+    if (!stickRef.current) showPill({ id: null, label: "New message" });
+  };
+  rxNoticeRef.current = (payload) => {
+    const n = payload?.new;
+    if (payload?.eventType !== "INSERT" || !n || n.user_id === currentUserId || !n.emoji) return;
+    if (!messageIdsRef.current.includes(n.message_id) || inView(n.message_id)) return;
+    showPill({ id: n.message_id, label: trJoin("{0} reacted {1}", nameOf(n.user_id), n.emoji) });
   };
 
   const sendImage = async (file) => {
@@ -31898,9 +33944,11 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
   const previewOf = (m) => {
     if (!m) return "";
     if (m.deleted) return "Deleted message";
+    if (m.effect === "secret" && m.sender_id !== currentUserId && !revealed.has(m.id)) return "🤫 Secret";
+    if (m.effect === "gift" && m.sender_id !== currentUserId && !giftOpen.has(m.id)) return "🎁 Gift";
     if (m.content) return m.content;
     if (m.audio_url) return "🎤 Voice message";
-    if (m.image_url) return "📷 Photo";
+    if (m.image_url) return /\.gif(\?|$)/i.test(m.image_url) ? "GIF" : "📷 Photo";
     return "";
   };
 
@@ -32070,12 +34118,18 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-3 py-3"
-        style={chatAreaStyle(chatTheme)}
+        style={{ ...chatAreaStyle(chatTheme), isolation: "isolate" }}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+          if (stickRef.current && jumpPill && !jumpPill.id) setJumpPill(null);
+        }}
         onClick={() => {
           setMenuFor(null);
           setPickerFor(null);
         }}
       >
+        {!chatTheme.photo && <ThemeFxPinned fx={chatTheme.fx} />}
         {vanishOn && (
           <div className="flex flex-col items-center text-center px-6 py-3 mb-2">
             <Ghost size={26} color="var(--text-muted)" />
@@ -32086,7 +34140,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </div>
         )}
         {loading ? (
-          <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonChat />
         ) : visibleMessages.length === 0 ? (
           <p className="text-center text-xs mt-4" style={{ color: "var(--text-muted)" }}>No messages yet — say hi 👋</p>
         ) : (
@@ -32129,7 +34183,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                   if (el) msgRefs.current[m.id] = el;
                   else delete msgRefs.current[m.id];
                 }}
-                className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}`}
+                className={`flex flex-col mb-2 ${mine ? "items-end" : "items-start"}${flashId === m.id ? " loop-msg-flash" : ""}`}
                 style={
                   isCurrentMatch
                     ? { background: "rgba(255, 213, 79, 0.22)", borderRadius: 14, padding: 4, margin: "-4px -4px 4px" }
@@ -32163,13 +34217,20 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     e.preventDefault();
                     openCtx(m);
                   }}
-                  className="relative max-w-[78%]"
+                  className={`relative max-w-[78%]${shakeId === m.id ? " loop-cfx-shake" : ""}`}
                   style={{ WebkitUserSelect: "none", userSelect: "none", WebkitTouchCallout: "none", ...(menuFor === m.id ? { zIndex: 86 } : {}) }}
                 >
                   {/* quoted parent */}
                   {parent && !m.deleted && (
                     <div
-                      className="px-3 py-1.5 mb-0.5"
+                      role="button"
+                      tabIndex={0}
+                      data-quote={parent.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        jumpToMessage(parent.id);
+                      }}
+                      className="px-3 py-1.5 mb-0.5 cursor-pointer active:opacity-70"
                       style={{
                         background: "var(--bg-sunken)",
                         borderLeft: "3px solid var(--accent-solid)",
@@ -32197,7 +34258,9 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     <AudioBubble src={m.audio_url} duration={m.audio_duration} mine={mine} />
                   ) : sharedPostIdOf(m.content) ? (
                     <SharedPostCard info={sharedInfo[sharedPostIdOf(m.content)]} onOpen={(p) => setSharedOpen(p)} />
-                  ) : !m.image_url && emojiOnly(m.content) ? (
+                  ) : m.effect === "gift" && !mine && !giftOpen.has(m.id) ? (
+                    <GiftBox onOpen={() => openGift(m)} opening={openingGift === m.id} />
+                  ) : !m.image_url && m.effect !== "secret" && emojiOnly(m.content) ? (
                     <BigEmojiMessage parts={emojiOnly(m.content)} onTap={(el) => tapBigEmoji(m, el)} />
                   ) : (
                     <>
@@ -32211,7 +34274,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       )}
                       {m.content && (
                         <div
-                          className="px-3.5 py-2 text-sm"
+                          className={`px-3.5 py-2 text-sm${m.effect === "fire" ? " loop-cfx-firebubble" : ""}`}
                           style={{
                             background: mine ? chatTheme.bubble : "var(--surface)",
                             color: mine ? chatTheme.on : "var(--text)",
@@ -32219,9 +34282,17 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                             whiteSpace: "pre-wrap",
                             wordBreak: "break-word",
                             marginTop: m.image_url ? 4 : 0,
+                            ...(m.effect === "shout" ? { fontSize: 22, fontWeight: 800, lineHeight: 1.15 } : {}),
+                            ...(m.effect === "secret" && mine ? { opacity: 0.85 } : {}),
                           }}
                         >
+                          {m.effect === "secret" && !mine && !revealed.has(m.id) ? (
+                            <SecretCover onReveal={() => revealSecret(m)}>{m.content}</SecretCover>
+                          ) : (
+                          <span className={m.effect === "secret" && !mine ? "loop-cfx-reveal block" : m.effect === "gift" && !mine ? "loop-cfx-reveal block" : undefined}>
                           <LinkifiedText text={m.content} light={mine} />
+                          </span>
+                          )}
                           {msgTr[m.id] && (
                             <span className="block mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${mine ? "rgba(255,255,255,0.25)" : "var(--border)"}` }}>
                               {typeof msgTr[m.id] === "object" ? (
@@ -32263,6 +34334,21 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     {rx.length > 1 && (
                       <span className="text-[10px] ms-0.5" style={{ color: "var(--text-muted)" }}>{rx.length}</span>
                     )}
+                  </button>
+                )}
+
+                {!m.deleted && effectOf(m.effect) && !(m.effect === "gift" && !mine && !giftOpen.has(m.id)) && (
+                  <button
+                    data-fxlabel={m.effect}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      replayFx(m);
+                    }}
+                    className="flex items-center gap-1 mx-1 mt-1 text-[10px] rounded-full px-1.5 py-0.5 active:opacity-60"
+                    style={{ color: "var(--text-muted)", fontWeight: 700 }}
+                  >
+                    <Sparkles size={10} />
+                    <span>{effectOf(m.effect).label}</span>
                   </button>
                 )}
 
@@ -32346,31 +34432,56 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </div>
         ) : (
           <>
-            <label className="pb-2 cursor-pointer shrink-0" style={vanishOn ? { display: "none" } : undefined}>
-              {imageUploading ? (
-                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>...</span>
-              ) : (
-                <ImagePlus size={22} color="var(--text-muted)" />
-              )}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files[0]) sendImage(e.target.files[0]);
-                  e.target.value = "";
-                }}
+            <div className="flex-1 min-w-0 flex items-end gap-0.5 rounded-3xl ps-3.5 pe-1.5 py-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <textarea
+                ref={inputRef}
+                value={text}
+                onChange={(e) => onChangeText(e.target.value)}
+                placeholder={replyTo ? "Write a reply..." : vanishOn ? "Vanish mode message..." : "Message..."}
+                rows={1}
+                className="flex-1 min-w-0 bg-transparent py-2 text-sm outline-none resize-none"
+                style={{ color: "var(--text)", maxHeight: 110 }}
               />
-            </label>
-            <textarea
-              ref={inputRef}
-              value={text}
-              onChange={(e) => onChangeText(e.target.value)}
-              placeholder={replyTo ? "Write a reply..." : vanishOn ? "Vanish mode message..." : "Message..."}
-              rows={1}
-              className="flex-1 rounded-2xl px-3.5 py-2.5 text-sm outline-none resize-none"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", maxHeight: 110 }}
-            />
+              {text.trim() && !vanishOn ? (
+                <button
+                  onClick={() => setFxSheet(true)}
+                  aria-label="Send with effect"
+                  className="shrink-0 flex items-center justify-center transition-transform active:scale-90"
+                  style={{ width: 36, height: 36, animation: "loopPop 0.18s ease-out" }}
+                >
+                  <Sparkles size={21} color="var(--accent-solid)" />
+                </button>
+              ) : !vanishOn ? (
+                <>
+                  <button
+                    onClick={() => setGifOpen(true)}
+                    aria-label="GIF"
+                    className="shrink-0 flex items-center justify-center transition-transform active:scale-90"
+                    style={{ width: 38, height: 36 }}
+                  >
+                    <span className="inline-flex items-center justify-center rounded-[6px] text-[11px] px-1.5" style={{ height: 23, border: "2px solid var(--text-muted)", color: "var(--text-muted)", fontWeight: 800, letterSpacing: 0.3 }}>
+                      GIF
+                    </span>
+                  </button>
+                  <label className="shrink-0 flex items-center justify-center cursor-pointer transition-transform active:scale-90" style={{ width: 36, height: 36 }} aria-label="Send a photo">
+                    {imageUploading ? (
+                      <LoopSpinner size={20} />
+                    ) : (
+                      <ImagePlus size={23} color="var(--text-muted)" />
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files[0]) sendImage(e.target.files[0]);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </>
+              ) : null}
+            </div>
           </>
         )}
 
@@ -32385,7 +34496,25 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
           </button>
         ) : text.trim() ? (
           <button
-            onClick={send}
+            onClick={() => {
+              if (sendHeldRef.current) {
+                sendHeldRef.current = false;
+                return;
+              }
+              send();
+            }}
+            onPointerDown={() => {
+              sendHeldRef.current = false;
+              clearTimeout(sendHoldRef.current);
+              if (vanishOn) return;
+              sendHoldRef.current = setTimeout(() => {
+                sendHeldRef.current = true;
+                setFxSheet(true);
+              }, 480);
+            }}
+            onPointerUp={() => clearTimeout(sendHoldRef.current)}
+            onPointerLeave={() => clearTimeout(sendHoldRef.current)}
+            onContextMenu={(e) => e.preventDefault()}
             disabled={sending}
             aria-label="Send"
             className="rounded-full w-10 h-10 flex items-center justify-center shrink-0 transition-transform active:scale-90"
@@ -32405,6 +34534,21 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         )}
       </div>
       )}
+
+      {fxPlay && <ChatFxOverlay key={fxPlay.n} kind={fxPlay.kind} onDone={() => setFxPlay(null)} />}
+      {jumpPill && (
+        <button
+          data-jumppill=""
+          onClick={() => (jumpPill.id ? jumpToMessage(jumpPill.id) : jumpToBottom())}
+          className="absolute left-1/2 -translate-x-1/2 z-[70] flex items-center gap-1.5 rounded-full ps-3 pe-3.5 h-9 text-[12.5px]"
+          style={{ bottom: replyTo ? 132 : 78, background: "var(--surface-raised)", color: "var(--text)", border: "1px solid var(--border)", boxShadow: "0 6px 20px rgba(0,0,0,0.3)", fontWeight: 700, animation: "loopPop 0.18s ease-out", whiteSpace: "nowrap" }}
+        >
+          {jumpPill.id ? <CornerUpLeft size={15} /> : <ChevronDown size={16} />}
+          <span>{jumpPill.label}</span>
+        </button>
+      )}
+      {gifOpen && <GifPickerSheet onClose={() => setGifOpen(false)} onPick={sendGif} />}
+      {fxSheet && <EffectPickerSheet text={text} onClose={() => setFxSheet(false)} onSend={sendWithEffect} />}
 
       {scheduleOpen && (
         <ScheduleMessageSheet
@@ -32464,6 +34608,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
             ...(cm.content && !mineC && needsTranslation(cm.content) ? [{ label: msgTr[cm.id] && typeof msgTr[cm.id] === "object" ? "See original" : "Translate", icon: <Languages size={17} />, onClick: () => { closeCtx(); toggleMsgTranslation(cm); } }] : []),
             ...(mineC && cm.content && !cm.vanish ? [{ label: "Edit", icon: <Pencil size={17} />, onClick: () => { closeCtx(); startEdit(cm); } }] : []),
             ...(mineC ? [{ label: "Delete", icon: <Trash2 size={17} />, danger: true, onClick: () => { closeCtx(); deleteMessage(cm); } }] : []),
+            ...(!mineC && cm.image_url && isLibraryGif(cm.image_url) ? [{ label: "Report GIF", icon: <Flag size={17} />, danger: true, onClick: async () => { closeCtx(); const msg = await reportGifByUrl(cm.image_url, "Reported from a chat"); setChatToast(msg); setTimeout(() => setChatToast(""), 2600); } }] : []),
           ];
           return (
             <ReactionContextOverlay
@@ -32772,9 +34917,7 @@ function NotificationsScreen({ onBack }) {
       </div>
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
-            <LoopSpinner />
-          </p>
+          <SkeletonRows count={8} />
         ) : notifications.length === 0 ? (
           <p className="text-center text-xs py-8" style={{ color: "var(--text-muted)" }}>
             No notifications yet
@@ -33260,6 +35403,8 @@ function LoginScreen({ onLogin, onGoSignup, onForgot, noDemo = false }) {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [langOpen, setLangOpen] = useState(false);
+  const langName = (LANGUAGES.find((l) => l.code === I18N_CODE) || LANGUAGES.find((l) => l.code === "en")).name;
 
   const handleLogin = async () => {
     setError("");
@@ -33302,12 +35447,21 @@ function LoginScreen({ onLogin, onGoSignup, onForgot, noDemo = false }) {
   };
 
   return (
-    <div className="flex-1 flex flex-col justify-center px-6" style={{ background: "var(--bg)" }}>
-      <div className="flex flex-col items-center mb-8">
-        <LoopLogo size={132} />
-        <p className="text-center text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-          Share your moments
-        </p>
+    <div className="flex-1 flex flex-col px-6 overflow-y-auto" style={{ background: "var(--bg)" }}>
+      <div className="flex justify-center" style={{ paddingTop: "calc(14px + env(safe-area-inset-top, 0px))" }}>
+        <button
+          onClick={() => setLangOpen(true)}
+          className="flex items-center gap-1 rounded-full px-3 py-1.5 text-sm transition-opacity active:opacity-60"
+          style={{ color: "var(--text-muted)" }}
+          aria-label="App language"
+        >
+          <span className="notranslate" translate="no">{langName}</span>
+          <ChevronDown size={16} />
+        </button>
+      </div>
+      <div className="flex-1 flex flex-col justify-center py-6">
+      <div className="flex flex-col items-center mb-9">
+        <LoopLogo size={112} />
       </div>
 
       <AuthInput
@@ -33343,14 +35497,26 @@ function LoginScreen({ onLogin, onGoSignup, onForgot, noDemo = false }) {
         {loading ? "Please wait..." : "Log In"}
       </button>
 
-      <button onClick={onForgot} className="text-center text-xs mb-4" style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+      <button onClick={onForgot} className="text-center text-sm py-1" style={{ color: "var(--text)", fontWeight: 600 }}>
         Forgot password?
       </button>
+      </div>
 
-      <p className="text-center text-xs" style={{ color: "var(--text-muted)" }}>{trJoin("Don't have an account? {0}", <button onClick={onGoSignup} style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
-          Sign Up
-        </button>)}</p>
-      {!noDemo && <button onClick={startDemo} className="text-center text-xs mt-4" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Just looking? {0}", <span style={{ color: "var(--accent-solid)" }}>Try the demo</span>)}</button>}
+      <div className="flex flex-col items-center" style={{ paddingBottom: "calc(18px + env(safe-area-inset-bottom, 0px))" }}>
+        <button
+          onClick={onGoSignup}
+          className="w-full rounded-2xl py-3 text-sm transition-transform active:scale-[0.98]"
+          style={{ border: "1.5px solid var(--accent-solid)", color: "var(--accent-solid)", fontWeight: 700, background: "transparent" }}
+        >
+          Create new account
+        </button>
+        {!noDemo && <button onClick={startDemo} className="text-center text-xs mt-4" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Just looking? {0}", <span style={{ color: "var(--accent-solid)" }}>Try the demo</span>)}</button>}
+      </div>
+      {langOpen && (
+        <div className="fixed inset-0 z-[120] flex flex-col" style={{ background: "var(--bg)" }}>
+          <LanguageScreen onBack={() => setLangOpen(false)} />
+        </div>
+      )}
     </div>
   );
 }
@@ -33657,13 +35823,13 @@ function InterestsScreen({ onBack }) {
   );
 }
 
-// The bottom bar, in Instagram's order: Home, Reels, Messages, Search,
-// Profile. New post sits at the top of Home (and a swipe right from Home).
+// The bottom bar: Home, Reels, Search, Messages, Profile — five equal
+// slots. New post sits at the top of Home (and a swipe right from Home).
 const TABS = [
   { key: "feed", label: "Home", icon: Home, screen: FeedScreen },
   { key: "reels", label: "Reels", icon: Clapperboard, screen: ReelsScreen },
-  { key: "messages", label: "Messages", icon: ChatsIcon, screen: MessagesScreen },
   { key: "search", label: "Search", icon: Search, screen: SearchScreen },
+  { key: "messages", label: "Messages", icon: ChatsIcon, screen: MessagesScreen },
   { key: "profile", label: "Profile", icon: CircleUserRound, screen: ProfileScreen },
   { key: "upload", label: "New post", icon: PlusSquare, screen: UploadScreen, hidden: true },
 ];
@@ -33965,7 +36131,7 @@ function ModerationScreen({ onBack }) {
             </p>
           </div>
         ) : rows === null ? (
-          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}><LoopSpinner /></p>
+          <SkeletonRows />
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center py-12">
             <Shield size={34} color="var(--text-muted)" strokeWidth={1.5} />
@@ -34244,8 +36410,13 @@ function LoopApp() {
   }, [switchNote]);
   useEffect(() => {
     const onTag = (e) => setHashtag(e.detail);
+    const onDeepHighlight = (e) => setDeepHighlight(e.detail);
     window.addEventListener("loop:hashtag", onTag);
-    return () => window.removeEventListener("loop:hashtag", onTag);
+    window.addEventListener("loop:deep-highlight", onDeepHighlight);
+    return () => {
+      window.removeEventListener("loop:hashtag", onTag);
+      window.removeEventListener("loop:deep-highlight", onDeepHighlight);
+    };
   }, []);
   // Places, profiles, posts and chats opened from deep inside other screens.
   useEffect(() => {
@@ -34517,6 +36688,7 @@ function LoopApp() {
   const meProfile = useMeProfile(meId, profileRefresh);
   const unreadChats = useUnreadChats(meId, active === "messages" ? 0 : active);
   const goTab = (key) => {
+    if (key === "feed" && active === "feed") window.dispatchEvent(new Event("loop:home-again"));
     if (key === "reels") setReelStartId(null);
     if (key === "upload" && active !== "upload") {
       setUploadMode("photo");
@@ -34725,7 +36897,6 @@ function LoopApp() {
         <style>{THEME_CSS}</style>
         <div className="flex-1 w-full flex flex-col items-center justify-center gap-4" style={{ minHeight: "100dvh" }}>
           <LoopLogo size={96} />
-          <span className="text-sm" style={{ color: "var(--text-muted)" }}><LoopSpinner /></span>
         </div>
       </div>
     );
@@ -35087,6 +37258,7 @@ function LoopApp() {
         )}
 
         <NotificationPrompt userId={meId} />
+        <RepostToastHost />
         {timeNudge && (
           <TimeNudge
             kind={timeNudge.kind}
@@ -35103,7 +37275,7 @@ function LoopApp() {
         {/* Bottom nav */}
         {!overlayOpen && !(active === "messages" && dmChatOpen) && (
           <div
-            className="flex items-center justify-around px-2 pt-2.5 shrink-0"
+            className="flex items-center px-1 pt-2.5 shrink-0"
             style={{ background: "var(--bg)", borderTop: "1px solid var(--border-subtle)", paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))" }}
           >
             {TABS.filter((t) => !t.hidden).map((tab) => {
@@ -35126,10 +37298,10 @@ function LoopApp() {
                   onClick={() => goTab(tab.key)}
                   aria-label={tab.label}
                   className="relative flex flex-col items-center justify-center gap-1"
-                  style={{ width: 44, height: 36 }}
+                  style={{ flex: "1 1 0", minWidth: 0, height: 36 }}
                 >
                   {tab.key === "messages" ? (
-                    <ChatsIcon size={25} color={isActive ? "var(--accent-solid)" : "var(--text-muted)"} />
+                    <ChatsIcon size={24} color={isActive ? "var(--accent-solid)" : "var(--text-muted)"} />
                   ) : (
                     <Icon
                       size={24}
@@ -35141,7 +37313,7 @@ function LoopApp() {
                   {tab.key === "messages" && unreadChats > 0 && (
                     <span
                       className="absolute -top-1 rounded-full flex items-center justify-center text-[9px]"
-                      style={{ insetInlineStart: 24, background: "#FF3040", color: "#FFFFFF", fontWeight: 700, minWidth: 17, height: 17, padding: "0 4px", border: "2px solid var(--bg)" }}
+                      style={{ insetInlineStart: "calc(50% + 4px)", background: "#FF3040", color: "#FFFFFF", fontWeight: 700, minWidth: 17, height: 17, padding: "0 4px", border: "2px solid var(--bg)" }}
                     >
                       {unreadChats > 99 ? "99+" : unreadChats}
                     </span>
