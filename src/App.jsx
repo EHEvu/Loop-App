@@ -706,6 +706,7 @@ function createDemoClient(mode) {
     stories: [
       { id: "d4000000-0000-4000-8000-000000000001", user_id: ME, media_url: pic("#7F5AF0", "#2CB67D", "🌅", "My first story", 720, 1280), media_type: "photo", caption: "Good morning, Loop!", created_at: ago(180), expires_at: later(60 * 21), stickers: [], archived: false },
       { id: uuid(), user_id: NADIA, media_url: pic("#ff9a9e", "#fecfef", "🎨", "Studio day", 720, 1280), media_type: "photo", caption: "Studio day!", created_at: ago(40), expires_at: later(60 * 20), stickers: [] },
+      { id: uuid(), user_id: TANIA, media_url: pic("#5f72bd", "#9b23ea", "🌧", "My rainy window", 720, 1280), media_type: "photo", caption: null, created_at: ago(90), expires_at: later(60 * 20), stickers: [{ id: "dch1", type: "addyours", prompt: "Show your rainy window", chain: "challenge-d7000000-0000-4000-8000-000000000001", x: 0.5, y: 0.7 }] },
       { id: uuid(), user_id: RAFI, media_url: pic("#43cea2", "#185a9d", "🚌", "Off to Sylhet", 720, 1280), media_type: "photo", caption: null, created_at: ago(120), expires_at: later(60 * 18), stickers: [] },
       { id: uuid(), user_id: EATS, media_url: pic("#f7971e", "#ffd200", "🍔", "New spot tonight", 720, 1280), media_type: "photo", caption: "Guess where?", created_at: ago(200), expires_at: later(60 * 16), stickers: [] },
     ],
@@ -720,6 +721,12 @@ function createDemoClient(mode) {
     story_question_answers: [],
     story_highlights: [],
     highlight_stories: [],
+    moments: [
+      { id: uuid(), user_id: NADIA, day: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10), media_url: pic("#ff9a9e", "#fecfef", "🎨", "Painting now", 1080, 1440), late_minutes: 0, created_at: ago(3) },
+      { id: uuid(), user_id: RAFI, day: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10), media_url: pic("#43cea2", "#185a9d", "🚌", "On the bus", 1080, 1440), late_minutes: 6, created_at: ago(1) },
+    ],
+    challenges: [{ id: "d7000000-0000-4000-8000-000000000001", title: "Rainy day", prompt: "Show your rainy window", starts_at: ago(60 * 24 * 2), ends_at: later(60 * 24 * 5), winners: [], created_at: ago(60 * 24 * 2) }],
+    ad_campaigns: [],
     channels: [{ id: CH, owner_id: TEAM, name: "Loop Updates", description: "What's new in Loop", avatar_url: face("#141E30", "#243B55", "♾"), reactions: null, created_at: ago(60 * 24 * 30), theme: "default", chat_font: "default" }],
     channel_members: [{ channel_id: CH, user_id: ME, muted: false, last_seen_at: ago(60), joined_at: ago(60 * 24 * 10) }],
     channel_admins: [],
@@ -882,8 +889,16 @@ function createDemoClient(mode) {
         const re = new RegExp("^" + String(val).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/[%*]/g, ".*") + "$", "is");
         return re.test(String(v ?? ""));
       }
-      case "contains":
-        return Array.isArray(v) && (Array.isArray(val) ? val : [val]).every((x) => v.includes(x));
+      case "contains": {
+        let want = val;
+        if (typeof want === "string" && /^[\[{]/.test(want)) {
+          try {
+            want = JSON.parse(want);
+          } catch {}
+        }
+        const part = (a, b) => (b && typeof b === "object" ? !!a && typeof a === "object" && Object.keys(b).every((k) => part(a[k], b[k])) : a === b);
+        return Array.isArray(v) && (Array.isArray(want) ? want : [want]).every((x) => v.some((y) => part(y, x)));
+      }
       default:
         return true;
     }
@@ -1147,6 +1162,117 @@ function createDemoClient(mode) {
     bell_send_due: () => 0,
     vanish_cleanup: () => null,
     reset_invite_code: () => "DEMO",
+    // ---- v17: search and hashtag reports ----
+    search_accounts: ({ p_q = "", p_limit = 30 }) => {
+      const s = String(p_q).replace(/^@+/, "").toLowerCase();
+      if (!s) return [];
+      return db.profiles
+        .filter((p) => (p.username || "").toLowerCase().includes(s) || (p.full_name || "").toLowerCase().includes(s))
+        .map((p) => ({
+          id: p.id,
+          username: p.username,
+          full_name: p.full_name,
+          avatar_url: p.avatar_url,
+          is_verified: !!p.is_verified,
+          badge_tier: p.badge_tier || null,
+          badge_until: p.badge_until || null,
+          followers: count("follows", (f) => f.following_id === p.id),
+        }))
+        .sort((a, b) => (b.username === s) - (a.username === s) || b.username.startsWith(s) - a.username.startsWith(s) || b.followers - a.followers)
+        .slice(0, p_limit);
+    },
+    search_hashtags: ({ p_q = "", p_limit = 30 }) => {
+      const t = String(p_q).replace(/^#+/, "").toLowerCase();
+      if (!t) return [];
+      const hidden = new Set((db.hidden_hashtags || []).map((h) => h.tag));
+      const counts = new Map();
+      db.posts
+        .filter((p) => !p.archived && !p.removed_at)
+        .forEach((p) => {
+          const seen = new Set();
+          for (const m of String(p.caption || "").matchAll(/#([\p{L}\p{M}\p{N}_]+)/gu)) {
+            const tag = m[1].toLowerCase();
+            if (!tag.startsWith(t) || seen.has(tag) || hidden.has(tag)) continue;
+            seen.add(tag);
+            counts.set(tag, (counts.get(tag) || 0) + 1);
+          }
+        });
+      return [...counts.entries()]
+        .map(([tag, posts]) => ({ tag, posts }))
+        .sort((a, b) => (b.tag === t) - (a.tag === t) || b.posts - a.posts || a.tag.localeCompare(b.tag))
+        .slice(0, p_limit);
+    },
+    report_hashtag: ({ p_tag, p_reason }) => {
+      const tag = String(p_tag || "").replace(/^#+/, "").toLowerCase();
+      if (!tag) throw new Error("bad_tag");
+      db.hashtag_reports = (db.hashtag_reports || []).filter((r) => !(r.tag === tag && r.reporter_id === ME));
+      db.hashtag_reports.push({ tag, reporter_id: ME, reason: p_reason || "", created_at: new Date().toISOString() });
+      return null;
+    },
+    mod_list_hashtag_reports: () => {
+      const by = new Map();
+      (db.hashtag_reports || []).forEach((r) => {
+        const row = by.get(r.tag) || { tag: r.tag, reports: 0, reasons: [], last_report: r.created_at };
+        row.reports += 1;
+        if (r.reason && !row.reasons.includes(r.reason)) row.reasons.push(r.reason);
+        if (r.created_at > row.last_report) row.last_report = r.created_at;
+        by.set(r.tag, row);
+      });
+      const hidden = new Set((db.hidden_hashtags || []).map((h) => h.tag));
+      hidden.forEach((tag) => by.has(tag) || by.set(tag, { tag, reports: 0, reasons: [], last_report: null }));
+      return [...by.values()]
+        .map((r) => ({ ...r, hidden: hidden.has(r.tag), posts: count("posts", (p) => new RegExp(`#${r.tag}(?![\\p{L}\\p{M}\\p{N}_])`, "iu").test(p.caption || "")) }))
+        .sort((a, b) => b.hidden - a.hidden || b.reports - a.reports);
+    },
+    mod_hide_hashtag: ({ p_tag }) => {
+      const tag = String(p_tag || "").toLowerCase();
+      db.hidden_hashtags = db.hidden_hashtags || [];
+      if (!db.hidden_hashtags.some((h) => h.tag === tag)) db.hidden_hashtags.push({ tag, hidden_by: ME, created_at: new Date().toISOString() });
+      db.hashtag_reports = (db.hashtag_reports || []).filter((r) => r.tag !== tag);
+      return null;
+    },
+    mod_unhide_hashtag: ({ p_tag }) => {
+      const tag = String(p_tag || "").toLowerCase();
+      db.hidden_hashtags = (db.hidden_hashtags || []).filter((h) => h.tag !== tag);
+      return null;
+    },
+    mod_keep_hashtag: ({ p_tag }) => {
+      const tag = String(p_tag || "").toLowerCase();
+      db.hashtag_reports = (db.hashtag_reports || []).filter((r) => r.tag !== tag);
+      return null;
+    },
+    // ---- v17: Today's Loop, challenges, invites, ads ----
+    moments_today: ({ p_day }) => {
+      const day = p_day || new Date().toISOString().slice(0, 10);
+      const mine = db.moments.some((m) => m.user_id === ME && m.day === day);
+      const following = new Set(db.follows.filter((f) => f.follower_id === ME).map((f) => f.following_id));
+      return db.moments
+        .filter((m) => m.day === day && (m.user_id === ME || following.has(m.user_id)))
+        .map((m) => {
+          const p = relationOf(m.user_id) || {};
+          return { user_id: m.user_id, username: p.username, avatar_url: p.avatar_url, late_minutes: m.late_minutes || 0, created_at: m.created_at, media_url: mine || m.user_id === ME ? m.media_url : null };
+        })
+        .sort((a, b) => (a.user_id === ME ? -1 : b.user_id === ME ? 1 : String(b.created_at).localeCompare(String(a.created_at))));
+    },
+    challenge_entries: ({ p_challenge }) =>
+      db.stories
+        .filter((s) => (s.stickers || []).some((x) => x.chain === `challenge-${p_challenge}`))
+        .map((s) => ({ story_id: s.id, user_id: s.user_id, username: relationOf(s.user_id)?.username, avatar_url: relationOf(s.user_id)?.avatar_url, media_url: s.media_url, media_type: s.media_type, created_at: s.created_at })),
+    challenge_add_winner: ({ p_challenge, p_user }) => {
+      const c = db.challenges.find((x) => x.id === p_challenge);
+      if (c) c.winners = [...new Set([...(c.winners || []), p_user])];
+      return null;
+    },
+    my_invites: () => ({ joined: 2, counted: 1, rewarded: false }),
+    claim_invite: () => null,
+    claim_invite_reward: () => {
+      throw new Error("not_enough_invites");
+    },
+    ad_event: ({ p_ad, p_kind }) => {
+      const a = (db.ad_campaigns || []).find((x) => x.id === p_ad);
+      if (a) a[p_kind === "click" ? "clicks" : "views"] = (a[p_kind === "click" ? "clicks" : "views"] || 0) + 1;
+      return null;
+    },
   };
   const nope = { message: "That isn't available in the demo." };
   const rpcBlocked = new Set(["request_account_deletion", "cancel_account_deletion", "mod_ban", "mod_unban"]);
@@ -1297,9 +1423,9 @@ function LoopWordmark({ height = 26, color = "var(--wordmark)", style, className
   const id = useLoopSvgId("loopMark");
   return (
     <svg
-      viewBox="0 0 80 40"
+      viewBox="0 0 86 40"
       height={height}
-      width={height * 2}
+      width={height * 2.15}
       role="img"
       aria-label="Loop"
       className={className}
@@ -1309,10 +1435,105 @@ function LoopWordmark({ height = 26, color = "var(--wordmark)", style, className
         <LoopGradient id={id} />
       </defs>
       <g fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M5 5 V30" />
-        <path d={LOOP_MARK_INF} stroke={`url(#${id})`} />
-        <path d="M59 15 V37" />
-        <circle cx="66.5" cy="22" r="7.5" />
+        <path d="M5 5 V30 H13" />
+        <path d={LOOP_MARK_INF} stroke={`url(#${id})`} transform="translate(5 0)" />
+        <path d="M64 15 V37" />
+        <circle cx="71.5" cy="22" r="7.5" />
+      </g>
+    </svg>
+  );
+}
+
+// ---- Bottom-bar icons ----
+// One family, drawn on the same 24-point grid so all five look the same
+// size. Off = outline; on = filled (Home keeps its door open, the Loops tile
+// keeps its play mark, like Instagram) — no dot underneath.
+const NAV_HOME = "M4 10.4 12 3.8l8 6.6v9a1.8 1.8 0 0 1-1.8 1.8H15.2v-5.3a1.5 1.5 0 0 0-1.5-1.5h-3.4a1.5 1.5 0 0 0-1.5 1.5v5.3H5.8A1.8 1.8 0 0 1 4 19.4Z";
+const NAV_TILE = "M7 3.6h10A3.4 3.4 0 0 1 20.4 7v10a3.4 3.4 0 0 1-3.4 3.4H7A3.4 3.4 0 0 1 3.6 17V7A3.4 3.4 0 0 1 7 3.6Z";
+const NAV_PLAY = "M10.1 8.7v6.6c0 .5.5.8.9.5l5.1-3.3a.6.6 0 0 0 0-1L11 8.2c-.4-.3-.9 0-.9.5Z";
+const NAV_CHAT_FRONT = "M10 3.7c4.1 0 7.4 2.8 7.4 6.3S14.1 16.3 10 16.3c-1 0-2-.2-2.9-.5L3.3 17.2l1.2-3.4C3.4 12.7 2.7 11.4 2.7 10 2.7 6.5 6 3.7 10 3.7Z";
+const NAV_CHAT_BACK = "M17.6 9.6c2.3.9 3.8 2.9 3.8 5.1 0 1.3-.5 2.5-1.4 3.5l.8 2.7-3-1.1c-.9.3-1.8.4-2.8.4-2.3 0-4.4-.9-5.6-2.4";
+function NavIcon({ kind, active, size = 26, color = "currentColor" }) {
+  const sw = active ? 2.1 : 1.9;
+  const common = { width: size, height: size, viewBox: "0 0 24 24", "aria-hidden": "true", style: { display: "block" } };
+  if (kind === "feed")
+    return (
+      <svg {...common}>
+        <path d={NAV_HOME} fill={active ? color : "none"} stroke={color} strokeWidth={sw} strokeLinejoin="round" />
+      </svg>
+    );
+  if (kind === "reels")
+    return (
+      <svg {...common}>
+        {active ? (
+          <path d={`${NAV_TILE}${NAV_PLAY}`} fill={color} fillRule="evenodd" stroke={color} strokeWidth="0.6" strokeLinejoin="round" />
+        ) : (
+          <>
+            <path d={NAV_TILE} fill="none" stroke={color} strokeWidth={sw} strokeLinejoin="round" />
+            <path d={NAV_PLAY} fill="none" stroke={color} strokeWidth={1.7} strokeLinejoin="round" />
+          </>
+        )}
+      </svg>
+    );
+  if (kind === "search")
+    return (
+      <svg {...common}>
+        <circle cx="10.6" cy="10.6" r="6.9" fill="none" stroke={color} strokeWidth={active ? 2.9 : sw} />
+        <path d="M15.8 15.8 20.6 20.6" stroke={color} strokeWidth={active ? 2.9 : sw} strokeLinecap="round" />
+      </svg>
+    );
+  if (kind === "messages")
+    return (
+      <svg {...common}>
+        <path d={NAV_CHAT_BACK} fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+        <path d={NAV_CHAT_FRONT} fill={active ? color : "none"} stroke={color} strokeWidth={sw} strokeLinejoin="round" />
+        {!active && (
+          <g fill={color}>
+            <circle cx="6.8" cy="10" r="1.05" />
+            <circle cx="10" cy="10" r="1.05" />
+            <circle cx="13.2" cy="10" r="1.05" />
+          </g>
+        )}
+      </svg>
+    );
+  return null;
+}
+
+// ---- Small white marks on grid tiles (video, pinned) ----
+function GridVideoMark({ size = 17 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }}>
+      <path d={`${NAV_TILE}${NAV_PLAY}`} fill="#FFFFFF" fillRule="evenodd" />
+    </svg>
+  );
+}
+function GridPinMark({ size = 17 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }}>
+      <g transform="rotate(42 12 12)">
+        <path d="M8.6 2.8h6.8a.9.9 0 0 1 .7 1.4l-1.3 1.7.6 5.1 2.6 2.3c.6.6.2 1.6-.6 1.6H6.6c-.8 0-1.2-1-.6-1.6l2.6-2.3.6-5.1-1.3-1.7a.9.9 0 0 1 .7-1.4Z" fill="#FFFFFF" />
+        <path d="M12 14.9v6.4" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+      </g>
+    </svg>
+  );
+}
+
+// ---- Loop's app mark: the ∞ inside a soft square, in the theme colours ----
+// Used where Instagram shows its camera mark: login, sign-up, the saved
+// profiles page, the loading screen, About.
+function LoopMark({ size = 64 }) {
+  const id = useLoopSvgId("loopAppMark");
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" role="img" aria-label="Loop" style={{ display: "block" }}>
+      <defs>
+        <linearGradient id={id} x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0" style={{ stopColor: "var(--accent-start)" }} />
+          <stop offset="1" style={{ stopColor: "var(--accent-end)" }} />
+        </linearGradient>
+      </defs>
+      <rect x="4" y="4" width="40" height="40" rx="12.5" fill="none" stroke={`url(#${id})`} strokeWidth="3.6" />
+      <g transform="translate(24 24) scale(0.74) translate(-24 -12)">
+        <path d={LOOP_INF_PATH} fill="none" stroke={`url(#${id})`} strokeWidth={4.6} strokeLinecap="round" strokeLinejoin="round" />
       </g>
     </svg>
   );
@@ -1321,8 +1542,8 @@ function LoopWordmark({ height = 26, color = "var(--wordmark)", style, className
 // The big logo on the login, sign-up and settings screens.
 function LoopLogo({ size = 72 }) {
   return (
-    <span className="inline-flex items-center justify-center" style={{ height: size, width: size * 1.7 }}>
-      <LoopWordmark height={Math.round(size * 0.62)} />
+    <span className="inline-flex items-center justify-center" style={{ height: Math.round(size * 0.66), width: Math.round(size * 0.66) }}>
+      <LoopMark size={Math.round(size * 0.62)} />
     </span>
   );
 }
@@ -1521,14 +1742,15 @@ ${SKEL_CSS}
     75% { transform: scale(1.12) translateY(-1px); }
     100% { transform: scale(1) translateY(0); }
   }
-  .loop-pop-repost { animation: loopRepostSpin 0.5s cubic-bezier(.3,.85,.35,1.15); }
+  .loop-pop-repost .loop-rp-arrows { transform-box: view-box; transform-origin: 12px 12px; animation: loopRepostSpin 0.48s cubic-bezier(.3,.85,.35,1.1); }
+  .loop-pop-repost .loop-rp-check { stroke-dasharray: 1; animation: loopRpCheck 0.26s 0.42s ease-out both; }
   @keyframes loopRepostSpin {
-    0% { transform: rotate(0deg) scale(1); }
-    55% { transform: rotate(150deg) scale(1.14); }
-    100% { transform: rotate(180deg) scale(1); }
+    0% { transform: rotate(-200deg) scale(0.86); }
+    100% { transform: rotate(0deg) scale(1); }
   }
+  @keyframes loopRpCheck { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
   @media (prefers-reduced-motion: reduce) {
-    .loop-pop-like, .loop-pop-save, .loop-pop-repost { animation: none; }
+    .loop-pop-like, .loop-pop-save, .loop-pop-repost .loop-rp-arrows, .loop-pop-repost .loop-rp-check { animation: none; }
     .loop-spinner-run { animation-duration: 2.4s; }
     .loop-heart-burst { animation-duration: 0.5s !important; }
   }
@@ -3256,7 +3478,7 @@ const LEGAL_DOCS = {
       ["What we keep", [
         "Account: username, name, email or phone, password (stored scrambled — we can't read it), your birthday and gender.",
         "Profile: photo, bio, links, category, banner and anything else you add.",
-        "What you share: posts, reels, stories, comments, likes, saves, reposts and notes, channel posts, and messages.",
+        "What you share: posts, loops, stories, comments, likes, saves, reposts and notes, channel posts, and messages.",
         "How you use Loop: who you follow, block, mute or restrict; your settings; your time-management limits; login attempts and the devices you're logged in on, to protect your account.",
         "Payments: if you buy a badge or send a gift, the number you paid from, the amount and the transaction ID, so we can match your payment. Only Loop's admins see these. We never ask for or keep your PIN or OTP.",
         "Your device: if you turn on push notifications, a code from your browser that lets us send them.",
@@ -3310,7 +3532,7 @@ const LEGAL_DOCS = {
   guidelines: {
     title: "Community Guidelines",
     intro:
-      "Loop is for sharing your life with the people you care about. These rules keep it safe and friendly. They apply to posts, reels, stories, comments, messages, notes and channels.",
+      "Loop is for sharing your life with the people you care about. These rules keep it safe and friendly. They apply to posts, loops, stories, comments, messages, notes and channels.",
     sections: [
       ["Be real", [
         "Use your own photos and videos, or ones you have permission to share. Give credit.",
@@ -3404,6 +3626,8 @@ const APP_CONFIG_DEFAULTS = {
   badge_prices: { ocean: 99, ruby: 499, gold: 899 },
   support_pay: { bkash: "", nagad: "" },
   media: { worker: "", uploads: false, old: false },
+  ads: { enabled: false, feed_every: 8, stories_every: 5, loops_every: 7, explore_every: 15 },
+  badge_rules: { min_days: 30, min_posts: 5 },
 };
 const APP_CONFIG_EVENT = "loop:config";
 const APP_CONFIG_KEY = "loop_app_config";
@@ -3589,6 +3813,7 @@ function LanguageScreen({ onBack }) {
 function MediaQualityScreen({ onBack }) {
   const [prefs, setPrefs] = useState(getUploadPrefs());
   const [quality, setQuality] = useState(getVideoQuality());
+  const [saver, setSaver] = useState(getDataSaver());
   useAppConfig();
   const change = (patch) => {
     const next = { ...prefs, ...patch };
@@ -3611,7 +3836,41 @@ function MediaQualityScreen({ onBack }) {
     <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }}>
       <ScreenHeader title="Media quality" onBack={onBack} />
       <div className="px-4 pt-4 pb-10">
-        <p className="text-[13px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Uploading</p>
+        <p className="text-[13px] mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Data saver</p>
+        <div className="rounded-2xl overflow-hidden mb-1" style={{ background: "var(--surface)" }} data-saver-options="">
+          {[
+            ["auto", "Automatic", "Turns on by itself when your phone is saving data or the internet is very slow"],
+            ["on", "On", "Videos don't play by themselves and load lighter copies. Uses much less data"],
+            ["off", "Off", "Videos play by themselves"],
+          ].map(([k, label, hint], i) => (
+            <button
+              key={k}
+              data-saver={k}
+              onClick={() => {
+                setSaver(k);
+                setDataSaver(k);
+              }}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 text-start"
+              style={{ borderTop: i ? "1px solid var(--border-subtle)" : "none" }}
+            >
+              <span>
+                <span className="block text-sm" style={{ color: "var(--text)" }}>{label}</span>
+                <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>{hint}</span>
+              </span>
+              <span
+                className="rounded-full flex items-center justify-center shrink-0"
+                style={{ width: 20, height: 20, border: saver === k ? "none" : "1.5px solid var(--toggle-off)", background: saver === k ? ACCENT : "transparent" }}
+              >
+                {saver === k && <Check size={12} color="var(--on-accent)" strokeWidth={3} />}
+              </span>
+            </button>
+          ))}
+        </div>
+        {saver === "auto" && phoneSavingData() && (
+          <p className="text-[11px] px-1 mb-1" style={{ color: "var(--accent-solid)", fontWeight: 600 }}>Data saver is on now because your phone is saving data.</p>
+        )}
+
+        <p className="text-[13px] mt-5 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Uploading</p>
         <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
           {row(
             "Upload at highest quality",
@@ -3631,7 +3890,7 @@ function MediaQualityScreen({ onBack }) {
           )}
         </div>
 
-        <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Watching reels</p>
+        <p className="text-[13px] mt-6 mb-2" style={{ color: "var(--text-muted)", fontWeight: 700 }}>Watching loops</p>
         <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)" }}>
           {[
             ["auto", "Standard", "The smaller copy when a video has one — loads faster"],
@@ -3991,7 +4250,13 @@ function VerificationRequestScreen({ onBack }) {
                   >
                     {r.ok && <Check size={12} color="#fff" strokeWidth={3} />}
                   </span>
-                  <span className="text-[13.5px]" style={{ color: r.ok ? "var(--text)" : "var(--text-secondary)" }}>{VERIFY_RULES[r.rule] || r.rule}</span>
+                  <span className="text-[13.5px]" style={{ color: r.ok ? "var(--text)" : "var(--text-secondary)" }}>
+                    {r.need != null && r.rule === "account_30_days"
+                      ? trJoin("Your account is at least {0} days old", r.need)
+                      : r.need != null && r.rule === "five_posts"
+                      ? trJoin("You've shared at least {0} posts", r.need)
+                      : VERIFY_RULES[r.rule] || r.rule}
+                  </span>
                 </div>
               ))}
             </div>
@@ -4171,6 +4436,21 @@ function SupportLoopScreen({ onBack, Header }) {
         </p>
       </div>
 
+      <div className="mx-4 mb-4 rounded-2xl p-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} data-upcoming="">
+        <p className="text-[13px] mb-2.5" style={{ color: "var(--text)", fontWeight: 800 }}>Coming soon — your support makes these possible</p>
+        {[
+          ["📡", "Live video"],
+          ["📞", "Audio calls"],
+          ["🎥", "Video calls"],
+        ].map(([e, label]) => (
+          <div key={label} className="flex items-center gap-3 py-1.5">
+            <span className="text-[18px]" aria-hidden="true">{e}</span>
+            <span className="flex-1 text-[14px]" style={{ color: "var(--text)", fontWeight: 600 }}>{label}</span>
+            <span className="rounded-full px-2.5 py-0.5 text-[11px]" style={{ background: "var(--bg-sunken)", color: "var(--accent-solid)", fontWeight: 800 }}>Upcoming…</span>
+          </div>
+        ))}
+      </div>
+
       {pay === null ? (
         <SkeletonBlock />
       ) : open.length === 0 ? (
@@ -4292,6 +4572,8 @@ function AdminAppSettings({ flash }) {
         gift_nagad: (cfg.support_pay || {}).nagad || "",
         media_worker: (cfg.media || {}).worker || "",
         media_on: !!(cfg.media || {}).uploads,
+        min_days: String((cfg.badge_rules || {}).min_days ?? 30),
+        min_posts: String((cfg.badge_rules || {}).min_posts ?? 5),
       });
   }, [open]);
   const [testMsg, setTestMsg] = useState("");
@@ -4312,7 +4594,9 @@ function AdminAppSettings({ flash }) {
   const save = async (which) => {
     setBusy(true);
     const jobs =
-      which === "media"
+      which === "rules"
+        ? [["badge_rules", { min_days: Math.min(365, Math.max(0, Math.round(Number(form.min_days)) || 0)), min_posts: Math.min(100, Math.max(0, Math.round(Number(form.min_posts)) || 0)) }]]
+        : which === "media"
         ? [["media", { worker: cleanWorker(form.media_worker), uploads: !!form.media_on && isWorkerAddress(cleanWorker(form.media_worker)), old: !!(cfg.media || {}).old }]]
         : which === "gifts"
         ? [["support_pay", { bkash: form.gift_bkash.replace(/[^0-9+]/g, ""), nagad: form.gift_nagad.replace(/[^0-9+]/g, "") }]]
@@ -4362,6 +4646,20 @@ function AdminAppSettings({ flash }) {
   );
   return (
     <div className="rounded-2xl mb-3 overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      {head("rules", <BadgeCheck size={16} color="var(--text-muted)" />, "Badge rules", trJoin("Account at least {0} days old, {1} posts", (cfg.badge_rules || {}).min_days ?? 30, (cfg.badge_rules || {}).min_posts ?? 5))}
+      {open === "rules" && form && (
+        <div className="px-3.5 pb-3.5" data-badge-rules="">
+          <p className="text-[12px] mb-2.5 rounded-xl px-3 py-2" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)", lineHeight: 1.45 }}>
+            What someone needs before they can ask for a badge. At launch, when everyone is new, smaller numbers (for example 7 days and 3 posts) let real people in; raise them later. The team still checks every request, and you can give a badge yourself at any time.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {field("min_days", "Account age (days)", "numeric")}
+            {field("min_posts", "Posts needed", "numeric")}
+          </div>
+          {saveBtn("rules")}
+        </div>
+      )}
+      <div className="h-px" style={{ background: "var(--border)" }} />
       {head("pay", <Wallet size={16} color="var(--text-muted)" />, "Badge payments", "Where buyers send money, and the prices")}
       {open === "pay" && form && (
         <div className="px-3.5 pb-3.5">
@@ -4995,6 +5293,7 @@ function saveVideoQuality(v) {
   } catch {}
 }
 function connectionIsSlow() {
+  if (dataSaverOn()) return true;
   const c = typeof navigator !== "undefined" ? navigator.connection || navigator.mozConnection || navigator.webkitConnection : null;
   if (!c) return false;
   return !!c.saveData || ["slow-2g", "2g", "3g"].includes(c.effectiveType) || (typeof c.downlink === "number" && c.downlink > 0 && c.downlink < 1.5);
@@ -5070,7 +5369,7 @@ function recordLowCopy(src, onProgress, signal) {
     let raf = 0;
     let done = false;
     const onVis = () => {
-      if (document.hidden) fail(new Error("Loop was closed — open ⋯ → Quality on the reel to try again"));
+      if (document.hidden) fail(new Error("Loop was closed — open ⋯ → Quality on the loop to try again"));
     };
     const cleanup = () => {
       cancelAnimationFrame(raf);
@@ -5149,7 +5448,7 @@ function recordLowCopy(src, onProgress, signal) {
         await video.play();
         draw();
       } catch (e) {
-        fail(e?.name === "NotAllowedError" ? new Error("Tap ⋯ → Quality on the reel to make the data-saver copy") : e);
+        fail(e?.name === "NotAllowedError" ? new Error("Tap ⋯ → Quality on the loop to make the data-saver copy") : e);
       }
     };
     video.src = src;
@@ -5342,7 +5641,7 @@ const SCRIPTS = [
 function detectLanguage(raw) {
   const text = String(raw || "")
     .replace(/https?:\/\/\S+|www\.\S+/gi, " ")
-    .replace(/[@#][\p{L}\p{N}_.]+/gu, " ");
+    .replace(/[@#][\p{L}\p{M}\p{N}_.]+/gu, " ");
   let best = "";
   let bestN = 0;
   let total = 0;
@@ -6247,7 +6546,7 @@ function NotifyPrefsSheet({ targetId, targetName, myId, onClose, onChange }) {
       <div className="pb-6">
         <p className="px-4 pb-2 text-[12px]" style={{ color: "var(--text-muted)" }}>{trJoin("Get a notification when {0} shares something new.", <span style={{ color: "var(--text)", fontWeight: 700 }}>{targetName}</span>)}</p>
         <Row k="posts" label="Posts" hint="New photo posts" />
-        <Row k="reels" label="Reels" hint="New reels and videos" />
+        <Row k="reels" label="Loops" hint="New loops and videos" />
         <Row k="stories" label="Stories" hint="When they add to their story" />
         {err && <p className="px-4 pt-2 text-xs" style={{ color: "var(--heart)" }}>{err}</p>}
         <p className="px-4 pt-3 text-[11px]" style={{ color: "var(--text-muted)" }}>
@@ -6568,7 +6867,7 @@ function QuickEmojiSheet({ current, onSave, onClose }) {
 // A website can't switch permissions itself; it can only ask, or show where
 // to change them. That's what this page does.
 const DEVICE_PERMS = [
-  { key: "camera", label: "Camera", icon: Camera, query: "camera", why: "To take photos and videos for stories and reels." },
+  { key: "camera", label: "Camera", icon: Camera, query: "camera", why: "To take photos and videos for stories and loops." },
   { key: "contacts", label: "Contacts", icon: Contact, why: "Loop doesn't read your contacts.", unused: true },
   { key: "geolocation", label: "Location Services", icon: MapPin, query: "geolocation", why: "Only if you want to add where you are." },
   { key: "microphone", label: "Microphone", icon: Mic, query: "microphone", why: "For voice messages and video sound." },
@@ -6680,7 +6979,7 @@ function CountsSettingsScreen({ onBack }) {
     <div className="flex-1 overflow-y-auto pb-8" style={{ background: "var(--bg)" }}>
       <ScreenHeader title="Like and share counts" onBack={onBack} />
       <p className="px-4 pt-4 pb-2 text-[13px]" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
-        Choose which numbers you see on posts and reels from other accounts. This is just for you, on this phone.
+        Choose which numbers you see on posts and loops from other accounts. This is just for you, on this phone.
       </p>
       {rows.map(([k, label]) => {
         const on = prefs[k] !== false;
@@ -8929,7 +9228,7 @@ function SoundScreen({ soundId, onClose, onUseSound, onOpenPost }) {
           <div className="flex items-center gap-2 px-4 mt-3">
             <p className="flex-1 text-[14px]" style={{ color: "var(--text-secondary)" }}>
               {dur > 0 ? `${mmss(dur)} · ` : ""}
-              {formatCount(count)} {count === 1 ? "reel" : "reels"}
+              {formatCount(count)} {count === 1 ? "loop" : "loops"}
             </p>
             <button
               onClick={toggleSave}
@@ -9787,12 +10086,25 @@ function CaptionText({ username, caption, onOpenProfile, onMention, onTap, light
 // rows and the profile's repost tab all match.
 function RepostIcon({ size = 24, color = "currentColor", strokeWidth = 1.9, active = false, ...rest }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? strokeWidth + 0.5 : strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...rest}>
-      <path d="M4 10.2V8.4a3 3 0 0 1 3-3h10.4" />
-      <path d="M14.8 2.9 17.9 5.4 14.8 7.9" />
-      <path d="M20 13.8v1.8a3 3 0 0 1-3 3H6.6" />
-      <path d="M9.2 21.1 6.1 18.6 9.2 16.1" />
-      {active && <path d="M8.9 12.1l2.2 2.2 4.1-4.3" />}
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? strokeWidth + 0.2 : strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...rest}>
+      {active ? (
+        <>
+          <g className="loop-rp-arrows">
+            <path d="M4.48 9.26A8 8 0 0 1 17.66 6.34" />
+            <path d="M17.1 3.2 17.66 6.34 14.5 5.8" />
+            <path d="M19.52 14.74A8 8 0 0 1 6.34 17.66" />
+            <path d="M6.9 20.8 6.34 17.66 9.5 18.2" />
+          </g>
+          <path className="loop-rp-check" d="M8.7 12.2l2.3 2.3 4.3-4.5" pathLength="1" />
+        </>
+      ) : (
+        <>
+          <path d="M4 10.2V8.4a3 3 0 0 1 3-3h10.4" />
+          <path d="M14.8 2.9 17.9 5.4 14.8 7.9" />
+          <path d="M20 13.8v1.8a3 3 0 0 1-3 3H6.6" />
+          <path d="M9.2 21.1 6.1 18.6 9.2 16.1" />
+        </>
+      )}
     </svg>
   );
 }
@@ -11037,7 +11349,7 @@ function StickerEditorSheet({ type, onDone, onClose }) {
       return onDone({ prompt: prompt2.trim().slice(0, 70), chain: newStickerId() });
     }
     if (type === "hashtag") {
-      const t = tag.replace(/^#+/, "").replace(/[^\p{L}\p{N}_]/gu, "").slice(0, 30);
+      const t = tag.replace(/^#+/, "").replace(/[^\p{L}\p{M}\p{N}_]/gu, "").slice(0, 30);
       if (!t) return setErr("Write a hashtag");
       return onDone({ tag: t });
     }
@@ -11987,6 +12299,8 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(STORY_PHOTO_MS);
   const [held, setHeld] = useState(false);
+  const storyAds = useAds("stories");
+  const [storyAd, setStoryAd] = useState(null);
   const [sheet, setSheet] = useState(null); // options | send | highlight | settings | replies
   const [replyFocused, setReplyFocused] = useState(false);
   const [replyText, setReplyText] = useState("");
@@ -12120,6 +12434,11 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
     setElapsed(0);
     setGIndex(nextG);
     setSIndex(dir > 0 ? 0 : Math.max(0, groupList[nextG].items.length - 1));
+    const every = adsConfig().stories_every;
+    if (dir > 0 && storyAds.length && nextG % every === 0) {
+      setStoryAd(storyAds[(nextG / every - 1 + storyAds.length) % storyAds.length]);
+      setHeld(true);
+    }
   };
 
   // Elite/Supreme perk: hold the heart to send a Super heart.
@@ -12672,6 +12991,16 @@ function StoryViewer({ groups, startGroupIndex, currentUserId, onClose, onOpenPr
       {sheet === "replies" && isOwner && (
         <StoryActivitySheet story={story} onClose={() => setSheet(null)} />
       )}
+      {storyAd && (
+        <SponsoredFullScreen
+          ad={storyAd}
+          place="stories"
+          onDone={() => {
+            setStoryAd(null);
+            setHeld(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -12805,6 +13134,11 @@ function StoriesBar({ onOpenProfile, suggested = [], onFollowSuggested }) {
   const [viewerAt, setViewerAt] = useState(null); // index into groups, or null
   const [pickedFile, setPickedFile] = useState(null);
   const fileRef = React.useRef(null);
+  useEffect(() => {
+    const open = () => fileRef.current?.click();
+    window.addEventListener("loop:new-story", open);
+    return () => window.removeEventListener("loop:new-story", open);
+  }, []);
 
   useEffect(() => {
     load();
@@ -13450,14 +13784,108 @@ function SuggestedAccountsStrip({ people, onOpenProfile, onFollow, onDismiss }) 
   );
 }
 
-// "Suggested reels" row on Home; a tap opens Reels on that reel.
+// "Suggested for you" on Home: pages of four people (2 × 2) that you swipe
+// sideways, like Instagram's feed module. ✕ hides someone for good on this
+// phone; someone who already follows you gets "Follow back".
+function SuggestCell({ p, onOpenProfile, onFollow, onDismiss }) {
+  const sub = p.mutualName
+    ? p.mutualCount > 1
+      ? `Followed by ${p.mutualName} + ${p.mutualCount - 1}`
+      : `Followed by ${p.mutualName}`
+    : p.followsYou
+    ? "Follows you"
+    : "Suggested for you";
+  return (
+    <div
+      className="relative rounded-2xl flex flex-col items-center px-2.5 pt-4 pb-2.5 min-w-0"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      data-suggest-cell={p.username}
+    >
+      <button onClick={() => onDismiss(p.id)} className="absolute top-1.5 end-1.5 w-7 h-7 flex items-center justify-center" aria-label="Remove suggestion">
+        <X size={15} color="var(--text-muted)" />
+      </button>
+      <button onClick={() => onOpenProfile(p.id)} className="flex flex-col items-center w-full min-w-0">
+        <Avatar username={p.username} avatarUrl={p.avatar_url} size={66} />
+        <span className="text-[13px] mt-2 w-full flex items-center justify-center gap-1 min-w-0" style={{ color: "var(--text)", fontWeight: 600 }}>
+          <span className="truncate">{p.username}</span>
+          {badgeIsActive(p) && <VerifiedBadge size={13} tier={p.badge_tier} />}
+        </span>
+        <span className="text-[11px] w-full text-center mt-0.5" style={{ color: "var(--text-muted)", minHeight: 30, lineHeight: "15px", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {sub}
+        </span>
+      </button>
+      <button
+        onClick={() => onFollow(p)}
+        className="w-full h-8 rounded-lg text-[13px] mt-2 transition-transform active:scale-95"
+        data-suggest-follow=""
+        style={
+          p.followed
+            ? { background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700, border: "1px solid var(--border)" }
+            : { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }
+        }
+      >
+        {p.followed ? (p.requested ? "Requested" : "Following") : p.followsYou ? "Follow back" : "Follow"}
+      </button>
+    </div>
+  );
+}
+
+function SuggestedAccountsGrid({ people, onOpenProfile, onFollow, onDismiss }) {
+  const scroller = React.useRef(null);
+  const [page, setPage] = useState(0);
+  if (!people || people.length === 0) return null;
+  const pages = [];
+  for (let i = 0; i < Math.min(people.length, 20); i += 4) pages.push(people.slice(i, i + 4));
+  const onScroll = (e) => {
+    const el = e.currentTarget;
+    const first = el.firstElementChild;
+    if (!first) return;
+    const step = first.getBoundingClientRect().width + 10;
+    setPage(Math.max(0, Math.min(pages.length - 1, Math.round(Math.abs(el.scrollLeft) / step))));
+  };
+  return (
+    <div className="py-3 mb-1" style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }} data-suggest-grid="">
+      <div className="flex items-center justify-between px-4 mb-2.5">
+        <span className="text-[15px]" style={{ color: "var(--text)", fontWeight: 700 }}>Suggested for you</span>
+      </div>
+      <div
+        ref={scroller}
+        onScroll={onScroll}
+        className="flex gap-2.5 overflow-x-auto px-4 pb-1"
+        style={{ scrollbarWidth: "none", scrollSnapType: "x mandatory", scrollPaddingInline: 16, overscrollBehaviorX: "contain" }}
+      >
+        {pages.map((list, i) => (
+          <div
+            key={i}
+            className="shrink-0 grid grid-cols-2 gap-2"
+            style={{ width: pages.length > 1 ? "calc(100% - 26px)" : "100%", scrollSnapAlign: "start", alignContent: "start" }}
+            data-suggest-page=""
+          >
+            {list.map((p) => (
+              <SuggestCell key={p.id} p={p} onOpenProfile={onOpenProfile} onFollow={onFollow} onDismiss={onDismiss} />
+            ))}
+          </div>
+        ))}
+      </div>
+      {pages.length > 1 && (
+        <div className="flex items-center justify-center gap-1.5 pt-2.5" aria-hidden="true">
+          {pages.map((_, i) => (
+            <span key={i} className="rounded-full transition-all" style={{ width: 6, height: 6, background: i === page ? "var(--accent-solid)" : "var(--toggle-off)" }} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// "Suggested loops" row on Home; a tap opens Reels on that reel.
 function SuggestedReelsStrip({ reels, onOpenReel }) {
   if (!reels || reels.length === 0) return null;
   return (
     <div className="py-3 mb-1" style={{ borderTop: "1px solid var(--border-subtle)", borderBottom: "1px solid var(--border-subtle)" }}>
       <div className="flex items-center gap-1.5 px-4 mb-2.5">
         <Clapperboard size={16} color="var(--text)" />
-        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Suggested reels</span>
+        <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Suggested loops</span>
       </div>
       <div className="flex gap-2 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
         {reels.map((r) => (
@@ -13496,6 +13924,34 @@ function FeedVideo({ post, onOpenReel, onLike }) {
   useBorrowedAudio(ref, audioRef, borrowed, post.id);
   const [burst, setBurst] = useState(0);
   const [paused, setPaused] = useState(false);
+  const saver = useDataSaver();
+  const saverRef = React.useRef(saver);
+  saverRef.current = saver;
+  const isReel = (post.media_type === "reel" || post.media_type === "video") && !post.notReel;
+  // A loop plays once on Home, then offers more loops or another go.
+  const [ended, setEnded] = useState(false);
+  const endedRef = React.useRef(false);
+  const finish = () => {
+    if (!isReel) return;
+    endedRef.current = true;
+    setEnded(true);
+    audioRef.current?.pause?.();
+  };
+  const again = (e) => {
+    e.stopPropagation();
+    endedRef.current = false;
+    setEnded(false);
+    const v = ref.current;
+    if (!v) return;
+    v.currentTime = 0;
+    v.play().catch(() => {});
+    if (audioRef.current) {
+      try {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => {});
+      } catch {}
+    }
+  };
 
   React.useEffect(() => {
     const v = ref.current;
@@ -13503,6 +13959,11 @@ function FeedVideo({ post, onOpenReel, onLike }) {
     const io = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+          if (endedRef.current) return;
+          if (saverRef.current) {
+            setPaused(true);
+            return;
+          }
           v.play().catch(() => {});
           setPaused(false);
         } else {
@@ -13540,10 +14001,28 @@ function FeedVideo({ post, onOpenReel, onLike }) {
 
   return (
     <div className="relative w-full h-full" onClick={onTap}>
-      <video ref={ref} src={pickReelSrc(post, getVideoQuality())} poster={post.cover_url || undefined} className="w-full h-full object-cover" muted={muted || borrowed} loop playsInline preload="metadata" />
+      <video ref={ref} src={pickReelSrc(post, getVideoQuality())} poster={post.cover_url || undefined} className="w-full h-full object-cover" muted={muted || borrowed} loop={!isReel} onEnded={finish} onTimeUpdate={(e) => isReel && e.currentTarget.currentTime > 2 && markJustWatched(post.id)} playsInline preload={saver ? "none" : "metadata"} />
       {borrowed && <audio ref={audioRef} src={post.sound.sourceUrl} loop muted={muted} preload="none" />}
       <HeartBurst burstKey={burst} size={84} />
-      {paused && (
+      {ended && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: "rgba(0,0,0,0.5)" }} onClick={(e) => e.stopPropagation()} data-loop-end="">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenReel?.(post.id);
+            }}
+            className="flex items-center gap-2 rounded-full ps-3.5 pe-4 h-10 text-[14px] transition-transform active:scale-95"
+            style={{ background: "rgba(255,255,255,0.96)", color: "#111", fontWeight: 700 }}
+            data-loop-more=""
+          >
+            <span translate="no" style={{ display: "contents" }}>{trJoin("{0}Watch more loops", <NavIcon kind="reels" active size={19} color="#111" />)}</span>
+          </button>
+          <button onClick={again} className="flex items-center gap-1.5 h-9 px-3 text-[14px]" style={{ color: "#fff", fontWeight: 700, textShadow: "0 1px 3px rgba(0,0,0,0.5)" }} data-loop-again="">
+            <span translate="no" style={{ display: "contents" }}>{trJoin("{0}Watch again", <RotateCcw size={17} color="#fff" strokeWidth={2.4} />)}</span>
+          </button>
+        </div>
+      )}
+      {paused && !ended && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-16 h-16 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.4)", backdropFilter: "blur(6px)" }}>
             <Play size={26} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
@@ -13596,6 +14075,8 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasNotifications, setHasNotifications] = useState(false);
   const [suggestedPeople, setSuggestedPeople] = useState([]);
+  const feedAds = useAds("feed");
+  const feedAdEvery = adsConfig().feed_every;
   const [suggestedReels, setSuggestedReels] = useState([]);
   const followingCount = posts.filter((p) => !p.suggested).length; // posts from people you follow, at the top
   // Where the suggestion rows appear changes every time Home loads.
@@ -13853,7 +14334,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
     return () => io.disconnect();
   }, [loading, posts.length > 0]);
 
-  // Suggested reels: most-viewed reels from accounts you don't follow.
+  // Suggested loops: most-viewed reels from accounts you don't follow.
   const loadSuggestedReels = async (followIds, rel) => {
     const { data } = await supabase
       .from("posts")
@@ -13919,7 +14400,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       setSuggestedPeople([]);
       return;
     }
-    const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url").in("id", needIds);
+    const { data: profs } = await supabase.from("profiles").select("id, username, avatar_url, is_verified, badge_tier, badge_until").in("id", needIds);
     const byId = Object.fromEntries((profs || []).map((p) => [p.id, p]));
     // Keep the strongest matches near the front but mix the order each time.
     ranked = ranked
@@ -14130,10 +14611,12 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
       />
       {refreshing && (
         <div className="flex justify-center" style={{ paddingTop: 4, paddingBottom: 10 }}>
-          <LoopSpinner size={36} />
+          <LoopSpinner size={36} style={{ transform: "translateX(-4px)" }} />
         </div>
       )}
       <StoriesBar onOpenProfile={onOpenProfile} suggested={suggestedPeople} onFollowSuggested={followSuggested} />
+      <TodaysLoopRow meId={userId} />
+      <ChallengeCard />
       <InstallBanner />
 
       {saveError && (
@@ -14151,7 +14634,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         </p>
       ) : posts.length === 0 ? (
         <>
-          <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
+          <SuggestedAccountsGrid people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
           <p className="text-center text-xs py-10" style={{ color: "var(--text-muted)" }}>
             No posts yet — be the first to post!
           </p>
@@ -14161,7 +14644,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
           <React.Fragment key={post.id}>
           {/* suggestion rows land in a different place each visit */}
           {postIndex === slots.accounts && (
-            <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
+            <SuggestedAccountsGrid people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
           )}
           {postIndex === followingCount && followingCount > 0 && followingDone && (
             <div className="flex flex-col items-center py-6 px-4">
@@ -14173,6 +14656,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
             </div>
           )}
           {postIndex === slots.reels && <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />}
+          {feedAds.length > 0 && postIndex > 0 && postIndex % feedAdEvery === 0 && <SponsoredPost ad={feedAds[(postIndex / feedAdEvery - 1) % feedAds.length]} />}
           <div className="mb-1">
             <div className="flex items-center gap-2.5 px-4 py-2.5">
               <button onClick={() => onOpenProfile(post.user_id)} className="shrink-0">
@@ -14360,7 +14844,7 @@ function FeedScreen({ onOpenMessages, onOpenNotifications, onOpenComments, onOpe
         ))
       )}
       {!loading && posts.length > 0 && posts.length <= slots.accounts && feedRef.current.done && (
-        <SuggestedAccountsStrip people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
+        <SuggestedAccountsGrid people={suggestedPeople} onOpenProfile={onOpenProfile} onFollow={followSuggested} onDismiss={dismissSuggested} />
       )}
       {!loading && posts.length > 0 && posts.length <= slots.reels && !loadingMore && feedRef.current.done && (
         <SuggestedReelsStrip reels={suggestedReels} onOpenReel={onOpenReel} />
@@ -14546,6 +15030,21 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
   const [userId, setUserId] = useState(null);
   const [followingSet, setFollowingSet] = useState(new Set());
   const [index, setIndex] = useState(0);
+  const watchedReelId = reels[index]?.id;
+  const loopAds = useAds("loops");
+  const [loopAd, setLoopAd] = useState(null);
+  const loopAdShown = React.useRef(new Set());
+  useEffect(() => {
+    const every = adsConfig().loops_every;
+    if (!loopAds.length || index <= 0 || index % every !== 0 || loopAdShown.current.has(index)) return;
+    loopAdShown.current.add(index);
+    setLoopAd(loopAds[(index / every - 1) % loopAds.length]);
+  }, [index, loopAds.length]);
+  useEffect(() => {
+    if (!watchedReelId) return;
+    const t = setTimeout(() => markJustWatched(watchedReelId), 1500);
+    return () => clearTimeout(t);
+  }, [watchedReelId]);
   const [expandedRaw, setExpanded] = useState(false);
   const [railPinned, setRailPinned] = useState(readRailPinned);
   const expanded = expandedRaw || railPinned;
@@ -14720,7 +15219,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
         return prev.concat(enriched.filter((r) => !seen.has(r.id)));
       });
     } catch (e) {
-      setLoadError(e.message || "Couldn't load reels");
+      setLoadError(e.message || "Couldn't load loops");
       st.done = true;
     }
     st.busy = false;
@@ -14972,7 +15471,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
 
   const deleteReel = async () => {
     if (!reel || reel.user_id !== userId) return;
-    if (!window.confirm(trText("Delete this reel? This cannot be undone."))) return;
+    if (!window.confirm(trText("Delete this loop? This cannot be undone."))) return;
     setMenuOpen(false);
     await supabase.from("posts").delete().eq("id", reel.id);
     setReels((prev) => {
@@ -15002,7 +15501,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-2" style={{ background: "var(--bg-sunken)" }}>
         <Video size={32} color="var(--toggle-off)" />
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>No reels yet — be the first to post one!</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>No loops yet — be the first to post one!</p>
       </div>
     );
   }
@@ -15315,7 +15814,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                           className="w-full text-start ps-10 pe-4 py-2 text-[12.5px]"
                           style={{ color: "var(--accent-solid)", fontWeight: 700 }}
                         >
-                          Make a data-saver copy of your reel
+                          Make a data-saver copy of your loop
                         </button>
                       )
                     )}
@@ -15588,7 +16087,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
                 railLongRef.current = true;
                 setRailPinned(true);
                 writeRailPinned(true);
-                showToast("Pinned — stays open on every reel");
+                showToast("Pinned — stays open on every loop");
               }, 500);
             }}
             onTouchEnd={() => clearTimeout(railPressRef.current)}
@@ -15598,7 +16097,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
               railLongRef.current = true;
               setRailPinned(true);
               writeRailPinned(true);
-              showToast("Pinned — stays open on every reel");
+              showToast("Pinned — stays open on every loop");
             }}
             className="relative w-11 h-11 rounded-full flex items-center justify-center transition-transform active:scale-90"
             style={{
@@ -15675,6 +16174,7 @@ function ReelsScreen({ onOpenReport, onOpenProfile, startReelId, onUseSound, onO
           }}
         />
       )}
+      {loopAd && <SponsoredFullScreen ad={loopAd} place="loops" onDone={() => setLoopAd(null)} />}
     </div>
   );
 }
@@ -16616,7 +17116,7 @@ const COMMENT_EDIT_WINDOW_MS = 15 * 60 * 1000;
 const canEditComment = (c) => Date.now() - new Date(c.created_at).getTime() < COMMENT_EDIT_WINDOW_MS;
 
 // Text with @names, #tags and web links made tappable.
-const RICH_TOKEN = /((?:https?:\/\/|www\.)[^\s]+|@[a-zA-Z0-9_.]+|#[\p{L}\p{N}_]+)/gu;
+const RICH_TOKEN = /((?:https?:\/\/|www\.)[^\s]+|@[a-zA-Z0-9_.]+|#[\p{L}\p{M}\p{N}_]+)/gu;
 function MentionText({ text, onMention }) {
   if (!text) return null;
   const parts = text.split(RICH_TOKEN);
@@ -16940,8 +17440,8 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
     setRecent(next);
     writeRecentSearches(next);
   };
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
+  const [tagMenu, setTagMenu] = useState(null);
+  const exploreAds = useAds("explore");
   // Explore grid — real posts, no longer placeholder squares.
   const [explore, setExplore] = useState([]);
   const [exploreLoading, setExploreLoading] = useState(true);
@@ -16959,33 +17459,8 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
       .order("created_at", { ascending: false })
       .limit(48);
     const rel = await getRelations();
-    setExplore((data || []).filter((p) => !isHiddenFromFeed(rel, p.user_id) && new Date(p.created_at).getTime() <= Date.now()));
+    setExplore(sortByInterests((data || []).filter((p) => !isHiddenFromFeed(rel, p.user_id) && new Date(p.created_at).getTime() <= Date.now())));
     setExploreLoading(false);
-  };
-
-  useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      return;
-    }
-    const timeout = setTimeout(() => {
-      runSearch(query.trim());
-    }, 300);
-    return () => clearTimeout(timeout);
-  }, [query]);
-
-  const runSearch = async (q) => {
-    setSearching(true);
-    const { data } = await supabase
-      .from("profiles")
-      .select("id, username, full_name, avatar_url")
-      .or(`username.ilike.%${q}%,full_name.ilike.%${q}%`)
-      .limit(20);
-    const rel = await getRelations();
-    // Someone who blocked you can't be found; someone you blocked still can,
-    // so you can open their profile and unblock them.
-    setResults((data || []).filter((a) => !rel.blockedBy.has(a.id)));
-    setSearching(false);
   };
 
   return (
@@ -17013,13 +17488,24 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
               </button>
             )}
           </div>
-          <button
-            onClick={onOpenInterests}
-            className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
-            style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
-          >
-            <SlidersHorizontal size={17} color="var(--text)" />
-          </button>
+          {query.trim().startsWith("#") && tagFromQuery(query) ? (
+            <button
+              onClick={() => setTagMenu(tagFromQuery(query))}
+              aria-label="More"
+              data-tag-more=""
+              className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+            >
+              <Ellipsis size={22} color="var(--text)" />
+            </button>
+          ) : (
+            <button
+              onClick={onOpenInterests}
+              className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-90"
+              style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)" }}
+            >
+              <SlidersHorizontal size={17} color="var(--text)" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -17066,56 +17552,16 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
             </div>
           ))}
         </div>
-      ) : query ? (
-        <div className="px-4">
-          {query.trim().startsWith("#") && query.trim().length > 1 && (
-            <button
-              onClick={() => {
-                const tag = query.trim().slice(1).replace(/\s+/g, "");
-                remember({ kind: "tag", id: tag });
-                window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: tag }));
-              }}
-              className="flex items-center gap-3 py-2.5 w-full text-start"
-            >
-              <span className="w-[46px] h-[46px] rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700, fontSize: 20 }}>#</span>
-              <span className="text-[13px]" style={{ color: "var(--text)", fontWeight: 600 }}>{query.trim().replace(/\s+/g, "")}</span>
-            </button>
-          )}
-          {searching ? (
-            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
-              Searching...
-            </p>
-          ) : results.length === 0 ? (
-            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
-              No accounts found
-            </p>
-          ) : (
-            results.map((a) => (
-              <button
-                key={a.id}
-                onClick={() => {
-                  remember({ kind: "user", id: a.id, username: a.username, full_name: a.full_name || null, avatar_url: a.avatar_url || null });
-                  onOpenProfile(a.id);
-                }}
-                className="flex items-center gap-3 py-2.5 w-full text-start"
-              >
-                <Avatar username={a.username} avatarUrl={a.avatar_url} size={46} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</p>
-                  {a.full_name && (
-                    <p translate="no" className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>{a.full_name}</p>
-                  )}
-                </div>
-              </button>
-            ))
-          )}
-        </div>
+      ) : query.trim() ? (
+        <SearchResults
+          query={query}
+          remember={remember}
+          onOpenProfile={onOpenProfile}
+          onOpenPost={onOpenPost}
+          onOpenTag={(tag) => window.dispatchEvent(new CustomEvent("loop:hashtag", { detail: tag }))}
+        />
       ) : exploreLoading ? (
-        <div className="grid grid-cols-3 gap-0.5">
-          {Array.from({ length: 12 }, (_, i) => (
-            <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
-          ))}
-        </div>
+        <TallGridSkeleton count={12} />
       ) : explore.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center">
           <ImageIcon size={30} color="var(--toggle-off)" />
@@ -17123,32 +17569,2138 @@ function SearchScreen({ onOpenInterests, onOpenProfile, onOpenPost }) {
           <p className="text-xs" style={{ color: "var(--text-muted)" }}>New posts from everyone will show up here.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-0.5">
-          {explore.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => onOpenPost?.(p.id)}
-              className="aspect-square relative overflow-hidden"
-              style={{ background: "var(--bg-sunken)" }}
-            >
-              <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={!isPhotoPost(p)} />
-              {p.media_count > 1 ? (
-                <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-                  <Layers size={13} color="#FFFFFF" />
-                </span>
-              ) : (
-                !isPhotoPost(p) && (
-                  <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-                    <Video size={13} color="#FFFFFF" />
-                  </span>
-                )
-              )}
-            </button>
+        <TallGrid posts={explore} ads={exploreAds} every={adsConfig().explore_every} onOpen={(p) => onOpenPost?.(p.id)} />
+      )}
+      {tagMenu && <HashtagMenuSheet tag={tagMenu} onClose={() => setTagMenu(null)} />}
+    </div>
+  );
+}
+
+// ---- "Just watched" (like Facebook) ----
+// The last loop you watched is marked on profile grids, Explore and hashtag
+// pages, so coming back you can see where you were.
+const justWatched = { id: null, subs: new Set() };
+function markJustWatched(id) {
+  if (!id || justWatched.id === id) return;
+  justWatched.id = id;
+  try {
+    sessionStorage.setItem("loop_just_watched", id);
+  } catch {}
+  justWatched.subs.forEach((f) => f(id));
+}
+function useJustWatched() {
+  const [id, setId] = useState(() => {
+    if (justWatched.id) return justWatched.id;
+    try {
+      return sessionStorage.getItem("loop_just_watched");
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    justWatched.subs.add(setId);
+    return () => justWatched.subs.delete(setId);
+  }, []);
+  return id;
+}
+function JustWatchedTag() {
+  return (
+    <div
+      className="absolute inset-0 flex items-center justify-center pointer-events-none"
+      style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.42) 50%, rgba(0,0,0,0.12))" }}
+      data-just-watched=""
+    >
+      <span className="text-[12.5px] text-center px-1 leading-tight" style={{ color: "#FFFFFF", fontWeight: 700, textShadow: "0 1px 3px rgba(0,0,0,0.65)" }}>
+        Just watched
+      </span>
+    </div>
+  );
+}
+
+// ---- Search (v17): tall Explore tiles, result tabs, hashtag reports ----
+// Explore and the "For you" results use tall 3:4 tiles in three columns,
+// the way Instagram's grid looks now. A video gets the white play-tile mark
+// and an album the white stack — never a view count.
+const HASHTAG_REPORT_REASONS = [
+  "Nudity or sexual activity",
+  "Hate speech or symbols",
+  "Violence or dangerous organizations",
+  "Sale of illegal or regulated goods",
+  "Bullying or harassment",
+  "Intellectual property violation",
+  "Suicide or self-injury",
+];
+
+// Letters, marks (Bangla vowel signs etc.), digits and _ make up a tag.
+const HASHTAG_IN_TEXT = /#([\p{L}\p{M}\p{N}_]+)/gu;
+const hasWholeTag = (caption, tag) => {
+  const t = String(tag || "").toLowerCase();
+  if (!t) return false;
+  for (const m of String(caption || "").matchAll(HASHTAG_IN_TEXT)) if (m[1].toLowerCase() === t) return true;
+  return false;
+};
+const tagFromQuery = (q) =>
+  String(q || "")
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/[^\p{L}\p{M}\p{N}_]/gu, "")
+    .toLowerCase();
+// Characters that would break a search filter are turned into spaces.
+const cleanSearchText = (q) =>
+  String(q || "")
+    .replace(/[,()%*\\"]/g, " ")
+    .replace(/^@+/, "")
+    .trim();
+
+function TallTile({ p, onOpen, watched }) {
+  const video = !isPhotoPost(p);
+  return (
+    <button onClick={onOpen} className="relative overflow-hidden block w-full" style={{ aspectRatio: "3 / 4", background: "var(--bg-sunken)" }}>
+      <MediaThumb src={p.media_url} cover={p.cover_url} isVideo={video} className="absolute inset-0 w-full h-full object-cover" />
+      {p.media_count > 1 ? (
+        <span className="absolute top-1.5 end-1.5" style={{ lineHeight: 0, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }}>
+          <Layers size={16} color="#FFFFFF" strokeWidth={2.2} />
+        </span>
+      ) : video ? (
+        <span className="absolute top-1.5 end-1.5" style={{ lineHeight: 0 }}>
+          <GridVideoMark size={17} />
+        </span>
+      ) : null}
+      {watched && <JustWatchedTag />}
+    </button>
+  );
+}
+
+function TallGrid({ posts, onOpen, ads = [], every = 15 }) {
+  const watchedId = useJustWatched();
+  return (
+    <div className="grid grid-cols-3 gap-0.5" data-tallgrid="">
+      {posts.map((p, i) => (
+        <React.Fragment key={p.id}>
+          {ads.length > 0 && i > 0 && i % every === every - 1 && <SponsoredTile ad={ads[Math.floor(i / every) % ads.length]} />}
+          <TallTile p={p} watched={watchedId === p.id} onOpen={() => onOpen(p, i)} />
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function TallGridSkeleton({ count = 12 }) {
+  return (
+    <div className="grid grid-cols-3 gap-0.5">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="loop-skel" style={{ aspectRatio: "3 / 4", background: "var(--border-subtle)" }} />
+      ))}
+    </div>
+  );
+}
+
+// ---- searching ----
+async function searchAccounts(q, limit = 30) {
+  const s = cleanSearchText(q);
+  if (!s) return [];
+  const { data, error } = await supabase.rpc("search_accounts", { p_q: s, p_limit: limit });
+  if (!error && Array.isArray(data)) return data;
+  // Before loop-step-23.sql: plain name search, followers counted here.
+  const { data: rows } = await supabase
+    .from("profiles")
+    .select("id, username, full_name, avatar_url, is_verified, badge_tier, badge_until")
+    .or(`username.ilike.%${s}%,full_name.ilike.%${s}%`)
+    .limit(limit);
+  const list = rows || [];
+  if (list.length === 0) return [];
+  const { data: fl } = await supabase.from("follows").select("following_id").in("following_id", list.map((r) => r.id)).limit(5000);
+  const n = {};
+  (fl || []).forEach((f) => (n[f.following_id] = (n[f.following_id] || 0) + 1));
+  const low = s.toLowerCase();
+  return list
+    .map((r) => ({ ...r, followers: n[r.id] || 0 }))
+    .sort(
+      (a, b) =>
+        (b.username?.toLowerCase() === low) - (a.username?.toLowerCase() === low) ||
+        (b.username?.toLowerCase().startsWith(low) ? 1 : 0) - (a.username?.toLowerCase().startsWith(low) ? 1 : 0) ||
+        b.followers - a.followers
+    );
+}
+
+async function searchHashtags(q, limit = 30) {
+  const t = tagFromQuery(q);
+  if (!t) return [];
+  const { data, error } = await supabase.rpc("search_hashtags", { p_q: t, p_limit: limit });
+  if (!error && Array.isArray(data)) return data;
+  // Before loop-step-23.sql: count the tags in recent captions here.
+  const { data: rows } = await supabase
+    .from("posts")
+    .select("caption")
+    .ilike("caption", `%#${t}%`)
+    .eq("archived", false)
+    .is("removed_at", null)
+    .limit(400);
+  const counts = new Map();
+  (rows || []).forEach((r) => {
+    const seen = new Set();
+    for (const m of String(r.caption || "").matchAll(HASHTAG_IN_TEXT)) {
+      const tag = m[1].toLowerCase();
+      if (!tag.startsWith(t) || seen.has(tag)) continue;
+      seen.add(tag);
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  });
+  return [...counts.entries()]
+    .map(([tag, posts]) => ({ tag, posts }))
+    .sort((a, b) => (b.tag === t) - (a.tag === t) || b.posts - a.posts || a.tag.localeCompare(b.tag))
+    .slice(0, limit);
+}
+
+async function searchPosts(q) {
+  const isTag = String(q || "").trim().startsWith("#");
+  const s = isTag ? tagFromQuery(q) : cleanSearchText(q);
+  if (!s) return [];
+  const { data } = await supabase
+    .from("posts")
+    .select("id, user_id, media_url, media_type, media_count, caption, created_at, cover_url")
+    .ilike("caption", isTag ? `%#${s}%` : `%${s}%`)
+    .eq("archived", false)
+    .is("removed_at", null)
+    .lte("created_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(30);
+  const rel = await getRelations();
+  return (data || []).filter((p) => !isHiddenFromFeed(rel, p.user_id));
+}
+
+// Tags the team has hidden after reports: their posts don't show.
+const hiddenTagMemo = new Map();
+async function isHashtagHidden(tag) {
+  const t = String(tag || "").toLowerCase();
+  if (!t) return false;
+  if (hiddenTagMemo.has(t)) return hiddenTagMemo.get(t);
+  const { data, error } = await supabase.from("hidden_hashtags").select("tag").eq("tag", t).maybeSingle();
+  const hidden = !error && !!data;
+  hiddenTagMemo.set(t, hidden);
+  return hidden;
+}
+
+function SearchTabs({ tab, onTab }) {
+  const tabs = [
+    ["foryou", "For you"],
+    ["accounts", "Accounts"],
+    ["tags", "Tags"],
+  ];
+  return (
+    <div className="flex" role="tablist" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+      {tabs.map(([k, label]) => (
+        <button
+          key={k}
+          role="tab"
+          aria-selected={tab === k}
+          data-searchtab={k}
+          onClick={() => onTab(k)}
+          className="flex-1 h-11 text-[14px] relative"
+          style={{ color: tab === k ? "var(--text)" : "var(--text-muted)", fontWeight: tab === k ? 700 : 600 }}
+        >
+          {label}
+          {tab === k && <span className="absolute start-0 end-0 bottom-0" style={{ height: 1.5, background: "var(--text)" }} />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AccountResultRow({ a, onOpen }) {
+  const badge = badgeIsActive(a);
+  return (
+    <button onClick={onOpen} className="flex items-center gap-3 py-2 px-4 w-full text-start" data-account-row={a.username}>
+      <Avatar username={a.username} avatarUrl={a.avatar_url} size={50} />
+      <div className="flex-1 min-w-0">
+        <p className="text-[14px] flex items-center gap-1 min-w-0" style={{ color: "var(--text)", fontWeight: 600 }}>
+          <span className="truncate">{a.username}</span>
+          {badge && <VerifiedBadge size={14} tier={a.badge_tier} />}
+        </p>
+        <p className="text-[13px] truncate mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {a.full_name ? <span translate="no">{a.full_name}</span> : null}
+          {a.full_name ? " · " : ""}
+          {trJoin(Number(a.followers) === 1 ? "{0} follower" : "{0} followers", formatCount(Number(a.followers) || 0))}
+        </p>
+      </div>
+    </button>
+  );
+}
+
+function TagResultRow({ t, onOpen }) {
+  const n = Number(t.posts) || 0;
+  return (
+    <button onClick={onOpen} className="flex items-center gap-3 py-2 px-4 w-full text-start" data-tag-row={t.tag}>
+      <span
+        className="w-[50px] h-[50px] rounded-full flex items-center justify-center shrink-0"
+        style={{ border: "1px solid var(--border)", color: "var(--text)", fontWeight: 600, fontSize: 22 }}
+      >
+        #
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-[14px] truncate" style={{ color: "var(--text)", fontWeight: 600 }}>#{t.tag}</p>
+        <p className="text-[13px] truncate mt-0.5" style={{ color: "var(--text-muted)" }}>
+          {trJoin(n === 1 ? "{0} post" : "{0} posts", formatCount(n))}
+        </p>
+      </div>
+    </button>
+  );
+}
+
+function SearchResults({ query, onOpenProfile, onOpenPost, onOpenTag, remember }) {
+  const [tab, setTab] = useState(() => (String(query).trim().startsWith("#") ? "tags" : "foryou"));
+  const [accounts, setAccounts] = useState(null);
+  const [tags, setTags] = useState(null);
+  const [posts, setPosts] = useState(null);
+  useEffect(() => {
+    let live = true;
+    setAccounts(null);
+    setTags(null);
+    setPosts(null);
+    const q = query.trim();
+    const timer = setTimeout(async () => {
+      const rel = await getRelations();
+      const isTag = q.startsWith("#");
+      const [a, t, p] = await Promise.all([isTag ? Promise.resolve([]) : searchAccounts(q), searchHashtags(q), searchPosts(q)]);
+      if (!live) return;
+      // Someone who blocked you can't be found; someone you blocked still can,
+      // so you can open their profile and unblock them.
+      setAccounts((a || []).filter((x) => !rel.blockedBy.has(x.id)));
+      setTags(t || []);
+      setPosts(p || []);
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  const openAccount = (a) => {
+    remember({ kind: "user", id: a.id, username: a.username, full_name: a.full_name || null, avatar_url: a.avatar_url || null });
+    onOpenProfile(a.id);
+  };
+  const openTag = (tag) => {
+    remember({ kind: "tag", id: tag });
+    onOpenTag(tag);
+  };
+  const waiting = (
+    <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
+      Searching...
+    </p>
+  );
+
+  return (
+    <div data-search-results="">
+      <SearchTabs tab={tab} onTab={setTab} />
+      {tab === "accounts" ? (
+        accounts === null ? (
+          waiting
+        ) : accounts.length === 0 ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No accounts found</p>
+        ) : (
+          <div className="py-1">
+            {accounts.map((a) => (
+              <AccountResultRow key={a.id} a={a} onOpen={() => openAccount(a)} />
+            ))}
+          </div>
+        )
+      ) : tab === "tags" ? (
+        tags === null ? (
+          waiting
+        ) : tags.length === 0 ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No tags found</p>
+        ) : (
+          <div className="py-1">
+            {tags.map((t) => (
+              <TagResultRow key={t.tag} t={t} onOpen={() => openTag(t.tag)} />
+            ))}
+          </div>
+        )
+      ) : accounts === null || tags === null || posts === null ? (
+        waiting
+      ) : (
+        <div>
+          {accounts.slice(0, 3).map((a) => (
+            <AccountResultRow key={a.id} a={a} onOpen={() => openAccount(a)} />
           ))}
+          {tags.slice(0, accounts.length ? 2 : 4).map((t) => (
+            <TagResultRow key={t.tag} t={t} onOpen={() => openTag(t.tag)} />
+          ))}
+          {accounts.length > 3 && (
+            <button onClick={() => setTab("accounts")} className="w-full text-start px-4 py-2 text-[13px]" style={{ color: "var(--accent-solid)", fontWeight: 600 }}>
+              See all accounts
+            </button>
+          )}
+          {posts.length > 0 ? (
+            <div className="mt-2">
+              <TallGrid posts={posts} onOpen={(p) => onOpenPost?.(p.id)} />
+            </div>
+          ) : accounts.length === 0 && tags.length === 0 ? (
+            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No results found</p>
+          ) : null}
         </div>
       )}
     </div>
   );
+}
+
+// ⋯ on a hashtag → Report → one of seven reasons → thanks.
+function HashtagMenuSheet({ tag, onClose }) {
+  const [step, setStep] = useState("menu");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const send = async (reason) => {
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase.rpc("report_hashtag", { p_tag: String(tag).toLowerCase(), p_reason: reason });
+    setBusy(false);
+    if (err) {
+      setError("Couldn't send your report. Try again later.");
+      return;
+    }
+    setStep("done");
+  };
+  return (
+    <StorySheetShell title={step === "menu" ? `#${tag}` : "Report"} onClose={onClose}>
+      {step === "menu" ? (
+        <div className="pb-6">
+          <button onClick={() => setStep("reasons")} className="w-full flex items-center gap-3 px-4 py-3.5 text-[15px] text-start" style={{ color: "var(--heart)", fontWeight: 600 }} data-tagmenu="report">
+            <Flag size={20} color="var(--heart)" />
+            <span className="flex-1">Report</span>
+          </button>
+        </div>
+      ) : step === "reasons" ? (
+        <div className="pb-6">
+          <p className="px-4 pt-1 pb-1 text-[16px]" style={{ color: "var(--text)", fontWeight: 700 }}>Why are you reporting this hashtag?</p>
+          <p className="px-4 pb-2 text-[12px]" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+            Your report is anonymous. If someone is in immediate danger, call local emergency services.
+          </p>
+          {HASHTAG_REPORT_REASONS.map((r) => (
+            <button
+              key={r}
+              disabled={busy}
+              onClick={() => send(r)}
+              className="w-full flex items-center gap-3 px-4 py-3.5 text-[14px] text-start"
+              style={{ color: "var(--text)", borderTop: "1px solid var(--border-subtle)", opacity: busy ? 0.5 : 1 }}
+              data-tagreason=""
+            >
+              <span className="flex-1">{r}</span>
+              <ChevronRight size={18} color="var(--text-muted)" />
+            </button>
+          ))}
+          {error && <p className="px-4 pt-2 text-[12px]" style={{ color: "var(--heart)" }}>{error}</p>}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center text-center px-6 pt-3 pb-8" data-tagreport-done="">
+          <span className="w-16 h-16 rounded-full flex items-center justify-center mb-3" style={{ border: "2px solid #2CB67D" }}>
+            <Check size={30} color="#2CB67D" strokeWidth={2.6} />
+          </span>
+          <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700 }}>Thanks for letting us know</p>
+          <p className="text-[13px] mt-1.5" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+            We'll review this hashtag. If its posts go against our Community Guidelines, we'll hide them.
+          </p>
+          <button onClick={onClose} className="mt-5 rounded-xl h-11 w-full text-[14px]" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+            Done
+          </button>
+        </div>
+      )}
+    </StorySheetShell>
+  );
+}
+
+function HashtagModeration({ flash }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(null);
+  const load = async () => {
+    setRows(null);
+    const { data, error: err } = await supabase.rpc("mod_list_hashtag_reports");
+    if (err) {
+      setError(/mod_list_hashtag_reports|function/i.test(err.message) ? "Hashtag reports start working once loop-step-23.sql has been run." : err.message);
+      setRows([]);
+      return;
+    }
+    setError("");
+    setRows(data || []);
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const act = async (fn, tag, done, confirmText) => {
+    if (confirmText && !window.confirm(trText(confirmText))) return;
+    setBusy(tag);
+    const { error: err } = await supabase.rpc(fn, { p_tag: tag });
+    setBusy(null);
+    hiddenTagMemo.delete(tag);
+    flash?.(err ? err.message : done);
+    if (!err) load();
+  };
+  if (rows === null) return <SkeletonRows count={4} avatar={48} />;
+  return (
+    <div>
+      {error && <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>{error}</p>}
+      {rows.length === 0 && !error && <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No reported hashtags</p>}
+      {rows.map((t) => (
+        <div key={t.tag} className="flex gap-3 rounded-2xl p-3 mb-2.5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <span className="w-12 h-12 rounded-full flex items-center justify-center shrink-0" style={{ border: "1px solid var(--border)", color: "var(--text)", fontWeight: 700, fontSize: 20 }}>
+            #
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>
+              #{t.tag}
+              {t.hidden && <span className="ms-1.5 text-[11px]" style={{ color: "var(--heart)" }}>· hidden</span>}
+            </p>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+              {trJoin("{0} reports", t.reports || 0)} · {trJoin(Number(t.posts) === 1 ? "{0} post" : "{0} posts", formatCount(Number(t.posts) || 0))}
+            </p>
+            <p className="text-[11px] mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>{(t.reasons || []).map((r) => trText(r)).join(" · ")}</p>
+            <div className="flex gap-2 mt-2">
+              {t.hidden ? (
+                <button disabled={busy === t.tag} onClick={() => act("mod_unhide_hashtag", t.tag, "Posts show again")} className="rounded-lg px-3 h-8 text-xs" style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700 }}>
+                  Show again
+                </button>
+              ) : (
+                <button
+                  disabled={busy === t.tag}
+                  onClick={() => act("mod_hide_hashtag", t.tag, "Hashtag hidden", "Hide every post under this hashtag from the hashtag page and search?")}
+                  className="rounded-lg px-3 h-8 text-xs"
+                  style={{ background: "var(--heart)", color: "#fff", fontWeight: 700 }}
+                >
+                  Hide posts
+                </button>
+              )}
+              <button disabled={busy === t.tag} onClick={() => act("mod_keep_hashtag", t.tag, "Kept — reports cleared")} className="rounded-lg px-3 h-8 text-xs" style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700 }}>
+                Keep
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---- Profiles saved on this phone (logged-out screen) ----
+// Like Instagram: when you log out you can keep your login info on this
+// phone, and next time you open your account with one tap. "Remove profiles
+// from this device" forgets them (and ends that saved login on the server).
+function savedProfiles() {
+  return readAccounts()
+    .filter((a) => a.loggedOut && a.refresh_token)
+    .sort((a, b) => (b.used_at || 0) - (a.used_at || 0));
+}
+
+// Forget a saved login everywhere: get a fresh pass for it once, then end it.
+async function revokeSavedLogin(acc) {
+  try {
+    const r = await freshSessionFor(acc);
+    if (!r.session?.access_token || !r.direct) return;
+    const auth = supabase.auth || {};
+    const base =
+      (typeof auth.url === "string" && auth.url) ||
+      (SB_PUBLIC_PREFIX ? SB_PUBLIC_PREFIX.replace(/\/storage\/v1\/object\/public\/?$/, "/auth/v1") : "");
+    const key = (auth.headers && (auth.headers.apikey || auth.headers.apiKey)) || supabase.rest?.headers?.apikey || supabase.supabaseKey || "";
+    if (!base || !key) return;
+    await fetch(`${base}/logout?scope=local`, { method: "POST", headers: { apikey: key, Authorization: `Bearer ${r.session.access_token}` } });
+  } catch {}
+}
+
+function SavedProfilesLogin({ accounts, onUseAnother, onCreate, onLoggedIn, onNeedPassword, demoLink }) {
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState("");
+  const [menu, setMenu] = useState(false);
+  const [removing, setRemoving] = useState(false); // choose which to remove
+  const [picked, setPicked] = useState(() => new Set());
+  const [confirm, setConfirm] = useState(false);
+  const one = accounts.length === 1;
+
+  const go = async (acc) => {
+    if (busy) return;
+    setError("");
+    setBusy(acc.id);
+    const r = await switchToAccount(acc);
+    setBusy(null);
+    if (r.ok) {
+      writeAccounts(readAccounts().map((a) => (a.id === acc.id ? { ...a, loggedOut: false, used_at: Date.now() } : a)));
+      onLoggedIn();
+      return;
+    }
+    if (r.error === "expired") {
+      onNeedPassword(acc.username || "");
+      return;
+    }
+    setError(r.error === "offline" ? "No internet connection. Try again." : "Loop is busy right now. Try again in a moment.");
+  };
+
+  const removeNow = async () => {
+    const ids = new Set(picked);
+    const gone = accounts.filter((a) => ids.has(a.id));
+    writeAccounts(readAccounts().filter((a) => !ids.has(a.id)));
+    setConfirm(false);
+    setRemoving(false);
+    setPicked(new Set());
+    gone.forEach((a) => revokeSavedLogin(a));
+  };
+
+  return (
+    <div className="flex-1 flex flex-col" data-saved-login="">
+      <div className="flex justify-end" style={{ marginTop: -40 }}>
+        <button onClick={() => setMenu(true)} aria-label="More" className="w-10 h-10 flex items-center justify-center" data-saved-more="">
+          <Ellipsis size={22} color="var(--text)" />
+        </button>
+      </div>
+      <div className="flex-1 flex flex-col justify-center py-4">
+        <div className="flex flex-col items-center mb-8">
+          <LoopLogo size={96} />
+        </div>
+        {removing ? (
+          <p className="text-center text-[13px] mb-3" style={{ color: "var(--text-muted)" }}>Choose the profiles to remove from this device</p>
+        ) : null}
+        {one && !removing ? (
+          <div className="flex flex-col items-center">
+            <Avatar username={accounts[0].username} avatarUrl={accounts[0].avatar_url} size={92} />
+            <p className="mt-3 text-[16px]" style={{ color: "var(--text)", fontWeight: 700 }}>{accounts[0].username}</p>
+            <button
+              onClick={() => go(accounts[0])}
+              disabled={!!busy}
+              data-saved-continue=""
+              className="w-full rounded-2xl py-3.5 text-sm mt-6 transition-transform active:scale-[0.98] flex items-center justify-center"
+              style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.75 : 1 }}
+            >
+              {busy ? <LoopSpinner size={18} color="var(--on-accent)" /> : "Log in"}
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+            {accounts.map((a, i) => (
+              <button
+                key={a.id}
+                data-saved-row={a.username}
+                onClick={() => {
+                  if (!removing) return go(a);
+                  setPicked((prev) => {
+                    const n = new Set(prev);
+                    n.has(a.id) ? n.delete(a.id) : n.add(a.id);
+                    return n;
+                  });
+                }}
+                className="w-full flex items-center gap-3 px-3.5 py-3 text-start"
+                style={{ borderTop: i ? "1px solid var(--border-subtle)" : "none", background: "var(--surface)" }}
+              >
+                <Avatar username={a.username} avatarUrl={a.avatar_url} size={46} />
+                <span className="flex-1 min-w-0 truncate text-[15px]" style={{ color: "var(--text)", fontWeight: 600 }}>{a.username}</span>
+                {removing ? (
+                  <span
+                    className="w-6 h-6 rounded-full flex items-center justify-center"
+                    style={{ border: picked.has(a.id) ? "none" : "2px solid var(--border)", background: picked.has(a.id) ? "var(--accent-solid)" : "transparent" }}
+                  >
+                    {picked.has(a.id) && <Check size={15} color="var(--on-accent)" strokeWidth={3} />}
+                  </span>
+                ) : busy === a.id ? (
+                  <LoopSpinner size={18} />
+                ) : (
+                  <ChevronRight size={18} color="var(--text-muted)" />
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        {error && <p className="text-xs mt-3 text-center" style={{ color: "var(--accent-solid)" }}>{error}</p>}
+        {removing ? (
+          <div className="flex gap-2 mt-4">
+            <button onClick={() => { setRemoving(false); setPicked(new Set()); }} className="flex-1 rounded-2xl py-3 text-sm" style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700 }}>
+              Cancel
+            </button>
+            <button
+              disabled={picked.size === 0}
+              onClick={() => setConfirm(true)}
+              data-saved-remove=""
+              className="flex-1 rounded-2xl py-3 text-sm"
+              style={{ background: "var(--heart)", color: "#fff", fontWeight: 700, opacity: picked.size ? 1 : 0.45 }}
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <button onClick={onUseAnother} className="w-full text-center text-sm py-3 mt-3" style={{ color: "var(--text)", fontWeight: 700 }} data-use-another="">
+            Use another profile
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col items-center" style={{ paddingBottom: "calc(18px + env(safe-area-inset-bottom, 0px))" }}>
+        <button
+          onClick={onCreate}
+          className="w-full rounded-2xl py-3 text-sm transition-transform active:scale-[0.98]"
+          style={{ border: "1.5px solid var(--accent-solid)", color: "var(--accent-solid)", fontWeight: 700, background: "transparent" }}
+        >
+          Create new account
+        </button>
+        {demoLink}
+      </div>
+
+      {menu && (
+        <StorySheetShell title="" onClose={() => setMenu(false)}>
+          <div className="pb-6">
+            <button
+              data-saved-remove-menu=""
+              onClick={() => {
+                setMenu(false);
+                if (one) {
+                  setPicked(new Set([accounts[0].id]));
+                  setConfirm(true);
+                } else setRemoving(true);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3.5 text-[15px] text-start"
+              style={{ color: "var(--heart)", fontWeight: 600 }}
+            >
+              <Trash2 size={20} color="var(--heart)" />
+              <span className="flex-1">Remove profiles from this device</span>
+            </button>
+          </div>
+        </StorySheetShell>
+      )}
+      {confirm && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center px-8" style={{ background: "rgba(0,0,0,0.6)" }} data-saved-confirm="">
+          <div className="w-full max-w-[300px] rounded-2xl overflow-hidden text-center" style={{ background: "var(--surface-raised)" }}>
+            <div className="px-5 pt-5 pb-4">
+              <p className="text-[16px]" style={{ color: "var(--text)", fontWeight: 700 }}>
+                {picked.size === 1 ? "Remove profile from this device?" : trJoin("Remove {0} profiles from this device?", picked.size)}
+              </p>
+              <p className="text-[13px] mt-2" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+                Next time, you'll need to enter the password to log in. Your account itself isn't deleted.
+              </p>
+            </div>
+            <button onClick={removeNow} className="w-full py-3 text-[14px]" style={{ borderTop: "1px solid var(--border)", color: "var(--heart)", fontWeight: 700 }} data-saved-confirm-yes="">
+              Remove
+            </button>
+            <button onClick={() => { setConfirm(false); if (one) setPicked(new Set()); }} className="w-full py-3 text-[14px]" style={{ borderTop: "1px solid var(--border)", color: "var(--text)" }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Logging out: keep the login info on this phone for one-tap login, or not.
+function LogoutSheet({ onClose, onLogout }) {
+  const [busy, setBusy] = useState(false);
+  const run = async (remember) => {
+    setBusy(true);
+    await onLogout(remember);
+    setBusy(false);
+  };
+  return (
+    <StorySheetShell title="Log out" onClose={busy ? () => {} : onClose}>
+      <div className="px-5 pb-6" data-logout-sheet="">
+        <p className="text-[16px] text-center" style={{ color: "var(--text)", fontWeight: 700 }}>Save your login info on this phone?</p>
+        <p className="text-[13px] text-center mt-1.5 mb-4" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+          Next time you can open your account with one tap. Don't save it on a phone that other people use.
+        </p>
+        <button disabled={busy} onClick={() => run(true)} data-logout-save="" className="w-full rounded-xl h-11 text-[14px]" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+          Save and log out
+        </button>
+        <button disabled={busy} onClick={() => run(false)} data-logout-nosave="" className="w-full rounded-xl h-11 text-[14px] mt-2" style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700 }}>
+          Log out without saving
+        </button>
+      </div>
+    </StorySheetShell>
+  );
+}
+
+// ---- "A new update is here — tap" ----
+// After a new version of Loop goes live, phones that still have the old one
+// open get a small bar at the top. Tapping it reloads into the new version.
+function currentBuildScript() {
+  try {
+    const s = [...document.querySelectorAll("script[src]")].map((x) => x.getAttribute("src") || "").find((x) => /\/assets\/index-[\w-]+\.js$/.test(x));
+    return s ? s.slice(s.indexOf("/assets/")) : null;
+  } catch {
+    return null;
+  }
+}
+async function newerBuildLive(mine) {
+  try {
+    const res = await fetch(`/?v=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return false;
+    const html = await res.text();
+    const m = html.match(/\/assets\/index-[\w-]+\.js/);
+    return !!m && m[0] !== mine;
+  } catch {
+    return false;
+  }
+}
+function UpdateBanner() {
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    const mine = currentBuildScript();
+    if (!mine) return; // only on the real website
+    let last = 0;
+    let stop = false;
+    const check = async () => {
+      if (stop || document.visibilityState !== "visible" || Date.now() - last < 4 * 60 * 1000) return;
+      last = Date.now();
+      if (await newerBuildLive(mine)) setFresh(true);
+    };
+    const first = setTimeout(check, 45 * 1000);
+    const every = setInterval(check, 10 * 60 * 1000);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      stop = true;
+      clearTimeout(first);
+      clearInterval(every);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, []);
+  if (!fresh) return null;
+  return (
+    <button
+      onClick={() => window.location.reload()}
+      data-update-banner=""
+      className="fixed z-[160] flex items-center gap-2 rounded-full ps-3 pe-4 h-10 text-[13px]"
+      style={{
+        left: "50%",
+        transform: "translateX(-50%)",
+        top: "calc(10px + env(safe-area-inset-top, 0px))",
+        background: "var(--text)",
+        color: "var(--bg)",
+        fontWeight: 700,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+        animation: "loopPop 0.25s ease-out",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span translate="no" style={{ display: "contents" }}>{trJoin("{0}New update available — tap", <RefreshCw size={16} color="var(--bg)" strokeWidth={2.4} />)}</span>
+    </button>
+  );
+}
+
+// ---- Data saver ----
+// "auto" (default) turns on by itself when the phone is saving data or the
+// connection is very slow. When on: videos don't play by themselves, they
+// load only when tapped, and loops use their light copy.
+const DATA_SAVER_KEY = "loop_data_saver";
+function getDataSaver() {
+  try {
+    return localStorage.getItem(DATA_SAVER_KEY) || "auto";
+  } catch {
+    return "auto";
+  }
+}
+function setDataSaver(v) {
+  try {
+    localStorage.setItem(DATA_SAVER_KEY, v);
+  } catch {}
+  try {
+    window.dispatchEvent(new Event("loop:datasaver"));
+  } catch {}
+}
+function phoneSavingData() {
+  const c = typeof navigator !== "undefined" ? navigator.connection || navigator.mozConnection || navigator.webkitConnection : null;
+  return !!c && (!!c.saveData || ["slow-2g", "2g"].includes(c.effectiveType));
+}
+function dataSaverOn() {
+  const v = getDataSaver();
+  return v === "on" || (v === "auto" && phoneSavingData());
+}
+function useDataSaver() {
+  const [on, setOn] = useState(dataSaverOn);
+  useEffect(() => {
+    const up = () => setOn(dataSaverOn());
+    window.addEventListener("loop:datasaver", up);
+    return () => window.removeEventListener("loop:datasaver", up);
+  }, []);
+  return on;
+}
+
+// ---- Interests ----
+// Picked on the first day (and any time from Search → ⚙). Explore puts posts
+// about them first and pushes the "see less" ones to the back. Kept on this
+// phone.
+const INTEREST_TOPICS = [
+  { key: "travel", label: "Travel", emoji: "✈️", words: ["travel", "trip", "tour", "beach", "hills", "sea", "ভ্রমণ", "বেড়ানো", "সমুদ্র"] },
+  { key: "food", label: "Food", emoji: "🍛", words: ["food", "recipe", "cooking", "biryani", "restaurant", "খাবার", "রান্না", "রেসিপি"] },
+  { key: "cricket", label: "Cricket", emoji: "🏏", words: ["cricket", "ক্রিকেট", "t20", "bpl"] },
+  { key: "football", label: "Football", emoji: "⚽", words: ["football", "soccer", "ফুটবল", "messi", "ronaldo"] },
+  { key: "music", label: "Music", emoji: "🎵", words: ["music", "song", "singing", "guitar", "গান", "সংগীত"] },
+  { key: "comedy", label: "Comedy", emoji: "😂", words: ["funny", "comedy", "meme", "fun", "হাসি", "মজা"] },
+  { key: "islamic", label: "Islamic", emoji: "🕌", words: ["islam", "quran", "allah", "dua", "namaz", "ইসলাম", "কুরআন", "দোয়া"] },
+  { key: "education", label: "Education", emoji: "📚", words: ["study", "learn", "education", "exam", "tips", "পড়াশোনা", "শিক্ষা"] },
+  { key: "tech", label: "Tech & AI", emoji: "🤖", words: ["tech", "ai", "coding", "gadget", "প্রযুক্তি"] },
+  { key: "phones", label: "Smartphones", emoji: "📱", words: ["phone", "smartphone", "iphone", "android", "samsung", "মোবাইল"] },
+  { key: "cars", label: "Cars & Bikes", emoji: "🏍️", words: ["car", "cars", "bike", "bikes", "motorcycle", "গাড়ি", "বাইক"] },
+  { key: "fashion", label: "Fashion", emoji: "👗", words: ["fashion", "style", "outfit", "dress", "saree", "পোশাক", "শাড়ি"] },
+  { key: "beauty", label: "Beauty", emoji: "💄", words: ["beauty", "makeup", "skincare", "সৌন্দর্য"] },
+  { key: "fitness", label: "Fitness", emoji: "💪", words: ["fitness", "gym", "workout", "exercise", "যোগ", "ব্যায়াম"] },
+  { key: "nature", label: "Nature", emoji: "🌿", words: ["nature", "flower", "rain", "river", "village", "প্রকৃতি", "গ্রাম", "নদী"] },
+  { key: "photography", label: "Photography", emoji: "📷", words: ["photo", "photography", "camera", "ছবি"] },
+  { key: "art", label: "Art & Design", emoji: "🎨", words: ["art", "drawing", "painting", "design", "আঁকা", "শিল্প"] },
+  { key: "gaming", label: "Gaming", emoji: "🎮", words: ["game", "gaming", "pubg", "freefire", "গেম"] },
+  { key: "movies", label: "Movies & Drama", emoji: "🎬", words: ["movie", "film", "drama", "natok", "নাটক", "সিনেমা"] },
+  { key: "business", label: "Business & Money", emoji: "💼", words: ["business", "money", "income", "freelancing", "invest", "ব্যবসা", "আয়"] },
+  { key: "animals", label: "Pets & Animals", emoji: "🐾", words: ["cat", "dog", "pet", "animal", "বিড়াল", "কুকুর"] },
+  { key: "kids", label: "Family & Kids", emoji: "👨‍👩‍👧", words: ["family", "kids", "baby", "parenting", "পরিবার", "বাচ্চা"] },
+];
+const INTEREST_KEY = "loop_interests";
+function readInterests() {
+  try {
+    const v = JSON.parse(localStorage.getItem(INTEREST_KEY) || "{}");
+    return { more: Array.isArray(v.more) ? v.more : [], less: Array.isArray(v.less) ? v.less : [], asked: !!v.asked };
+  } catch {
+    return { more: [], less: [], asked: false };
+  }
+}
+function saveInterests(v) {
+  try {
+    localStorage.setItem(INTEREST_KEY, JSON.stringify(v));
+  } catch {}
+}
+// + for each chosen topic a caption mentions, − for each "see less" one.
+function interestScore(caption, ints = readInterests()) {
+  const text = String(caption || "").toLowerCase();
+  if (!text) return 0;
+  const hit = (key) => {
+    const t = INTEREST_TOPICS.find((x) => x.key === key);
+    return !!t && t.words.some((w) => text.includes(w));
+  };
+  let s = 0;
+  ints.more.forEach((k) => hit(k) && (s += 1));
+  ints.less.forEach((k) => hit(k) && (s -= 2));
+  return s;
+}
+function sortByInterests(posts) {
+  const ints = readInterests();
+  if (!ints.more.length && !ints.less.length) return posts;
+  return posts
+    .map((p, i) => ({ p, i, s: interestScore(p.caption, ints) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map((x) => x.p);
+}
+
+function InterestChips({ chosen, onToggle, tone = "more" }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {INTEREST_TOPICS.map((t) => {
+        const on = chosen.includes(t.key);
+        return (
+          <button
+            key={t.key}
+            data-interest={t.key}
+            aria-pressed={on}
+            onClick={() => onToggle(t.key)}
+            className="flex items-center gap-1.5 rounded-full px-3.5 h-9 text-[13px] transition-transform active:scale-95"
+            style={
+              on
+                ? tone === "less"
+                  ? { background: "var(--tag-bg)", border: "1px solid var(--tag-border)", color: "var(--tag-text)", fontWeight: 700 }
+                  : { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }
+                : { background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", fontWeight: 500 }
+            }
+          >
+            <span aria-hidden="true">{t.emoji}</span>
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function InterestsScreen({ onBack }) {
+  const [ints, setInts] = useState(readInterests);
+  const toggle = (list, key) => {
+    setInts((prev) => {
+      const other = list === "more" ? "less" : "more";
+      const has = prev[list].includes(key);
+      const next = { ...prev, asked: true, [list]: has ? prev[list].filter((k) => k !== key) : [...prev[list], key], [other]: prev[other].filter((k) => k !== key) };
+      saveInterests(next);
+      return next;
+    });
+  };
+  return (
+    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }} data-interests-screen="">
+      <div className="sticky top-0 z-10 px-4 pt-4 pb-3" style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}>
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90">
+            <ChevronLeft size={24} color="var(--text)" />
+          </button>
+          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
+            Interests
+          </h1>
+        </div>
+        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+          You'll see more posts and loops related to the topics you pick
+        </p>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-10">
+        <p className="text-[13px] mb-2.5" style={{ color: "var(--text)", fontWeight: 700 }}>Show me more</p>
+        <InterestChips chosen={ints.more} onToggle={(k) => toggle("more", k)} />
+        <p className="text-[13px] mt-7 mb-1" style={{ color: "var(--text)", fontWeight: 700 }}>What you want to see less</p>
+        <p className="text-[11px] mb-2.5" style={{ color: "var(--text-muted)" }}>Posts and loops about these go to the back</p>
+        <InterestChips chosen={ints.less} onToggle={(k) => toggle("less", k)} tone="less" />
+      </div>
+    </div>
+  );
+}
+
+// The first day: "What do you like?" — shown once, to new accounts.
+function FirstDayInterests({ userId }) {
+  const [show, setShow] = useState(false);
+  const [picked, setPicked] = useState([]);
+  useEffect(() => {
+    if (!userId || readInterests().asked) return;
+    let off = false;
+    (async () => {
+      const { data } = await supabase.from("profiles").select("created_at").eq("id", userId).maybeSingle();
+      const born = data?.created_at ? new Date(data.created_at).getTime() : 0;
+      if (!off && born && Date.now() - born < 2 * 86400000) setShow(true);
+    })();
+    return () => {
+      off = true;
+    };
+  }, [userId]);
+  if (!show) return null;
+  const finish = (list) => {
+    const cur = readInterests();
+    saveInterests({ ...cur, more: list, asked: true });
+    setShow(false);
+  };
+  return (
+    <div className="fixed inset-0 z-[140] flex flex-col" style={{ background: "var(--bg)", animation: "loopFade 0.2s ease-out" }} data-first-interests="">
+      <div className="px-5 pt-8 pb-3" style={{ paddingTop: "calc(28px + env(safe-area-inset-top, 0px))" }}>
+        <LoopLogo size={56} />
+        <h1 className="text-[22px] mt-4" style={{ color: "var(--text)", fontWeight: 800 }}>What do you like?</h1>
+        <p className="text-[13px] mt-1" style={{ color: "var(--text-muted)", lineHeight: 1.45 }}>
+          Pick a few topics, and Loop will suggest posts and loops you'll enjoy. You can change them any time in Search.
+        </p>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 pb-4">
+        <InterestChips chosen={picked} onToggle={(k) => setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))} />
+      </div>
+      <div className="px-5 pt-2" style={{ paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))" }}>
+        <button
+          disabled={picked.length < 3}
+          onClick={() => finish(picked)}
+          data-interests-continue=""
+          className="w-full rounded-2xl h-12 text-[15px]"
+          style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: picked.length < 3 ? 0.45 : 1 }}
+        >
+          {picked.length < 3 ? trJoin("Pick {0} more", 3 - picked.length) : "Continue"}
+        </button>
+        <button onClick={() => finish([])} className="w-full h-11 text-[14px] mt-1" style={{ color: "var(--text-muted)", fontWeight: 600 }} data-interests-skip="">
+          Skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---- Today's Loop ----
+// Once a day, at a surprise time (the same for everyone on the same clock),
+// everybody shares one picture taken with the back and the front camera
+// together. You see your friends' only after you've shared yours, and a
+// late one says so.
+const localDayStr = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function momentTimeFor(day = localDayStr()) {
+  let h = 2166136261;
+  for (const ch of `loop-moment-${day}`) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  const minute = 600 + (Math.abs(h) % 720); // between 10:00 and 21:59
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d, Math.floor(minute / 60), minute % 60, 0);
+}
+const MOMENT_ON_TIME_MS = 2 * 60 * 1000;
+
+// back photo, with the selfie in the corner
+async function composeMoment(back, front) {
+  const W = 1080;
+  const H = 1440;
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const x = c.getContext("2d");
+  const cover = (img, dx, dy, dw, dh) => {
+    const iw = img.width || img.videoWidth;
+    const ih = img.height || img.videoHeight;
+    const s = Math.max(dw / iw, dh / ih);
+    const sw = dw / s;
+    const sh = dh / s;
+    x.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, dx, dy, dw, dh);
+  };
+  x.fillStyle = "#000";
+  x.fillRect(0, 0, W, H);
+  cover(back, 0, 0, W, H);
+  if (front) {
+    const fw = 320;
+    const fh = 420;
+    x.save();
+    x.beginPath();
+    x.roundRect ? x.roundRect(40, 40, fw, fh, 30) : x.rect(40, 40, fw, fh);
+    x.closePath();
+    x.lineWidth = 10;
+    x.strokeStyle = "#000";
+    x.stroke();
+    x.clip();
+    x.translate(40 + fw, 40);
+    x.scale(-1, 1); // a selfie looks the way you saw it
+    cover(front, 0, 0, fw, fh);
+    x.restore();
+  }
+  return new Promise((res) => c.toBlob(res, "image/jpeg", 0.86));
+}
+const loadImg = (file) =>
+  new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = rej;
+    im.src = URL.createObjectURL(file);
+  });
+const frameOf = (video) => {
+  const c = document.createElement("canvas");
+  c.width = video.videoWidth || 720;
+  c.height = video.videoHeight || 960;
+  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+  return c;
+};
+
+function MomentCamera({ meId, day, onClose, onPosted }) {
+  const videoRef = React.useRef(null);
+  const streamRef = React.useRef(null);
+  const [step, setStep] = useState("back"); // back | front | preview | files
+  const [count, setCount] = useState(0);
+  const [backShot, setBackShot] = useState(null);
+  const [blob, setBlob] = useState(null);
+  const [preview, setPreview] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [files, setFiles] = useState({ back: null, front: null });
+  const due = momentTimeFor(day).getTime() + MOMENT_ON_TIME_MS;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const stop = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  };
+  const start = async (facing) => {
+    stop();
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("no-camera");
+    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 1706 } }, audio: false });
+    streamRef.current = s;
+    if (videoRef.current) {
+      videoRef.current.srcObject = s;
+      await videoRef.current.play().catch(() => {});
+    }
+  };
+  useEffect(() => {
+    start("environment").catch(() => setStep("files"));
+    return stop;
+  }, []);
+  useEffect(() => () => preview && URL.revokeObjectURL(preview), [preview]);
+  const finish = async (back, front) => {
+    const b = await composeMoment(back, front);
+    if (!b) {
+      setError("Couldn't make the picture. Try again.");
+      return;
+    }
+    setBlob(b);
+    setPreview(URL.createObjectURL(b));
+    setStep("preview");
+  };
+  const shoot = async () => {
+    const v = videoRef.current;
+    if (!v) return;
+    const back = frameOf(v);
+    setBackShot(back);
+    setStep("front");
+    try {
+      await start("user");
+      for (let i = 3; i > 0; i--) {
+        setCount(i);
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      setCount(0);
+      const front = frameOf(videoRef.current);
+      stop();
+      finish(back, front);
+    } catch {
+      stop();
+      finish(back, null);
+    }
+  };
+  const fromFiles = async () => {
+    if (!files.back) return;
+    try {
+      const back = await loadImg(files.back);
+      const front = files.front ? await loadImg(files.front) : null;
+      finish(back, front);
+    } catch {
+      setError("Couldn't open that photo.");
+    }
+  };
+  const post = async () => {
+    if (!blob || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const path = `${meId}/${Date.now()}-moment.jpg`;
+      const { error: upErr } = await supabase.storage.from("posts").upload(path, blob, { contentType: "image/jpeg" });
+      if (upErr) throw upErr;
+      const url = supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
+      const late = Math.max(0, Math.round((Date.now() - due) / 60000));
+      const { error: insErr } = await supabase.from("moments").insert({ user_id: meId, day, media_url: url, late_minutes: late });
+      if (insErr) throw insErr;
+      onPosted();
+    } catch (e) {
+      setBusy(false);
+      setError(/duplicate|unique/i.test(e?.message || "") ? "You've already shared today's Loop." : /moments/i.test(e?.message || "") ? "Today's Loop starts working once loop-step-23.sql has been run." : "Couldn't share it. Try again.");
+    }
+  };
+  const left = Math.max(0, due - now);
+  const clock = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
+  return (
+    <div className="fixed inset-0 z-[150] flex flex-col" style={{ background: "#000", color: "#fff" }} data-moment-camera="" data-no-swipe="">
+      <div className="flex items-center justify-between px-3" style={{ height: 52, paddingTop: "env(safe-area-inset-top, 0px)" }}>
+        <button onClick={() => { stop(); onClose(); }} aria-label="Close" className="p-2">
+          <X size={24} color="#fff" />
+        </button>
+        <span className="text-[15px]" style={{ fontWeight: 800 }}>Today's Loop</span>
+        <span className="text-[13px] tabular-nums px-2" style={{ color: left ? "#FFD54A" : "rgba(255,255,255,0.6)", fontWeight: 700 }}>
+          {left ? clock : "Late"}
+        </span>
+      </div>
+      <div className="flex-1 min-h-0 relative flex items-center justify-center px-3">
+        {step === "preview" ? (
+          <img src={preview} alt="" className="max-w-full max-h-full rounded-2xl" data-moment-preview="" />
+        ) : step === "files" ? (
+          <div className="w-full max-w-[320px] text-center">
+            <p className="text-[14px] mb-4" style={{ color: "rgba(255,255,255,0.8)", lineHeight: 1.5 }}>
+              Loop can't open the camera here. Take or choose two photos instead.
+            </p>
+            {[
+              ["back", "Back camera photo", "environment"],
+              ["front", "Selfie", "user"],
+            ].map(([k, label, cap]) => (
+              <label key={k} className="flex items-center justify-between rounded-xl px-4 h-12 mb-2 cursor-pointer" style={{ background: "rgba(255,255,255,0.1)" }}>
+                <span className="text-[14px]" style={{ fontWeight: 600 }}>{label}</span>
+                <span className="text-[12px]" style={{ color: files[k] ? "#7CFFB2" : "rgba(255,255,255,0.6)" }}>{files[k] ? "✓" : "Choose"}</span>
+                <input type="file" accept="image/*" capture={cap} className="hidden" data-moment-file={k} onChange={(e) => setFiles((f) => ({ ...f, [k]: e.target.files?.[0] || null }))} />
+              </label>
+            ))}
+            <button disabled={!files.back} onClick={fromFiles} className="w-full rounded-xl h-11 mt-2 text-[14px]" style={{ background: "#fff", color: "#000", fontWeight: 700, opacity: files.back ? 1 : 0.4 }}>
+              Next
+            </button>
+          </div>
+        ) : (
+          <div className="relative w-full h-full rounded-2xl overflow-hidden" style={{ background: "#111" }}>
+            <video ref={videoRef} className="w-full h-full object-cover" playsInline muted style={{ transform: step === "front" ? "scaleX(-1)" : "none" }} />
+            {step === "front" && backShot && (
+              <span className="absolute top-3 start-3 rounded-xl overflow-hidden" style={{ width: 92, height: 120, border: "3px solid #000" }}>
+                <img src={backShot.toDataURL("image/jpeg", 0.6)} alt="" className="w-full h-full object-cover" />
+              </span>
+            )}
+            {count > 0 && <span className="absolute inset-0 flex items-center justify-center text-[64px]" style={{ fontWeight: 800, textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>{count}</span>}
+          </div>
+        )}
+      </div>
+      {error && <p className="text-center text-[12px] px-4 pt-2" style={{ color: "#FF8A8A" }}>{error}</p>}
+      <div className="flex items-center justify-center gap-6 py-5" style={{ paddingBottom: "calc(20px + env(safe-area-inset-bottom, 0px))" }}>
+        {step === "back" && (
+          <button onClick={shoot} aria-label="Take photo" data-moment-shoot="" className="rounded-full" style={{ width: 74, height: 74, border: "5px solid #fff", background: "rgba(255,255,255,0.15)" }} />
+        )}
+        {step === "front" && <p className="text-[14px]" style={{ fontWeight: 700 }}>Now smile! 😄</p>}
+        {step === "preview" && (
+          <>
+            <button
+              onClick={() => {
+                setBlob(null);
+                setStep(files.back ? "files" : "back");
+                if (!files.back) start("environment").catch(() => setStep("files"));
+              }}
+              className="rounded-full px-5 h-11 text-[14px]"
+              style={{ background: "rgba(255,255,255,0.14)", fontWeight: 700 }}
+            >
+              Retake
+            </button>
+            <button onClick={post} disabled={busy} data-moment-post="" className="rounded-full px-7 h-11 text-[14px] flex items-center gap-2" style={{ background: "#fff", color: "#000", fontWeight: 800 }}>
+              <span translate="no" style={{ display: "contents" }}>{trJoin("{0}Share", busy ? <LoopSpinner size={18} color="#000" /> : null)}</span>
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MomentViewer({ m, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[150] flex flex-col" style={{ background: "#000" }} onClick={onClose} data-moment-viewer="">
+      <div className="flex items-center gap-2.5 px-4" style={{ height: 56, paddingTop: "env(safe-area-inset-top, 0px)" }}>
+        <Avatar username={m.username} avatarUrl={m.avatar_url} size={32} />
+        <span className="text-[14px]" style={{ color: "#fff", fontWeight: 700 }}>{m.username}</span>
+        <span className="text-[12px]" style={{ color: "rgba(255,255,255,0.6)" }}>
+          {timeShort(m.created_at)}
+          {m.late_minutes > 0 ? ` · ${trJoin("{0} min late", m.late_minutes)}` : ""}
+        </span>
+        <span className="flex-1" />
+        <X size={22} color="#fff" />
+      </div>
+      <div className="flex-1 min-h-0 flex items-center justify-center px-2 pb-8">
+        <img src={m.media_url} alt="" className="max-w-full max-h-full rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+
+function TodaysLoopRow({ meId }) {
+  const day = localDayStr();
+  // In the demo it's always time, so it can be tried any time of day.
+  const at = DEMO_MODE ? Date.now() - 30000 : momentTimeFor(day).getTime();
+  const [now, setNow] = useState(Date.now());
+  const [rows, setRows] = useState(null);
+  const [camera, setCamera] = useState(false);
+  const [viewing, setViewing] = useState(null);
+  const load = async () => {
+    const { data, error } = await supabase.rpc("moments_today", { p_day: day });
+    setRows(error || !Array.isArray(data) ? [] : data);
+  };
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 20000);
+    return () => clearInterval(t);
+  }, []);
+  const open = now >= at;
+  useEffect(() => {
+    if (open && meId) load();
+  }, [open, meId]);
+  if (!open || !meId || rows === null) return null;
+  const mine = rows.find((r) => r.user_id === meId);
+  const others = rows.filter((r) => r.user_id !== meId);
+  const left = at + MOMENT_ON_TIME_MS - now;
+  return (
+    <div className="mx-3 my-2 rounded-2xl p-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} data-todays-loop="">
+      <div className="flex items-center gap-2">
+        <span className="text-[16px]" aria-hidden="true">⚡</span>
+        <span className="text-[14px] flex-1" style={{ color: "var(--text)", fontWeight: 800 }}>Today's Loop</span>
+        {!mine && (
+          <span className="text-[11px]" style={{ color: left > 0 ? "var(--accent-solid)" : "var(--text-muted)", fontWeight: 700 }}>
+            {left > 0 ? "Now — 2 minutes to be on time" : "You can still share a late one"}
+          </span>
+        )}
+      </div>
+      {!mine && (
+        <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>
+          Share what you're doing right now — back and front camera together — to see your friends'.
+        </p>
+      )}
+      <div className="flex gap-2 mt-2.5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+        {mine ? (
+          <button onClick={() => setViewing(mine)} className="shrink-0 relative rounded-xl overflow-hidden" style={{ width: 84, height: 112 }} data-moment-mine="">
+            <img src={mine.media_url} alt="" className="w-full h-full object-cover" />
+            <span className="absolute bottom-0 inset-x-0 text-[10px] py-0.5 text-center" style={{ background: "rgba(0,0,0,0.55)", color: "#fff", fontWeight: 700 }}>
+              {trJoin("You{0}", mine.late_minutes > 0 ? ` ${trText("· late")}` : "")}
+            </span>
+          </button>
+        ) : (
+          <button onClick={() => setCamera(true)} className="shrink-0 rounded-xl flex flex-col items-center justify-center gap-1.5" style={{ width: 84, height: 112, background: ACCENT }} data-moment-start="">
+            <Camera size={24} color="var(--on-accent)" />
+            <span className="text-[11px] px-1 text-center" style={{ color: "var(--on-accent)", fontWeight: 800 }}>Share yours</span>
+          </button>
+        )}
+        {others.map((m) => (
+          <button
+            key={m.user_id}
+            onClick={() => (m.media_url ? setViewing(m) : setCamera(true))}
+            className="shrink-0 relative rounded-xl overflow-hidden"
+            style={{ width: 84, height: 112, background: "var(--bg-sunken)" }}
+            data-moment-friend={m.username}
+          >
+            {m.media_url ? (
+              <img src={m.media_url} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="absolute inset-0 flex items-center justify-center" style={{ background: "linear-gradient(135deg, var(--accent-start), var(--accent-end))", filter: "blur(0px)", opacity: 0.35 }} />
+            )}
+            {!m.media_url && (
+              <span className="absolute inset-0 flex items-center justify-center">
+                <Lock size={18} color="var(--text)" />
+              </span>
+            )}
+            <span className="absolute bottom-0 inset-x-0 text-[10px] py-0.5 px-1 truncate text-center" style={{ background: "rgba(0,0,0,0.55)", color: "#fff", fontWeight: 700 }}>
+              {m.username}
+            </span>
+          </button>
+        ))}
+        {others.length === 0 && (
+          <p className="text-[12px] self-center px-2" style={{ color: "var(--text-muted)" }}>
+            {mine ? "No one you follow has shared yet today." : ""}
+          </p>
+        )}
+      </div>
+      {camera && (
+        <MomentCamera
+          meId={meId}
+          day={day}
+          onClose={() => setCamera(false)}
+          onPosted={() => {
+            setCamera(false);
+            load();
+          }}
+        />
+      )}
+      {viewing && <MomentViewer m={viewing} onClose={() => setViewing(null)} />}
+    </div>
+  );
+}
+
+// ---- Weekly challenge (Add Yours) ----
+// The team starts a challenge; people join with an "Add Yours" story. The
+// team picks winners and gives them the Prime badge.
+function ChallengeCard() {
+  const [ch, setCh] = useState(null);
+  const [joined, setJoined] = useState(0);
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const nowIso = new Date().toISOString();
+      const { data, error } = await supabase.from("challenges").select("id, title, prompt, starts_at, ends_at").lte("starts_at", nowIso).gt("ends_at", nowIso).order("starts_at", { ascending: false }).limit(1);
+      const c = !error && data?.[0];
+      if (!c) return;
+      try {
+        if (localStorage.getItem(`loop_ch_hide_${c.id}`)) return;
+      } catch {}
+      setCh(c);
+      const { count } = await supabase.from("stories").select("id", { count: "exact", head: true }).contains("stickers", JSON.stringify([{ chain: `challenge-${c.id}` }]));
+      setJoined(count || 0);
+    })();
+  }, []);
+  if (!ch || hidden) return null;
+  const days = Math.max(0, Math.ceil((new Date(ch.ends_at).getTime() - Date.now()) / 86400000));
+  const join = () => {
+    window.__loopAddYours = { prompt: ch.prompt, chain: `challenge-${ch.id}`, at: Date.now() };
+    window.dispatchEvent(new Event("loop:new-story"));
+  };
+  return (
+    <div className="mx-3 my-2 rounded-2xl p-3.5 relative overflow-hidden" style={{ background: "linear-gradient(135deg, rgba(245,96,64,0.16), rgba(88,81,219,0.16))", border: "1px solid var(--border)" }} data-challenge-card="">
+      <button
+        onClick={() => {
+          setHidden(true);
+          try {
+            localStorage.setItem(`loop_ch_hide_${ch.id}`, "1");
+          } catch {}
+        }}
+        className="absolute top-2 end-2 w-7 h-7 flex items-center justify-center"
+        aria-label="Hide"
+      >
+        <X size={15} color="var(--text-muted)" />
+      </button>
+      <p className="text-[11px]" style={{ color: "var(--accent-solid)", fontWeight: 800, letterSpacing: 0.3 }}>🏆 WEEKLY CHALLENGE</p>
+      <p className="text-[15px] mt-1 pe-6" style={{ color: "var(--text)", fontWeight: 800 }}>{ch.title}</p>
+      <p className="text-[13px] mt-0.5" style={{ color: "var(--text-secondary)" }}>“{ch.prompt}”</p>
+      <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+        {trJoin("{0} · {1} · Winners get the Prime badge", trJoin("{0} joined", formatCount(joined)), days <= 1 ? trText("Ends today") : trJoin("Ends in {0} days", days))}
+      </p>
+      <button onClick={join} className="mt-2.5 rounded-xl px-4 h-9 text-[13px] flex items-center gap-1.5" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 800 }} data-challenge-join="">
+        <span translate="no" style={{ display: "contents" }}>{trJoin("{0} Join with Add Yours", <Camera size={15} color="var(--on-accent)" />)}</span>
+      </button>
+    </div>
+  );
+}
+
+function ChallengeAdmin({ flash }) {
+  const [list, setList] = useState(null);
+  const [form, setForm] = useState({ title: "", prompt: "", days: 7 });
+  const [busy, setBusy] = useState(false);
+  const [entriesFor, setEntriesFor] = useState(null);
+  const [entries, setEntries] = useState(null);
+  const [note, setNote] = useState("");
+  const load = async () => {
+    const { data, error } = await supabase.from("challenges").select("*").order("starts_at", { ascending: false }).limit(20);
+    if (error) {
+      setNote(/challenges/i.test(error.message) ? "Challenges start working once loop-step-23.sql has been run." : error.message);
+      setList([]);
+      return;
+    }
+    setNote("");
+    setList(data || []);
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const create = async () => {
+    if (!form.title.trim() || !form.prompt.trim()) return;
+    setBusy(true);
+    const start = new Date();
+    const { error } = await supabase.from("challenges").insert({ title: form.title.trim().slice(0, 80), prompt: form.prompt.trim().slice(0, 120), starts_at: start.toISOString(), ends_at: new Date(start.getTime() + form.days * 86400000).toISOString() });
+    setBusy(false);
+    if (error) return flash(error.message);
+    setForm({ title: "", prompt: "", days: 7 });
+    flash("Challenge started");
+    load();
+  };
+  const openEntries = async (c) => {
+    setEntriesFor(c);
+    setEntries(null);
+    const { data, error } = await supabase.rpc("challenge_entries", { p_challenge: c.id });
+    setEntries(error ? [] : data || []);
+    if (error) flash(error.message);
+  };
+  const award = async (c, e) => {
+    if (!window.confirm(trJoin("Give {0} the Prime badge for 1 month?", e.username))) return;
+    const r1 = await supabase.rpc("admin_grant_badge", { p_user: e.user_id, p_tier: "ocean", p_months: 1 });
+    if (r1.error) return flash(r1.error.message);
+    await supabase.rpc("challenge_add_winner", { p_challenge: c.id, p_user: e.user_id });
+    flash(trJoin("{0} got the Prime badge", e.username));
+    load();
+  };
+  const endNow = async (c) => {
+    const { error } = await supabase.from("challenges").update({ ends_at: new Date().toISOString() }).eq("id", c.id);
+    if (error) return flash(error.message);
+    load();
+  };
+  const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
+  if (list === null) return <SkeletonRows count={3} avatar={44} />;
+  if (entriesFor)
+    return (
+      <div>
+        <button onClick={() => setEntriesFor(null)} className="flex items-center gap-1 text-[13px] mb-3" style={{ color: "var(--text)", fontWeight: 700 }}>
+          <ChevronLeft size={18} /> {entriesFor.title}
+        </button>
+        {entries === null ? (
+          <SkeletonRows count={4} avatar={44} />
+        ) : entries.length === 0 ? (
+          <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>No entries yet</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-1.5">
+            {entries.map((e) => {
+              const won = (entriesFor.winners || []).includes(e.user_id);
+              return (
+                <div key={e.story_id} className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                  <div className="relative" style={{ aspectRatio: "9 / 16", background: "#111" }}>
+                    <MediaThumb src={e.media_url} isVideo={e.media_type === "video"} className="absolute inset-0 w-full h-full object-cover" />
+                  </div>
+                  <p className="text-[11px] px-1.5 pt-1 truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{e.username}</p>
+                  <button onClick={() => award(entriesFor, e)} disabled={won} className="w-full text-[11px] py-1.5" style={{ color: won ? "var(--text-muted)" : "var(--accent-solid)", fontWeight: 800 }}>
+                    {won ? "Winner ✓" : "Give Prime"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  return (
+    <div>
+      {note && <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>{note}</p>}
+      <div className="rounded-2xl p-3 mb-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <p className="text-[13px] mb-2" style={{ color: "var(--text)", fontWeight: 800 }}>New weekly challenge</p>
+        <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Title, e.g. Rainy day" className="w-full rounded-xl px-3 h-10 text-sm outline-none mb-2" style={box} />
+        <input value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} placeholder="Add Yours prompt, e.g. Show your rainy window" className="w-full rounded-xl px-3 h-10 text-sm outline-none mb-2" style={box} />
+        <div className="flex gap-2 mb-2">
+          {[3, 7, 14].map((d) => (
+            <button key={d} onClick={() => setForm({ ...form, days: d })} className="rounded-full px-3 h-8 text-[12px]" style={form.days === d ? { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 } : { ...box, fontWeight: 600 }}>
+              {trJoin("{0} days", d)}
+            </button>
+          ))}
+        </div>
+        <button onClick={create} disabled={busy} className="w-full rounded-xl h-10 text-sm" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: busy ? 0.6 : 1 }}>
+          Start challenge
+        </button>
+      </div>
+      {list.map((c) => {
+        const live = new Date(c.ends_at).getTime() > Date.now();
+        return (
+          <div key={c.id} className="rounded-2xl p-3 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <p className="text-[13px]" style={{ color: "var(--text)", fontWeight: 800 }}>
+              {c.title} {live ? <span style={{ color: "#2CB67D" }}>· live</span> : <span style={{ color: "var(--text-muted)" }}>· ended</span>}
+            </p>
+            <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>“{c.prompt}” · {trJoin("{0} winners", (c.winners || []).length)}</p>
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => openEntries(c)} className="rounded-lg px-3 h-8 text-xs" style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700 }}>
+                Entries
+              </button>
+              {live && (
+                <button onClick={() => endNow(c)} className="rounded-lg px-3 h-8 text-xs" style={{ background: "var(--bg-sunken)", color: "var(--heart)", fontWeight: 700 }}>
+                  End now
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---- Invite friends ----
+// Your link brings friends to Loop. When 5 of them have joined and shared a
+// post, you can take a free month of the Prime badge (once).
+const INVITE_GOAL = 5;
+function inviteLinkFor(username) {
+  const base = typeof location !== "undefined" ? location.origin : "";
+  return `${base}/?invite=${encodeURIComponent(username || "")}`;
+}
+// Opening a link with ?invite= remembers who invited this phone.
+(() => {
+  try {
+    const u = new URLSearchParams(location.search).get("invite");
+    if (u && /^[a-zA-Z0-9_.]{1,30}$/.test(u)) localStorage.setItem("loop_invited_by", u);
+  } catch {}
+})();
+async function claimInviteIfAny() {
+  let by = null;
+  try {
+    by = localStorage.getItem("loop_invited_by");
+  } catch {}
+  if (!by) return;
+  const { error } = await supabase.rpc("claim_invite", { p_inviter: by });
+  if (!error || /already|self|not_found/i.test(error.message)) {
+    try {
+      localStorage.removeItem("loop_invited_by");
+    } catch {}
+  }
+}
+
+function InviteFriendsScreen({ onBack, Header }) {
+  const [me, setMe] = useState(null);
+  const [st, setSt] = useState(null);
+  const [msg, setMsg] = useState("");
+  const load = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: p } = await supabase.from("profiles").select("username").eq("id", user.id).maybeSingle();
+    setMe(p?.username || "");
+    const { data, error } = await supabase.rpc("my_invites");
+    setSt(error || !data ? { joined: 0, counted: 0, rewarded: false, missing: true } : Array.isArray(data) ? data[0] : data);
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const link = inviteLinkFor(me);
+  const share = async () => {
+    const text = trText("Join me on Loop!");
+    try {
+      if (navigator.share) await navigator.share({ title: "Loop", text, url: link });
+      else {
+        await navigator.clipboard.writeText(link);
+        setMsg("Link copied");
+      }
+    } catch {}
+  };
+  const claim = async () => {
+    const { error } = await supabase.rpc("claim_invite_reward");
+    setMsg(error ? (/not_enough/.test(error.message) ? "Not yet — keep inviting!" : /already/.test(error.message) ? "You've already taken this reward." : error.message) : "🎉 You got the Prime badge for 1 month!");
+    load();
+  };
+  const counted = Math.min(INVITE_GOAL, Number(st?.counted) || 0);
+  return (
+    <div className="flex-1 overflow-y-auto" style={{ background: "var(--bg)" }} data-invite-screen="">
+      <Header title="Invite friends" back={onBack} />
+      <div className="px-6 pt-7 text-center">
+        <p className="text-4xl">💌</p>
+        <p className="text-lg mt-2" style={{ color: "var(--text)", fontWeight: 800 }}>Bring your friends to Loop</p>
+        <p className="text-sm mt-1.5" style={{ color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          {trJoin("When {0} friends join with your link and share their first post, you get the Prime badge free for 1 month.", INVITE_GOAL)}
+        </p>
+      </div>
+      <div className="mx-4 mt-5 rounded-2xl p-4" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[13px]" style={{ color: "var(--text)", fontWeight: 700 }}>{trJoin("{0} of {1} friends", counted, INVITE_GOAL)}</span>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{trJoin("{0} joined", Number(st?.joined) || 0)}</span>
+        </div>
+        <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--bg-sunken)" }}>
+          <div className="h-full rounded-full" style={{ width: `${(counted / INVITE_GOAL) * 100}%`, background: ACCENT, transition: "width .3s" }} />
+        </div>
+        <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>A friend counts once their account is a week old, has a profile photo and one post. This keeps fake accounts out.</p>
+        {st?.rewarded ? (
+          <p className="text-[13px] mt-3" style={{ color: "#2CB67D", fontWeight: 700 }}>Reward taken ✓</p>
+        ) : (
+          <button onClick={claim} disabled={counted < INVITE_GOAL} className="w-full rounded-xl h-10 text-sm mt-3" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700, opacity: counted < INVITE_GOAL ? 0.45 : 1 }} data-invite-claim="">
+            Get my Prime badge
+          </button>
+        )}
+      </div>
+      <div className="mx-4 mt-3 rounded-2xl p-3 flex items-center gap-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <span className="flex-1 min-w-0 truncate text-[12px]" style={{ color: "var(--text-secondary)" }} translate="no">{me ? link : "…"}</span>
+        <button onClick={share} disabled={!me} className="rounded-lg px-3 h-9 text-[13px] flex items-center gap-1.5 shrink-0" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }} data-invite-share="">
+          <span translate="no" style={{ display: "contents" }}>{trJoin("{0} Share", <ShareIcon size={14} color="var(--on-accent)" />)}</span>
+        </button>
+      </div>
+      {msg && <p className="text-center text-[13px] mt-3" style={{ color: "var(--text)", fontWeight: 600 }}>{msg}</p>}
+      {st?.missing && <p className="text-center text-[11px] mt-3 px-6" style={{ color: "var(--text-muted)" }}>Counting friends starts once loop-step-23.sql has been run.</p>}
+    </div>
+  );
+}
+
+// ---- Loop Rewind: your year on Loop ----
+function LoopRewindScreen({ onBack }) {
+  const year = new Date().getFullYear();
+  const [data, setData] = useState(null);
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const from = new Date(year, 0, 1).toISOString();
+      const [{ data: posts }, { data: fol }] = await Promise.all([
+        supabase.from("posts").select("id, media_type, media_url, cover_url, caption, created_at").eq("user_id", user.id).gte("created_at", from).limit(2000),
+        supabase.from("follows").select("follower_id").eq("following_id", user.id).gte("created_at", from).limit(10000),
+      ]);
+      const list = posts || [];
+      const ids = list.map((p) => p.id);
+      let likes = [];
+      if (ids.length) {
+        const { data: lk } = await supabase.from("likes").select("post_id").in("post_id", ids.slice(0, 500)).limit(20000);
+        likes = lk || [];
+      }
+      const per = {};
+      likes.forEach((l) => (per[l.post_id] = (per[l.post_id] || 0) + 1));
+      const top = list.slice().sort((a, b) => (per[b.id] || 0) - (per[a.id] || 0))[0] || null;
+      const tags = {};
+      list.forEach((p) => {
+        for (const m of String(p.caption || "").matchAll(HASHTAG_IN_TEXT)) tags[m[1].toLowerCase()] = (tags[m[1].toLowerCase()] || 0) + 1;
+      });
+      const topTag = Object.entries(tags).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      const months = {};
+      list.forEach((p) => (months[new Date(p.created_at).getMonth()] = (months[new Date(p.created_at).getMonth()] || 0) + 1));
+      const busiest = Object.entries(months).sort((a, b) => b[1] - a[1])[0];
+      setData({
+        posts: list.filter((p) => isPhotoPost(p)).length,
+        loops: list.filter((p) => !isPhotoPost(p)).length,
+        likes: likes.length,
+        followers: (fol || []).length,
+        top,
+        topLikes: top ? per[top.id] || 0 : 0,
+        topTag,
+        busiest: busiest ? new Date(year, Number(busiest[0]), 1).toLocaleString(I18N_LOCALE, { month: "long" }) : null,
+      });
+    })();
+  }, []);
+  const slides = data
+    ? [
+        { bg: "linear-gradient(160deg,#5851db,#c13584)", big: String(year), line: "Your year on Loop" },
+        { bg: "linear-gradient(160deg,#f56040,#fcaf45)", big: formatCount(data.posts + data.loops), line: trJoin("You shared {0} posts and {1} loops", data.posts, data.loops) },
+        { bg: "linear-gradient(160deg,#ff3d7f,#7b3fe4)", big: formatCount(data.likes), line: "hearts on what you shared" },
+        { bg: "linear-gradient(160deg,#00b09b,#96c93d)", big: formatCount(data.followers), line: "new followers this year" },
+        ...(data.top ? [{ bg: "linear-gradient(160deg,#1d2b64,#f8cdda)", img: data.top.cover_url || (isPhotoPost(data.top) ? data.top.media_url : null), big: trJoin("{0} ❤", formatCount(data.topLikes)), line: "Your most loved post" }] : []),
+        ...(data.topTag ? [{ bg: "linear-gradient(160deg,#141e30,#243b55)", big: `#${data.topTag}`, line: "Your favourite hashtag" }] : []),
+        ...(data.busiest ? [{ bg: "linear-gradient(160deg,#ee0979,#ff6a00)", big: data.busiest, line: "Your busiest month" }] : []),
+        { bg: "linear-gradient(160deg,#5851db,#c13584)", big: "∞", line: "Thanks for being on Loop. See you next year!" },
+      ]
+    : [];
+  const s = slides[i];
+  return (
+    <div className="fixed inset-0 z-[140] flex flex-col" style={{ background: s?.bg || "#000", color: "#fff", transition: "background .4s" }} data-rewind="">
+      <div className="flex gap-1 px-3" style={{ paddingTop: "calc(10px + env(safe-area-inset-top, 0px))" }}>
+        {slides.map((_, k) => (
+          <span key={k} className="flex-1 h-[3px] rounded-full" style={{ background: k <= i ? "#fff" : "rgba(255,255,255,0.35)" }} />
+        ))}
+      </div>
+      <div className="flex items-center justify-between px-3 h-12">
+        <span className="text-[14px]" style={{ fontWeight: 800 }}>Loop Rewind {year}</span>
+        <button onClick={onBack} aria-label="Close" className="p-2">
+          <X size={22} color="#fff" />
+        </button>
+      </div>
+      {!data ? (
+        <div className="flex-1 flex items-center justify-center">
+          <LoopSpinner size={44} color="#fff" />
+        </div>
+      ) : (
+        <button className="flex-1 flex flex-col items-center justify-center px-8 text-center" onClick={() => (i < slides.length - 1 ? setI(i + 1) : onBack())} data-rewind-slide={i}>
+          {s.img && <img src={s.img} alt="" className="rounded-2xl mb-5 object-cover" style={{ width: 180, height: 240 }} />}
+          <span className="block text-[56px] leading-none" style={{ fontWeight: 900 }}>{s.big}</span>
+          <span className="block text-[18px] mt-4" style={{ fontWeight: 700, lineHeight: 1.35 }}>{s.line}</span>
+          <span className="block text-[12px] mt-10" style={{ opacity: 0.7 }}>Tap to continue</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---- Ads and promotions (built, switched OFF) ----
+// The same places Instagram shows ads: between posts on Home, between
+// people's stories, between loops, and inside the Explore grid. Nothing
+// shows until an admin turns ads on in Moderation → Ads and adds a
+// campaign. Every ad is clearly marked "Sponsored".
+const AD_PLACES = [
+  ["feed", "Home feed"],
+  ["stories", "Stories"],
+  ["loops", "Loops"],
+  ["explore", "Explore"],
+];
+const AD_CTAS = ["Learn more", "Shop now", "Sign up", "Install now", "Contact us", "Book now", "Watch more"];
+function adsConfig() {
+  const a = appConfig().ads || {};
+  const n = (v, d, lo, hi) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d);
+  return {
+    enabled: a.enabled === true,
+    feed_every: n(a.feed_every, 8, 3, 50),
+    stories_every: n(a.stories_every, 5, 2, 30),
+    loops_every: n(a.loops_every, 7, 3, 50),
+    explore_every: n(a.explore_every, 15, 6, 60),
+  };
+}
+const adsMemo = { at: 0, list: null, wait: null };
+async function loadAds() {
+  if (adsMemo.list && Date.now() - adsMemo.at < 10 * 60 * 1000) return adsMemo.list;
+  if (adsMemo.wait) return adsMemo.wait;
+  adsMemo.wait = (async () => {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("ad_campaigns")
+      .select("id, advertiser, avatar_url, title, body, media_url, media_type, link_url, cta, placements")
+      .eq("active", true)
+      .lte("starts_at", nowIso)
+      .gt("ends_at", nowIso)
+      .limit(30);
+    adsMemo.list = error ? [] : data || [];
+    adsMemo.at = Date.now();
+    adsMemo.wait = null;
+    return adsMemo.list;
+  })();
+  return adsMemo.wait;
+}
+// Ads for one place, or [] when ads are off.
+function useAds(place) {
+  const cfg = useAppConfig();
+  const on = !!(cfg.ads && cfg.ads.enabled === true);
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    if (!on) {
+      setList([]);
+      return;
+    }
+    let off = false;
+    loadAds().then((all) => !off && setList(all.filter((a) => (a.placements || []).includes(place))));
+    return () => {
+      off = true;
+    };
+  }, [on, place]);
+  return list;
+}
+const adSeen = new Set();
+function adEvent(ad, kind) {
+  if (!ad?.id) return;
+  if (kind === "view") {
+    if (adSeen.has(ad.id)) return;
+    adSeen.add(ad.id);
+  }
+  supabase.rpc("ad_event", { p_ad: ad.id, p_kind: kind }).then(() => {}, () => {});
+}
+function openAd(ad) {
+  adEvent(ad, "click");
+  if (ad.link_url && /^https?:\/\//i.test(ad.link_url)) window.open(ad.link_url, "_blank", "noopener,noreferrer");
+}
+function AdMedia({ ad, className = "w-full h-full object-cover", autoPlay = true }) {
+  if (!ad.media_url) return <div className={className} style={{ background: "linear-gradient(135deg, var(--accent-start), var(--accent-end))" }} />;
+  return ad.media_type === "video" ? (
+    <video src={ad.media_url} className={className} muted playsInline loop autoPlay={autoPlay} preload="metadata" />
+  ) : (
+    <img src={ad.media_url} alt="" className={className} loading="lazy" />
+  );
+}
+function AdHeader({ ad, dark }) {
+  return (
+    <div className="flex items-center gap-2.5 px-3 py-2.5">
+      <Avatar username={ad.advertiser || "Ad"} avatarUrl={ad.avatar_url} size={32} />
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] truncate" style={{ color: dark ? "#fff" : "var(--text)", fontWeight: 700 }} translate="no">{ad.advertiser}</p>
+        <p className="text-[11px]" style={{ color: dark ? "rgba(255,255,255,0.75)" : "var(--text-muted)" }}>Sponsored</p>
+      </div>
+    </div>
+  );
+}
+function AdCta({ ad, dark }) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        openAd(ad);
+      }}
+      className="w-full flex items-center justify-between px-3 h-11 text-[13px]"
+      style={{ background: dark ? "rgba(255,255,255,0.16)" : "var(--surface)", color: dark ? "#fff" : "var(--accent-solid)", fontWeight: 700, borderTop: dark ? "none" : "1px solid var(--border-subtle)", borderBottom: dark ? "none" : "1px solid var(--border-subtle)" }}
+      data-ad-cta=""
+    >
+      <span>{trText(ad.cta || "Learn more")}</span>
+      <ChevronRight size={18} color={dark ? "#fff" : "var(--accent-solid)"} />
+    </button>
+  );
+}
+
+// Home: a sponsored post between posts.
+function SponsoredPost({ ad }) {
+  const ref = React.useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => e.isIntersecting && e.intersectionRatio > 0.5 && adEvent(ad, "view"), { threshold: [0.5] });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ad?.id]);
+  return (
+    <div ref={ref} className="mb-3" data-ad="feed">
+      <AdHeader ad={ad} />
+      <button onClick={() => openAd(ad)} className="block w-full relative" style={{ aspectRatio: "4 / 5", background: "var(--bg-sunken)" }}>
+        <AdMedia ad={ad} className="absolute inset-0 w-full h-full object-cover" />
+      </button>
+      <AdCta ad={ad} />
+      {(ad.title || ad.body) && (
+        <p className="px-3 pt-2 text-[13px]" style={{ color: "var(--text)" }}>
+          <b translate="no">{ad.advertiser}</b> {ad.title ? <b>{ad.title} </b> : null}
+          {ad.body}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Explore: one square in the grid, marked Sponsored.
+function SponsoredTile({ ad }) {
+  useEffect(() => adEvent(ad, "view"), [ad?.id]);
+  return (
+    <button onClick={() => openAd(ad)} className="relative overflow-hidden block w-full" style={{ aspectRatio: "3 / 4", background: "var(--bg-sunken)" }} data-ad="explore">
+      <AdMedia ad={ad} className="absolute inset-0 w-full h-full object-cover" />
+      <span className="absolute bottom-1.5 start-1.5 rounded px-1.5 py-0.5 text-[10px]" style={{ background: "rgba(0,0,0,0.6)", color: "#fff", fontWeight: 700 }}>
+        Sponsored
+      </span>
+    </button>
+  );
+}
+
+// Stories and Loops: a full-screen ad you can skip.
+function SponsoredFullScreen({ ad, place, onDone }) {
+  const [left, setLeft] = useState(5);
+  useEffect(() => {
+    adEvent(ad, "view");
+    const t = setInterval(() => setLeft((s) => s - 1), 1000);
+    return () => clearInterval(t);
+  }, [ad?.id]);
+  useEffect(() => {
+    if (place === "stories" && left <= 0) onDone();
+  }, [left]);
+  return (
+    <div className="fixed inset-0 z-[120] flex flex-col" style={{ background: "#000" }} data-ad={place} onClick={onDone}>
+      {place === "stories" && (
+        <div className="px-2 pt-2" style={{ paddingTop: "calc(8px + env(safe-area-inset-top, 0px))" }}>
+          <div className="h-[3px] rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.35)" }}>
+            <div className="h-full" style={{ background: "#fff", width: `${Math.min(100, ((5 - left) / 5) * 100)}%`, transition: "width 1s linear" }} />
+          </div>
+        </div>
+      )}
+      <div className="absolute inset-0">
+        <AdMedia ad={ad} className="w-full h-full object-cover" />
+      </div>
+      <div className="relative" style={{ paddingTop: place === "stories" ? 0 : "env(safe-area-inset-top, 0px)" }}>
+        <AdHeader ad={ad} dark />
+      </div>
+      <div className="flex-1" />
+      <div className="relative px-4 pb-2">
+        {(ad.title || ad.body) && (
+          <p className="text-[14px] mb-3" style={{ color: "#fff", textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+            {ad.title ? <b>{ad.title} </b> : null}
+            {ad.body}
+          </p>
+        )}
+        <div className="rounded-xl overflow-hidden">
+          <AdCta ad={ad} dark />
+        </div>
+      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDone();
+        }}
+        className="relative self-end me-4 mb-4 rounded-full px-4 h-9 text-[13px]"
+        style={{ background: "rgba(0,0,0,0.55)", color: "#fff", fontWeight: 700, marginBottom: "calc(16px + env(safe-area-inset-bottom, 0px))" }}
+        data-ad-skip=""
+      >
+        Skip ›
+      </button>
+    </div>
+  );
+}
+
+// Moderation → Ads: the switch, how often, and the campaigns.
+function AdsAdmin({ flash }) {
+  const cfg = useAppConfig();
+  const a = adsConfig();
+  const [list, setList] = useState(null);
+  const [note, setNote] = useState("");
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [freq, setFreq] = useState({ feed_every: a.feed_every, stories_every: a.stories_every, loops_every: a.loops_every, explore_every: a.explore_every });
+  const load = async () => {
+    const { data, error } = await supabase.from("ad_campaigns").select("*").order("created_at", { ascending: false }).limit(50);
+    if (error) {
+      setNote(/ad_campaigns/i.test(error.message) ? "Ads start working once loop-step-23.sql has been run." : error.message);
+      setList([]);
+      return;
+    }
+    setNote("");
+    setList(data || []);
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const saveCfg = async (patch) => {
+    const value = { ...a, ...freq, ...patch };
+    const { error } = await supabase.rpc("admin_set_config", { p_key: "ads", p_value: value });
+    if (error) return flash(error.message);
+    await loadAppConfig(true);
+    flash(value.enabled ? "Ads are on" : "Saved — ads are off");
+  };
+  const blank = { advertiser: "", title: "", body: "", media_url: "", media_type: "photo", link_url: "", cta: "Learn more", placements: ["feed"], days: 7 };
+  const saveAd = async () => {
+    if (!form.advertiser.trim() || !/^https?:\/\//i.test(form.link_url.trim())) return flash("Add the advertiser's name and a link starting with https://");
+    setBusy(true);
+    const start = new Date();
+    const row = {
+      advertiser: form.advertiser.trim().slice(0, 60),
+      title: form.title.trim().slice(0, 80) || null,
+      body: form.body.trim().slice(0, 300) || null,
+      media_url: form.media_url.trim() || null,
+      media_type: form.media_type,
+      link_url: form.link_url.trim(),
+      cta: form.cta,
+      placements: form.placements,
+      starts_at: start.toISOString(),
+      ends_at: new Date(start.getTime() + form.days * 86400000).toISOString(),
+      active: true,
+    };
+    const { error } = await supabase.from("ad_campaigns").insert(row);
+    setBusy(false);
+    if (error) return flash(error.message);
+    setForm(null);
+    adsMemo.list = null;
+    flash("Campaign added");
+    load();
+  };
+  const toggle = async (c) => {
+    const { error } = await supabase.from("ad_campaigns").update({ active: !c.active }).eq("id", c.id);
+    if (error) return flash(error.message);
+    adsMemo.list = null;
+    load();
+  };
+  const box = { background: "var(--bg-sunken)", border: "1px solid var(--border)", color: "var(--text)" };
+  const input = (k, ph) => <input value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={ph} className="w-full rounded-xl px-3 h-10 text-sm outline-none mb-2" style={box} />;
+  return (
+    <div data-ads-admin="">
+      {note && <p className="text-xs mb-3" style={{ color: "var(--heart)" }}>{note}</p>}
+      <div className="rounded-2xl p-3.5 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <div className="flex items-center justify-between">
+          <span>
+            <span className="block text-[14px]" style={{ color: "var(--text)", fontWeight: 800 }}>Show ads</span>
+            <span className="block text-[11px]" style={{ color: "var(--text-muted)" }}>{a.enabled ? "On — ads show to everyone" : "Off — nobody sees any ad"}</span>
+          </span>
+          <button onClick={() => saveCfg({ enabled: !a.enabled })} className="rounded-full shrink-0" style={{ width: 44, height: 26, background: a.enabled ? ACCENT : "var(--toggle-off)", position: "relative" }} data-ads-switch="" aria-pressed={a.enabled}>
+            <span className="rounded-full bg-white absolute" style={{ width: 22, height: 22, top: 2, left: a.enabled ? 20 : 2, transition: "left .15s" }} />
+          </button>
+        </div>
+        <p className="text-[12px] mt-3 mb-1.5" style={{ color: "var(--text)", fontWeight: 700 }}>How often</p>
+        {[
+          ["feed_every", "Home: one ad after every … posts"],
+          ["stories_every", "Stories: one ad after every … people"],
+          ["loops_every", "Loops: one ad after every … loops"],
+          ["explore_every", "Explore: one ad in every … squares"],
+        ].map(([k, label]) => (
+          <label key={k} className="flex items-center justify-between gap-2 py-1">
+            <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{label}</span>
+            <input value={freq[k]} inputMode="numeric" onChange={(e) => setFreq({ ...freq, [k]: e.target.value.replace(/\D/g, "").slice(0, 2) })} className="w-14 rounded-lg px-2 h-8 text-sm text-center outline-none" style={box} />
+          </label>
+        ))}
+        <button onClick={() => saveCfg({})} className="w-full rounded-xl h-9 text-[13px] mt-2" style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700 }}>
+          Save how often
+        </button>
+      </div>
+      {form ? (
+        <div className="rounded-2xl p-3.5 mb-3" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          {input("advertiser", "Advertiser's name")}
+          {input("title", "Headline (optional)")}
+          {input("body", "Text (optional)")}
+          {input("media_url", "Photo or video link (https://…)")}
+          {input("link_url", "Where the button goes (https://…)")}
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {["photo", "video"].map((t) => (
+              <button key={t} onClick={() => setForm({ ...form, media_type: t })} className="rounded-full px-3 h-8 text-[12px]" style={form.media_type === t ? { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 } : { ...box, fontWeight: 600 }}>
+                {t === "photo" ? "Photo" : "Video"}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {AD_CTAS.map((c) => (
+              <button key={c} onClick={() => setForm({ ...form, cta: c })} className="rounded-full px-3 h-8 text-[12px]" style={form.cta === c ? { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 } : { ...box, fontWeight: 600 }}>
+                {c}
+              </button>
+            ))}
+          </div>
+          <p className="text-[12px] mb-1.5" style={{ color: "var(--text-muted)" }}>Where it shows</p>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {AD_PLACES.map(([k, label]) => {
+              const on = form.placements.includes(k);
+              return (
+                <button key={k} onClick={() => setForm({ ...form, placements: on ? form.placements.filter((x) => x !== k) : [...form.placements, k] })} className="rounded-full px-3 h-8 text-[12px]" style={on ? { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 } : { ...box, fontWeight: 600 }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex gap-1.5 mb-3">
+            {[7, 14, 30].map((d) => (
+              <button key={d} onClick={() => setForm({ ...form, days: d })} className="rounded-full px-3 h-8 text-[12px]" style={form.days === d ? { background: ACCENT, color: "var(--on-accent)", fontWeight: 700 } : { ...box, fontWeight: 600 }}>
+                {trJoin("{0} days", d)}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setForm(null)} className="flex-1 rounded-xl h-10 text-sm" style={{ background: "var(--bg-sunken)", color: "var(--text)", fontWeight: 700 }}>
+              Cancel
+            </button>
+            <button onClick={saveAd} disabled={busy || form.placements.length === 0} className="flex-1 rounded-xl h-10 text-sm" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}>
+              Add campaign
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setForm(blank)} className="w-full rounded-xl h-10 text-sm mb-3" style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }} data-ads-new="">
+          New campaign
+        </button>
+      )}
+      {list === null ? (
+        <SkeletonRows count={3} avatar={44} />
+      ) : (
+        list.map((c) => (
+          <div key={c.id} className="flex gap-3 rounded-2xl p-3 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <div className="w-14 h-14 rounded-lg overflow-hidden shrink-0" style={{ background: "var(--bg-sunken)" }}>
+              <AdMedia ad={c} autoPlay={false} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] truncate" style={{ color: "var(--text)", fontWeight: 700 }}>{c.advertiser}</p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                {(c.placements || []).join(" · ")} · {trJoin("{0} views", formatCount(c.views || 0))} · {trJoin("{0} taps", formatCount(c.clicks || 0))}
+              </p>
+              <button onClick={() => toggle(c)} className="mt-1.5 rounded-lg px-3 h-7 text-[11px]" style={{ background: "var(--bg-sunken)", color: c.active ? "var(--heart)" : "var(--text)", fontWeight: 700 }}>
+                {c.active ? "Pause" : "Run again"}
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// After signing in on a phone opened from an invite link, count it once.
+function InviteClaimer({ meId }) {
+  useEffect(() => {
+    if (meId && !DEMO_MODE) claimInviteIfAny();
+  }, [meId]);
+  return null;
 }
 
 // ---- Post drafts ----
@@ -17610,10 +20162,13 @@ function TagPeoplePicker({ value, onChange, title = "Tag people", max = 20, hint
 // pass, so sliders move smoothly even on modest phones. If a phone has no
 // WebGL, the same edits are drawn with the browser's own canvas filters.
 const FX_TOOLS = [
+  { key: "lux", name: "Lux", min: 0, max: 100 },
   { key: "brightness", name: "Brightness", min: -100, max: 100 },
   { key: "contrast", name: "Contrast", min: -100, max: 100 },
+  { key: "structure", name: "Structure", min: 0, max: 100 },
   { key: "saturation", name: "Saturation", min: -100, max: 100 },
   { key: "warmth", name: "Warmth", min: -100, max: 100 },
+  { key: "tint", name: "Tint", min: -100, max: 100 },
   { key: "fade", name: "Fade", min: 0, max: 100 },
   { key: "highlights", name: "Highlights", min: -100, max: 100 },
   { key: "shadows", name: "Shadows", min: -100, max: 100 },
@@ -17654,14 +20209,17 @@ function fxParams(ed, { skipLook = false } = {}) {
   const adj = skipLook ? {} : ed?.adj || {};
   const val = (key) => (Number(adj[key]) || 0) + k * (Number(f.p[key]) || 0);
   const mixv = (v, d) => (v ? v.map((x, i) => d[i] + (x - d[i]) * k) : d);
+  const lux = Math.max(0, Math.min(100, Number(adj.lux) || 0)) / 100;
   return {
-    brightness: val("brightness") / 100,
-    contrast: val("contrast") / 100,
-    saturation: val("saturation") / 100,
+    brightness: val("brightness") / 100 + lux * 0.08,
+    contrast: val("contrast") / 100 + lux * 0.14,
+    saturation: val("saturation") / 100 + lux * 0.14,
     warmth: val("warmth") / 100,
+    tint: val("tint") / 100,
+    structure: Math.max(0, val("structure") / 100),
     fade: Math.max(0, val("fade") / 100),
-    highlights: val("highlights") / 100,
-    shadows: val("shadows") / 100,
+    highlights: val("highlights") / 100 - lux * 0.22,
+    shadows: val("shadows") / 100 + lux * 0.4,
     vignette: Math.max(0, val("vignette") / 100),
     sharpen: Math.max(0, val("sharpen") / 100),
     grain: Math.max(0, val("grain") / 100),
@@ -17761,7 +20319,7 @@ varying vec2 v_out;
 uniform sampler2D u_img;
 uniform vec2 u_px;
 uniform vec2 u_size;
-uniform float u_bright, u_contrast, u_sat, u_warm, u_fade, u_high, u_shadow, u_vig, u_sharp, u_grain, u_mono, u_sepia;
+uniform float u_bright, u_contrast, u_sat, u_warm, u_fade, u_high, u_shadow, u_vig, u_sharp, u_grain, u_mono, u_sepia, u_tint, u_struct;
 uniform vec3 u_lift, u_gain;
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 void main() {
@@ -17770,6 +20328,14 @@ void main() {
     vec3 n = texture2D(u_img, v_uv + vec2(u_px.x, 0.0)).rgb + texture2D(u_img, v_uv - vec2(u_px.x, 0.0)).rgb
            + texture2D(u_img, v_uv + vec2(0.0, u_px.y)).rgb + texture2D(u_img, v_uv - vec2(0.0, u_px.y)).rgb;
     c = c + (c - n * 0.25) * u_sharp * 1.6;
+  }
+  if (u_struct > 0.001) {
+    vec2 q = u_px * 4.0;
+    vec3 b = texture2D(u_img, v_uv + vec2(q.x, 0.0)).rgb + texture2D(u_img, v_uv - vec2(q.x, 0.0)).rgb
+           + texture2D(u_img, v_uv + vec2(0.0, q.y)).rgb + texture2D(u_img, v_uv - vec2(0.0, q.y)).rgb
+           + texture2D(u_img, v_uv + q).rgb + texture2D(u_img, v_uv - q).rgb
+           + texture2D(u_img, v_uv + vec2(q.x, -q.y)).rgb + texture2D(u_img, v_uv + vec2(-q.x, q.y)).rgb;
+    c = c + (c - b * 0.125) * u_struct * 0.8;
   }
   c = clamp(c, 0.0, 1.0);
   if (u_bright > 0.0) c = mix(c, 1.0 - (1.0 - c) * (1.0 - c), u_bright * 0.85);
@@ -17781,6 +20347,9 @@ void main() {
   c.r += u_warm * 0.075;
   c.g += u_warm * 0.012;
   c.b -= u_warm * 0.075;
+  c.g -= u_tint * 0.06;
+  c.r += u_tint * 0.03;
+  c.b += u_tint * 0.03;
   L = luma(c);
   c = mix(vec3(L), c, 1.0 + u_sat);
   vec3 sep = vec3(dot(c, vec3(0.393, 0.769, 0.189)), dot(c, vec3(0.349, 0.686, 0.168)), dot(c, vec3(0.272, 0.534, 0.131)));
@@ -17833,7 +20402,7 @@ function createFxRenderer(canvas) {
   gl.enableVertexAttribArray(aPos);
   gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
   const U = {};
-  ["u_map", "u_img", "u_px", "u_size", "u_bright", "u_contrast", "u_sat", "u_warm", "u_fade", "u_high", "u_shadow", "u_vig", "u_sharp", "u_grain", "u_mono", "u_sepia", "u_lift", "u_gain"].forEach(
+  ["u_map", "u_img", "u_px", "u_size", "u_bright", "u_contrast", "u_sat", "u_warm", "u_fade", "u_high", "u_shadow", "u_vig", "u_sharp", "u_grain", "u_mono", "u_sepia", "u_tint", "u_struct", "u_lift", "u_gain"].forEach(
     (n) => (U[n] = gl.getUniformLocation(prog, n))
   );
   const tex = gl.createTexture();
@@ -17879,6 +20448,8 @@ function createFxRenderer(canvas) {
       gl.uniform1f(U.u_grain, p.grain);
       gl.uniform1f(U.u_mono, p.mono);
       gl.uniform1f(U.u_sepia, p.sepia);
+      gl.uniform1f(U.u_tint, p.tint);
+      gl.uniform1f(U.u_struct, p.structure);
       gl.uniform3f(U.u_lift, p.lift[0], p.lift[1], p.lift[2]);
       gl.uniform3f(U.u_gain, p.gain[0], p.gain[1], p.gain[2]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -17940,6 +20511,11 @@ function createFx2dRenderer(canvas) {
       if (Math.abs(p.warmth) > 0.01) {
         ctx.globalCompositeOperation = "soft-light";
         ctx.fillStyle = p.warmth > 0 ? `rgba(255,150,40,${Math.min(0.5, p.warmth * 0.45)})` : `rgba(40,120,255,${Math.min(0.5, -p.warmth * 0.45)})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (Math.abs(p.tint) > 0.01) {
+        ctx.globalCompositeOperation = "soft-light";
+        ctx.fillStyle = p.tint > 0 ? `rgba(255,60,200,${Math.min(0.4, p.tint * 0.35)})` : `rgba(60,255,90,${Math.min(0.4, -p.tint * 0.35)})`;
         ctx.fillRect(0, 0, w, h);
       }
       if (p.fade > 0.01) {
@@ -18053,6 +20629,9 @@ async function fxExport(file, ed, aspectValue, { side, quality } = {}) {
 
 // ---- Edit photos before posting: Filter, Edit, Crop (like Instagram) ----
 const FX_TOOL_ICONS = {
+  lux: Sparkles,
+  structure: Grid3x3,
+  tint: Palette,
   brightness: Sun,
   contrast: Contrast,
   saturation: Droplet,
@@ -18440,7 +21019,7 @@ function PhotoEditor({ items, startIndex = 0, aspect, onAspect, onClose, onDone 
       )}
 
       {/* the tools */}
-      <div className="shrink-0" style={{ minHeight: 150 }}>
+      <div className="shrink-0 flex flex-col justify-end pb-2" style={{ minHeight: 150 }}>
         {!isPhoto ? (
           <div className="px-4 pt-3">
             <p className="text-[12px] mb-2" style={{ color: "rgba(255,255,255,0.6)" }}>Shape of the post</p>
@@ -18458,21 +21037,6 @@ function PhotoEditor({ items, startIndex = 0, aspect, onAspect, onClose, onDone 
               {Math.round(Number(ed.adj?.[tool.key]) || 0)}
             </p>
             <FxSlider value={Number(ed.adj?.[tool.key]) || 0} min={toolDef.min} max={toolDef.max} onChange={(v) => setEd((x) => ({ ...x, adj: { ...x.adj, [tool.key]: v } }))} />
-            <div className="flex items-center justify-between mt-3">
-              <button
-                onClick={() => {
-                  setEd((x) => ({ ...x, adj: { ...x.adj, [tool.key]: tool.before } }));
-                  setTool(null);
-                }}
-                className="px-2 h-10 text-[15px]"
-                style={{ fontWeight: 600 }}
-              >
-                Cancel
-              </button>
-              <button onClick={() => setTool(null)} className="px-2 h-10 text-[15px]" style={{ fontWeight: 700 }}>
-                Done
-              </button>
-            </div>
           </div>
         ) : strengthOpen !== null ? (
           <div className="px-5 pt-4">
@@ -18480,25 +21044,13 @@ function PhotoEditor({ items, startIndex = 0, aspect, onAspect, onClose, onDone 
               {trText(filterName)} · <span className="tabular-nums">{Math.round(ed.strength ?? 100)}</span>
             </p>
             <FxSlider value={ed.strength ?? 100} min={0} max={100} onChange={(v) => setEd((x) => ({ ...x, strength: v }))} />
-            <div className="flex items-center justify-between mt-3">
-              <button
-                onClick={() => {
-                  setEd((x) => ({ ...x, strength: strengthOpen }));
-                  setStrengthOpen(null);
-                }}
-                className="px-2 h-10 text-[15px]"
-                style={{ fontWeight: 600 }}
-              >
-                Cancel
-              </button>
-              <button onClick={() => setStrengthOpen(null)} className="px-2 h-10 text-[15px]" style={{ fontWeight: 700 }}>
-                Done
-              </button>
-            </div>
           </div>
         ) : tab === "filter" ? (
           <div className="pt-2">
-            <div className="flex gap-2.5 px-3 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+            <p className="text-center text-[11.5px] mb-2" data-tap-again="" style={{ color: "rgba(255,255,255,0.62)", fontWeight: 600, visibility: ed.filter && ed.filter !== "normal" ? "visible" : "hidden" }}>
+              Tap again to adjust
+            </p>
+            <div className="flex gap-2.5 px-3 overflow-x-auto pb-1" data-filter-strip="" style={{ scrollbarWidth: "none", touchAction: "pan-x", overscrollBehaviorX: "contain" }}>
               {FX_FILTERS.map((f, i) => {
                 const on = ed.filter === f.key;
                 return (
@@ -18512,7 +21064,9 @@ function PhotoEditor({ items, startIndex = 0, aspect, onAspect, onClose, onDone 
                   >
                     <span className="text-[11px]" style={pill(on)}>{f.name}</span>
                     <span className="rounded-md overflow-hidden" style={{ width: 72, height: 72, background: "#222", outline: on ? "2px solid #FFFFFF" : "none", outlineOffset: 1 }}>
-                      {thumbs?.[i] ? <img src={thumbs[i]} alt="" className="w-full h-full object-cover" draggable={false} /> : null}
+                      {thumbs?.[i] ? (
+                        <img src={thumbs[i]} alt="" className="w-full h-full object-cover" draggable={false} style={{ pointerEvents: "none", WebkitUserDrag: "none", userSelect: "none", WebkitTouchCallout: "none" }} />
+                      ) : null}
                     </span>
                   </button>
                 );
@@ -18529,7 +21083,7 @@ function PhotoEditor({ items, startIndex = 0, aspect, onAspect, onClose, onDone 
             )}
           </div>
         ) : tab === "edit" ? (
-          <div className="flex gap-1 px-2 pt-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+          <div className="flex gap-1 px-2 pt-3 overflow-x-auto" data-tool-strip="" style={{ scrollbarWidth: "none", touchAction: "pan-x", overscrollBehaviorX: "contain" }}>
             {FX_TOOLS.map((t) => {
               const Icon = FX_TOOL_ICONS[t.key] || SlidersHorizontal;
               const v = Number(ed.adj?.[t.key]) || 0;
@@ -18591,6 +21145,40 @@ function PhotoEditor({ items, startIndex = 0, aspect, onAspect, onClose, onDone 
           </div>
         )}
       </div>
+
+      {/* adjusting a filter or a tool: Cancel · name · Finished */}
+      {(tool || strengthOpen !== null) && isPhoto && (
+        <div className="flex items-center justify-between shrink-0 px-1" data-adjust-bar="" style={{ height: 52, borderTop: "1px solid rgba(255,255,255,0.08)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+          <button
+            onClick={() => {
+              if (tool) {
+                setEd((x) => ({ ...x, adj: { ...x.adj, [tool.key]: tool.before } }));
+                setTool(null);
+              } else {
+                setEd((x) => ({ ...x, strength: strengthOpen }));
+                setStrengthOpen(null);
+              }
+            }}
+            className="px-4 h-full text-[15px]"
+            style={{ fontWeight: 600 }}
+          >
+            Cancel
+          </button>
+          <span className="text-[14px] truncate" style={{ fontWeight: 700, color: "rgba(255,255,255,0.75)" }}>
+            {tool ? trText(toolDef?.name || "") : trText(filterName)}
+          </span>
+          <button
+            onClick={() => {
+              setTool(null);
+              setStrengthOpen(null);
+            }}
+            className="px-4 h-full text-[15px]"
+            style={{ fontWeight: 700 }}
+          >
+            Finished
+          </button>
+        </div>
+      )}
 
       {/* Filter · Edit · Crop */}
       {!tool && strengthOpen === null && isPhoto && (
@@ -20951,7 +23539,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
               fontWeight: 600,
               border: mode === "reel" ? "none" : "1px solid var(--border)",
             }}
-          >{trJoin("{0} Reel", <Video size={16} />)}</button>
+          >{trJoin("{0} Loop", <Video size={16} />)}</button>
         </div>
 
         {mode === "reel" ? (
@@ -21095,7 +23683,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
               <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
                 {sound
                   ? `${sound.ownerName ? "@" + sound.ownerName + " · " : ""}plays instead of your video's own sound`
-                  : "Your video's own sound — or pick one from another reel"}
+                  : "Your video's own sound — or pick one from another loop"}
               </p>
             </div>
             <button
@@ -21288,7 +23876,7 @@ function UploadScreen({ initialMode = "photo", presetSound = null, onSoundTaken 
               "Only people whose birthday on Loop says they're 18 or older will see this. Everyone else — and anyone without a birthday — won't.",
             ],
             ...(uploadRank >= 2
-              ? [["Profile only", profileOnly, setProfileOnly, "Shows on your profile, not in anyone's feed or Reels. Elite & Supreme perk."]]
+              ? [["Profile only", profileOnly, setProfileOnly, "Shows on your profile, not in anyone's feed or Loops. Elite & Supreme perk."]]
               : []),
           ].map(([label, value, setValue, hint], i) => (
             <button
@@ -21452,9 +24040,9 @@ function DraftRow({ draft, onOpen, onDelete }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm truncate" style={{ color: "var(--text)", fontWeight: 600 }}>
-            {draft.caption?.trim() || (draft.mode === "reel" ? "Reel" : "Post")}
+            {draft.caption?.trim() || (draft.mode === "reel" ? "Loop" : "Post")}
           </p>
-          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · saved {1} ago{2}", draft.mode === "reel" ? "Reel" : count === 1 ? "1 item" : trJoin("{0} items", count), timeAgo(new Date(draft.savedAt).toISOString(), true), draft.scheduleOn ? " · scheduled" : "")}</p>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{trJoin("{0} · saved {1} ago{2}", draft.mode === "reel" ? "Loop" : count === 1 ? "1 item" : trJoin("{0} items", count), timeAgo(new Date(draft.savedAt).toISOString(), true), draft.scheduleOn ? " · scheduled" : "")}</p>
         </div>
       </button>
       <button onClick={onDelete} className="p-1.5 shrink-0 transition-transform active:scale-90">
@@ -21543,7 +24131,7 @@ async function pushIsOn() {
 // Stored on the profile so the send-push function can honour them for every
 // device. Missing keys mean "on", so older accounts behave as before.
 const NOTIF_CATEGORIES = [
-  { key: "likes", label: "Likes", hint: "When someone likes your post, reel or comment" },
+  { key: "likes", label: "Likes", hint: "When someone likes your post, loop or comment" },
   { key: "comments", label: "Comments, mentions and tags", hint: "Comments on your posts, replies, @mentions and photo tags" },
   { key: "follows", label: "New followers", hint: "When someone starts following you" },
   { key: "messages", label: "Messages", hint: "New direct and group messages" },
@@ -21984,10 +24572,8 @@ function SettingsScreen({
     setConfirmPassword("");
   };
 
-  const handleLogout = async () => {
-    if (!window.confirm(trText("Log out of Loop?"))) return;
-    await logOutCurrentAccount();
-  };
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const handleLogout = () => setLogoutOpen(true);
 
   const Header = ({ title, back }) => (
     <div className="flex items-center gap-3 px-4 pt-4 pb-3" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
@@ -22518,6 +25104,8 @@ function SettingsScreen({
   }
 
   if (view === "support") return <SupportLoopScreen onBack={() => setView("menu")} Header={Header} />;
+  if (view === "invite") return <InviteFriendsScreen onBack={() => setView("menu")} Header={Header} />;
+  if (view === "rewind") return <LoopRewindScreen onBack={() => setView("menu")} />;
 
   if (view === "deleteAccount") {
     return (
@@ -22635,6 +25223,8 @@ function SettingsScreen({
       title: "More info and support",
       rows: [
         { icon: HandHeart, label: "Support Loop", onClick: () => setView("support") },
+        { icon: UserPlus, label: "Invite friends", onClick: () => setView("invite") },
+        { icon: Sparkles, label: trJoin("Loop Rewind {0}", new Date().getFullYear()), onClick: () => setView("rewind") },
         {
           icon: LifeBuoy,
           label: "Help",
@@ -22708,6 +25298,7 @@ function SettingsScreen({
           })}
         </div>
       ))}
+      {logoutOpen && <LogoutSheet onClose={() => setLogoutOpen(false)} onLogout={(remember) => logOutCurrentAccount(remember)} />}
     </div>
   );
 }
@@ -23859,7 +26450,7 @@ function YourActivityScreen({ currentUserId, onBack, onOpenPost }) {
           <SkeletonRows />
         ) : items.length === 0 ? (
           <p className="text-xs text-center py-10 px-8" style={{ color: "var(--text-muted)" }}>
-            Nothing yet. Reels you watch turn up here, newest first.
+            Nothing yet. Loops you watch turn up here, newest first.
           </p>
         ) : (
           <div className="grid grid-cols-3 gap-0.5 mt-0.5">
@@ -24323,6 +26914,7 @@ function stashSession(session, profile) {
     refresh_token: session.refresh_token,
     used_at: Date.now(),
     expired: false,
+    loggedOut: false,
   };
   writeAccounts([entry, ...list.filter((a) => a.id !== entry.id)].slice(0, 6));
 }
@@ -24408,20 +27000,28 @@ async function switchToAccount(acc) {
 
 // "Log out": only this phone, only this account. If another account is
 // saved here, Loop opens that one instead of the login screen.
-async function logOutCurrentAccount() {
+async function logOutCurrentAccount(remember = false) {
   if (DEMO_MODE) {
     await supabase.auth.signOut();
     return;
   }
   let me = null;
+  let session = null;
   try {
     const { data } = await supabase.auth.getSession();
-    me = data?.session?.user?.id || null;
+    session = data?.session || null;
+    me = session?.user?.id || null;
   } catch {}
-  writeAccounts(readAccounts().filter((a) => a.id !== me));
+  if (remember && session) {
+    // Keep a copy for one-tap login next time (removable from the login screen).
+    stashSession(session);
+    writeAccounts(readAccounts().map((a) => (a.id === me ? { ...a, loggedOut: true, used_at: Date.now() } : a)));
+  } else {
+    writeAccounts(readAccounts().filter((a) => a.id !== me));
+  }
   let next = null;
   for (const acc of otherAccounts(me)) {
-    if (acc.expired) continue;
+    if (acc.expired || acc.loggedOut) continue;
     const r = await freshSessionFor(acc);
     if (r.session && r.direct) {
       next = { acc, session: r.session };
@@ -24429,9 +27029,24 @@ async function logOutCurrentAccount() {
     }
     if (r.error === "expired") markAccountExpired(acc.id);
   }
-  try {
-    await supabase.auth.signOut({ scope: "local" });
-  } catch {}
+  if (remember) {
+    // Leave this phone without ending the saved login on the server.
+    try {
+      supabase.auth.stopAutoRefresh?.();
+    } catch {}
+    try {
+      const k = supabase.auth.storageKey || Object.keys(localStorage).find((x) => /^sb-.*-auth-token$/.test(x));
+      if (k) localStorage.removeItem(k);
+    } catch {}
+  } else {
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {}
+  }
+  if (!next && remember) {
+    window.location.reload();
+    return;
+  }
   if (next) {
     let error = null;
     try {
@@ -24612,6 +27227,7 @@ function ProfileTabButton({ me, active, onTap, onDoubleTap, onLongPress }) {
       onPointerCancel={cancel}
       onContextMenu={(e) => e.preventDefault()}
       aria-label="Profile"
+      aria-current={active ? "page" : undefined}
       className="flex flex-col items-center justify-center gap-1"
       style={{ flex: "1 1 0", minWidth: 0, height: 36, WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
     >
@@ -24626,9 +27242,8 @@ function ProfileTabButton({ me, active, onTap, onDoubleTap, onLongPress }) {
           )}
         </span>
       ) : (
-        <CircleUserRound size={23} color={active ? "var(--accent-solid)" : "var(--text-muted)"} strokeWidth={active ? 2.4 : 2} />
+        <CircleUserRound size={26} color={active ? "var(--accent-solid)" : "var(--text-muted)"} strokeWidth={active ? 2.2 : 1.9} />
       )}
-      <span className="rounded-full" style={{ width: 4, height: 4, background: active ? "var(--accent-solid)" : "transparent" }} />
     </button>
   );
 }
@@ -25981,7 +28596,7 @@ function ProfileFeedScreen({ postIds, startIndex, title, currentUserId, onBack, 
   };
 
   const heading =
-    title === "reels" ? "Reels" : title === "reposts" ? "Reposts" : title === "tagged" ? "Tagged" : "Posts";
+    title === "reels" ? "Loops" : title === "reposts" ? "Reposts" : title === "tagged" ? "Tagged" : "Posts";
 
   return (
     <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
@@ -27326,6 +29941,7 @@ function useStaffRole() {
 }
 
 function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessage, onOpenModeration, onOpenSettings, onOpenPost, onBack, onOpenProfile, onOpenProfileFeed, onOpenHighlight, onAddStory, onOpenProfileStory, onOpenEditProfile, onOpenActivity, onOpenArchive, onOpenSaved, onOpenPeopleList, onAddAccount, onSwitched, onCreate }) {
+  const justWatchedId = useJustWatched();
   const [tab, setTab] = useState("posts");
   const [loading, setLoading] = useState(true);
   const [myId, setMyId] = useState(null);
@@ -28297,7 +30913,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
               {tab === "posts"
                 ? "No posts yet"
                 : tab === "reels"
-                ? "No reels yet"
+                ? "No loops yet"
                 : tab === "reposts"
                 ? "No reposts yet"
                 : "No tagged posts yet"}
@@ -28346,14 +30962,14 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
                   <UserSquare2 size={12} color="#FFFFFF" />
                 </span>
               )}
-              {tab === "posts" && p.media_count > 1 ? (
+              {tab === "posts" && p.media_count > 1 && !p.pinned ? (
                 <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-                  <Layers size={12} color="#FFFFFF" />
+                  <Layers size={14} color="#FFFFFF" />
                 </span>
               ) : (
-                (tab === "reels" || (tab === "posts" && !isPhotoPost(p))) && (
-                  <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
-                    <Play size={12} color="#FFFFFF" fill="#FFFFFF" />
+                (tab === "reels" || (tab === "posts" && !isPhotoPost(p))) && !(tab === "posts" && p.pinned) && (
+                  <span className="absolute top-1.5 end-1.5">
+                    <GridVideoMark size={17} />
                   </span>
                 )
               )}
@@ -28363,10 +30979,11 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
                 </div>
               )}
               {tab === "posts" && p.pinned && (
-                <div className="absolute top-1.5 start-1.5 w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.55)" }}>
-                  <Pin size={10} color="var(--accent-end)" />
+                <div className="absolute top-1.5 end-1.5" aria-label="Pinned">
+                  <GridPinMark size={17} />
                 </div>
               )}
+              {justWatchedId === p.id && !isPhotoPost(p) && <JustWatchedTag />}
               {tab === "posts" && p.removed_at && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-1" style={{ background: "rgba(0,0,0,0.62)" }}>
                   <Shield size={16} color="#FFFFFF" />
@@ -28744,7 +31361,7 @@ function ProfileScreen({ userId, initialHighlightId, onHighlightOpened, onMessag
             />
             <StoryMenuRow
               icon={<Clapperboard size={17} color="var(--text)" />}
-              label="Reel"
+              label="Loop"
               onClick={() => {
                 setSheet(null);
                 onCreate?.("reel");
@@ -30658,61 +33275,61 @@ const CHAT_THEMES = [
   // ---- Premium: Elite and Supreme badges ----
   {
     key: "pe_golden", name: "Golden Hour", tier: "elite", fx: "bokeh",
-    bg: `${PAT.bokeh("#FFD27A")}, linear-gradient(160deg, #2B1A05 0%, #6B3F0A 45%, #C88A1B 100%)`,
+    bg: `linear-gradient(160deg, #2B1A05 0%, #6B3F0A 45%, #C88A1B 100%)`,
     bubble: "linear-gradient(135deg, #FDE68A 0%, #F59E0B 55%, #B45309 100%)", on: "#2B1500",
     other: "rgba(255,255,255,0.14)", otherText: "#FFF6E0", muted: "rgba(255,246,224,0.65)",
   },
   {
     key: "pe_sakura", name: "Sakura", tier: "elite", fx: "petals",
-    bg: `${PAT.petals("rgba(255,138,175,0.5)", "rgba(255,255,255,0.7)")}, linear-gradient(180deg, #FFF0F5 0%, #FFD6E5 100%)`,
+    bg: `linear-gradient(180deg, #FFF0F5 0%, #FFD6E5 100%)`,
     bubble: "linear-gradient(135deg, #FF8FB1 0%, #FF5C8A 100%)", on: "#FFFFFF",
     other: "#FFFFFF", otherText: "#4A1026", muted: "rgba(74,16,38,0.55)",
   },
   {
     key: "pe_eid", name: "Moonlit Eid", tier: "elite", fx: "lanterns",
-    bg: `${PAT.lanterns("rgba(255,214,120,0.75)", "rgba(255,190,80,0.25)")}, radial-gradient(120% 70% at 50% 0%, #1D3A6B 0%, #0A1733 60%, #050B1C 100%)`,
+    bg: `radial-gradient(120% 70% at 50% 0%, #1D3A6B 0%, #0A1733 60%, #050B1C 100%)`,
     bubble: "linear-gradient(135deg, #F6D365 0%, #FDA085 100%)", on: "#2A1300",
     other: "rgba(255,255,255,0.12)", otherText: "#FFF7E0", muted: "rgba(255,247,224,0.62)",
   },
   {
     key: "pe_rain", name: "Rainy City", tier: "elite", fx: "rain",
-    bg: `${PAT.rain("rgba(200,225,255,0.32)")}, linear-gradient(180deg, #2C3E50 0%, #3E5A74 55%, #4C6A85 100%)`,
+    bg: `linear-gradient(180deg, #2C3E50 0%, #3E5A74 55%, #4C6A85 100%)`,
     bubble: "linear-gradient(135deg, #89F7FE 0%, #66A6FF 100%)", on: "#0A1A2C",
     other: "rgba(255,255,255,0.14)", otherText: "#EEF6FF", muted: "rgba(238,246,255,0.62)",
   },
   {
     key: "ps_aurora", name: "Aurora", tier: "supreme", fx: "aurora",
-    bg: `${PAT.stars("rgba(255,255,255,0.5)")}, radial-gradient(120% 55% at 15% 8%, rgba(64,255,170,0.5), transparent 62%), radial-gradient(100% 50% at 85% 22%, rgba(80,140,255,0.45), transparent 62%), radial-gradient(90% 55% at 50% 0%, rgba(190,90,255,0.4), transparent 70%), linear-gradient(180deg, #04101A 0%, #0A1F2E 100%)`,
+    bg: `linear-gradient(180deg, #04101A 0%, #0A1F2E 100%)`,
     bubble: "linear-gradient(135deg, #43E97B 0%, #38F9D7 50%, #7F7FD5 100%)", on: "#03131A",
     other: "rgba(255,255,255,0.12)", otherText: "#E8FFF6", muted: "rgba(232,255,246,0.62)",
   },
   {
     key: "ps_royal", name: "Royal", tier: "supreme", fx: "royal",
-    bg: `${PAT.damask("rgba(232,196,104,0.32)")}, radial-gradient(circle at 50% 30%, #4B1A6B 0%, #2A0A3D 60%, #16041F 100%)`,
+    bg: `radial-gradient(circle at 50% 30%, #4B1A6B 0%, #2A0A3D 60%, #16041F 100%)`,
     bubble: "linear-gradient(135deg, #F8E08E 0%, #D4A72C 50%, #A8781B 100%)", on: "#2A1700",
     other: "rgba(255,255,255,0.12)", otherText: "#FBEFFF", muted: "rgba(251,239,255,0.62)",
   },
   {
     key: "ps_neon", name: "Neon City", tier: "supreme", fx: "neon",
-    bg: `${PAT.grid("rgba(255,64,200,0.55)")} center bottom / 100% 40% no-repeat, radial-gradient(circle at 50% 62%, #FF7AC6 0 10%, rgba(255,122,198,0.25) 10.5% 15%, transparent 16%), linear-gradient(180deg, #0B0221 0%, #2B0A4A 58%, #120018 100%)`,
+    bg: `linear-gradient(180deg, #0B0221 0%, #2B0A4A 58%, #120018 100%)`,
     bubble: "linear-gradient(135deg, #FF00CC 0%, #3333FF 100%)", on: "#FFFFFF",
     other: "rgba(36,8,64,0.84)", otherText: "#FFE8FB", muted: "rgba(255,232,251,0.62)",
   },
   {
     key: "ps_diamond", name: "Diamond", tier: "supreme", fx: "diamond",
-    bg: `${PAT.facets("rgba(255,255,255,0.22)", "rgba(255,255,255,0.08)")}, linear-gradient(160deg, #D7F1FF 0%, #9BD3F5 50%, #6FA8DC 100%)`,
+    bg: `linear-gradient(160deg, #D7F1FF 0%, #9BD3F5 50%, #6FA8DC 100%)`,
     bubble: "linear-gradient(135deg, #E0F7FF 0%, #7FC8F8 50%, #3A86C8 100%)", on: "#04223A",
     other: "rgba(255,255,255,0.78)", otherText: "#0A2A44", muted: "rgba(10,42,68,0.6)",
   },
   {
     key: "ps_tiger", name: "Royal Bengal Tiger", tier: "supreme", fx: "tiger",
-    bg: `${PAT.stripes("rgba(20,10,0,0.72)")}, linear-gradient(160deg, #FFB347 0%, #F28A1C 55%, #D9650A 100%)`,
+    bg: `linear-gradient(160deg, #FFB347 0%, #F28A1C 55%, #D9650A 100%)`,
     bubble: "linear-gradient(135deg, #1A1A1A 0%, #3A2A12 100%)", on: "#FFD9A0",
     other: "rgba(255,255,255,0.88)", otherText: "#2A1400", muted: "rgba(42,20,0,0.6)",
   },
   {
     key: "ps_lotus", name: "Shapla / Water Lily", tier: "supreme", fx: "lotus",
-    bg: `${PAT.lotus("rgba(255,120,170,0.75)", "rgba(255,170,205,0.7)", "rgba(40,140,90,0.45)")}, linear-gradient(180deg, #0F5C5A 0%, #0B3F49 100%)`,
+    bg: `linear-gradient(180deg, #0F5C5A 0%, #0B3F49 100%)`,
     bubble: "linear-gradient(135deg, #FF9AC1 0%, #F0568C 100%)", on: "#FFFFFF",
     other: "rgba(255,255,255,0.13)", otherText: "#EFFFFB", muted: "rgba(239,255,251,0.62)",
   },
@@ -30783,6 +33400,133 @@ function FxStars({ n = 12, color = "#FFFFFF" }) {
 }
 
 let FX_CSS_ADDED = false;
+// v17: the symbols you see on a premium theme ARE the moving parts. Each
+// theme's pattern is split into a few see-through layers (one per symbol),
+// and each layer moves on its own — petals fall where the petals are, the
+// rain is the rain you see, the stars that twinkle are the drawn stars.
+// A layer only slides by whole tiles, so it never jumps, and with "less
+// motion" on the phone the theme simply shows its still picture.
+const fxTile = (w, h, body) => svgTile(w, h, body);
+const FX_PETAL = (x, y, a, c, c2) =>
+  `<path transform='translate(${x} ${y}) rotate(${a})' d='M0 -9c5 0 8 5 6 9-1 3-4 5-6 6-2-1-5-3-6-6-2-4 1-9 6-9z' fill='${c}'/><path transform='translate(${x} ${y}) rotate(${a})' d='M0 -9l-1.6 3.4L0 -4.6l1.6-1.2z' fill='${c2}'/>`;
+const FX_BOKEH = (x, y, r, c) =>
+  `<defs><radialGradient id='b'><stop offset='0' stop-color='${c}' stop-opacity='0.55'/><stop offset='1' stop-color='${c}' stop-opacity='0'/></radialGradient></defs><circle cx='${x}' cy='${y}' r='${r}' fill='url(#b)'/>`;
+const FX_DAMASK_C = "rgba(232,196,104,0.32)";
+const FX_LANTERN_C = ["rgba(255,214,120,0.75)", "rgba(255,190,80,0.25)"];
+const FX_LOTUS_C = ["rgba(255,120,170,0.75)", "rgba(255,170,205,0.7)", "rgba(40,140,90,0.45)"];
+
+// fx → tile size and its layers: [svg body, motion, seconds, delay]
+const FX_LAYERS = {
+  bokeh: {
+    w: 180,
+    h: 180,
+    layers: [
+      [FX_BOKEH(40, 44, 26, "#FFD27A"), "rise", 26, 0],
+      [FX_BOKEH(132, 96, 34, "#FFD27A"), "rise", 34, -9],
+      [FX_BOKEH(70, 150, 18, "#FFD27A"), "rise", 21, -4],
+      [FX_BOKEH(160, 16, 14, "#FFD27A"), "rise", 17, -12],
+    ],
+  },
+  petals: {
+    w: 110,
+    h: 110,
+    layers: [
+      [FX_PETAL(24, 22, 20, "rgba(255,138,175,0.5)", "rgba(255,255,255,0.7)"), "fall", 8, 0],
+      [FX_PETAL(80, 40, -35, "rgba(255,138,175,0.5)", "rgba(255,255,255,0.7)"), "fall", 10.5, -5],
+      [FX_PETAL(46, 84, 60, "rgba(255,138,175,0.5)", "rgba(255,255,255,0.7)"), "fall", 6.5, -3],
+      [FX_PETAL(96, 96, 10, "rgba(255,138,175,0.5)", "rgba(255,255,255,0.7)"), "fall", 9, -6],
+    ],
+  },
+  lanterns: {
+    w: 150,
+    h: 180,
+    layers: [
+      [`<path d='M30 0v30' stroke='${FX_LANTERN_C[0]}' stroke-width='1.2'/><rect x='22' y='30' width='16' height='24' rx='5' fill='${FX_LANTERN_C[1]}' stroke='${FX_LANTERN_C[0]}' stroke-width='1.4'/><path d='M24 30h12l-2-5h-8z' fill='${FX_LANTERN_C[0]}'/><path d='M27 54h6v4h-6z' fill='${FX_LANTERN_C[0]}'/>`, "swing", 3.6, 0],
+      [`<path d='M110 0v58' stroke='${FX_LANTERN_C[0]}' stroke-width='1.2'/><rect x='103' y='58' width='14' height='20' rx='4.5' fill='${FX_LANTERN_C[1]}' stroke='${FX_LANTERN_C[0]}' stroke-width='1.3'/><path d='M105 58h10l-2-4h-6z' fill='${FX_LANTERN_C[0]}'/>`, "swing", 4.4, -1.7],
+      [`<path d='M72 108a14 14 0 1 0 16 20 11 11 0 1 1-16-20z' fill='${FX_LANTERN_C[0]}'/>`, "breathe", 5, 0],
+      [sparkle(126, 140, 4, FX_LANTERN_C[0]), "twinkle", 2.4, 0],
+      [sparkle(30, 150, 3, FX_LANTERN_C[0]), "twinkle", 2.4, -1.2],
+    ],
+  },
+  rain: {
+    w: 40,
+    h: 64,
+    layers: [
+      [`<path d='M8 0l-6 18' stroke='rgba(200,225,255,0.32)' stroke-width='1.3' stroke-linecap='round'/>`, "rain", 0.36, 0],
+      [`<path d='M30 22l-6 18' stroke='rgba(200,225,255,0.32)' stroke-width='1.3' stroke-linecap='round'/>`, "rain", 0.44, -0.2],
+      [`<path d='M18 44l-5 15' stroke='rgba(200,225,255,0.32)' stroke-width='1.3' stroke-linecap='round'/>`, "rain", 0.32, -0.1],
+      [`<circle cx='34' cy='58' r='1.6' fill='rgba(200,225,255,0.32)'/>`, "twinkle", 1.6, -0.5],
+    ],
+  },
+  aurora: {
+    w: 80,
+    h: 80,
+    layers: [
+      [`<circle cx='8' cy='12' r='1.2' fill='rgba(255,255,255,0.5)'/><circle cx='70' cy='44' r='1.4' fill='rgba(255,255,255,0.5)'/>`, "twinkle", 2.6, 0],
+      [`<circle cx='52' cy='6' r='0.8' fill='rgba(255,255,255,0.5)'/><circle cx='14' cy='62' r='0.9' fill='rgba(255,255,255,0.5)'/>`, "twinkle", 3.4, -1.1],
+      [`<circle cx='30' cy='34' r='1' fill='rgba(255,255,255,0.5)'/><circle cx='46' cy='70' r='1.1' fill='rgba(255,255,255,0.5)'/>${sparkle(62, 22, 3, "rgba(255,255,255,0.5)")}`, "twinkle", 3, -2],
+    ],
+  },
+  royal: {
+    w: 84,
+    h: 84,
+    layers: [
+      [`<g transform='translate(42 42)' fill='none' stroke='${FX_DAMASK_C}' stroke-width='1.3'><path d='M0 -22c6 6 6 12 0 18-6-6-6-12 0-18zM0 22c6-6 6-12 0-18-6 6-6 12 0 18zM-22 0c6-6 12-6 18 0-6 6-12 6-18 0zM22 0c-6-6-12-6-18 0 6 6 12 6 18 0z'/></g>`, "breathe", 6, 0],
+      [`<circle cx='42' cy='42' r='3' fill='${FX_DAMASK_C}'/>`, "twinkle", 2.8, -0.6],
+      [`<path d='M0 0l5 5-5 5-5-5zM84 0l5 5-5 5-5-5zM0 84l5 5-5 5-5-5zM84 84l5 5-5 5-5-5z' fill='${FX_DAMASK_C}'/>`, "twinkle", 2.8, -2],
+    ],
+    sheen: "linear-gradient(105deg, transparent 38%, rgba(255,226,150,0.28) 48%, transparent 58%)",
+  },
+  diamond: {
+    w: 60,
+    h: 52,
+    layers: [
+      [`<path d='M0 0L30 0L15 26Z' fill='rgba(255,255,255,0.22)'/><path d='M15 26L45 26L30 52Z' fill='rgba(255,255,255,0.22)'/>`, "glint", 3.2, 0],
+      [`<path d='M30 0L60 0L45 26Z' fill='rgba(255,255,255,0.08)'/><path d='M0 52L15 26L30 52Z' fill='rgba(255,255,255,0.08)'/><path d='M30 52L45 26L60 52Z' fill='rgba(255,255,255,0.08)'/>`, "glint", 3.2, -1.6],
+    ],
+    // Sparkles sit exactly on the corners where the facets meet.
+    big: { w: 180, h: 156, layers: [[sparkle(45, 26, 6, "#FFFFFF"), "spark", 2.8, 0], [sparkle(120, 104, 5, "#FFFFFF"), "spark", 2.8, -1.4], [sparkle(150, 52, 4, "#FFFFFF"), "spark", 2.8, -0.7]] },
+    sheen: "linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.55) 45%, rgba(190,230,255,0.35) 50%, rgba(255,210,250,0.3) 55%, transparent 65%)",
+  },
+  tiger: {
+    w: 140,
+    h: 140,
+    layers: [[`<path d='M-10 20c30-10 40 10 70 0s40-12 90 4M-10 70c26-12 48 8 72-2s46-10 88 6M-10 118c30-8 44 12 74 0s40-12 86 2' fill='none' stroke='rgba(20,10,0,0.72)' stroke-width='9' stroke-linecap='round'/>`, "prowl", 7, 0]],
+    sheen: "linear-gradient(105deg, transparent 38%, rgba(255,235,190,0.32) 48%, transparent 58%)",
+  },
+  lotus: {
+    w: 120,
+    h: 120,
+    layers: [
+      [`<ellipse cx='88' cy='92' rx='22' ry='8' fill='${FX_LOTUS_C[2]}'/>`, "drift", 6, 0],
+      [`<ellipse cx='88' cy='92' rx='28' ry='11' fill='none' stroke='rgba(190,255,240,0.45)' stroke-width='1.2'/>`, "ripple", 4.6, 0],
+      [`<ellipse cx='88' cy='92' rx='35' ry='14' fill='none' stroke='rgba(190,255,240,0.3)' stroke-width='1'/>`, "ripple", 4.6, -2.3],
+      [`<g transform='translate(36 40)'><path d='M0 6c-6-4-7-14 0-20 7 6 6 16 0 20z' fill='${FX_LOTUS_C[0]}'/><path d='M0 6c-10 0-16-8-15-15 8 0 14 6 15 15z' fill='${FX_LOTUS_C[1]}'/><path d='M0 6c10 0 16-8 15-15-8 0-14 6-15 15z' fill='${FX_LOTUS_C[1]}'/></g>`, "bob", 3.8, 0],
+      [`<circle cx='100' cy='24' r='1.6' fill='${FX_LOTUS_C[0]}'/>`, "twinkle", 2.6, -1],
+    ],
+  },
+};
+
+function FxLayers({ spec, k }) {
+  const w = +(spec.w * k).toFixed(2);
+  const h = +(spec.h * k).toFixed(2);
+  return spec.layers.map(([body, motion, dur, delay], i) => (
+    <span
+      key={i}
+      className={`loop-fxl loop-fxl-${motion}`}
+      data-fxl={motion}
+      style={{
+        "--tw": `${w}px`,
+        "--th": `${h}px`,
+        backgroundImage: fxTile(spec.w, spec.h, body),
+        backgroundSize: `${w}px ${h}px`,
+        animationDuration: `${dur}s`,
+        animationDelay: `${delay}s`,
+      }}
+    />
+  ));
+}
+
 function ThemeFx({ fx, small = false }) {
   if (!fx) return null;
   if (!FX_CSS_ADDED && typeof document !== "undefined") {
@@ -30792,138 +33536,59 @@ function ThemeFx({ fx, small = false }) {
     FX_CSS_ADDED = true;
   }
   const k = small ? 0.45 : 1;
-  let parts = null;
-  if (fx === "bokeh") {
-    parts = FX_SEED.slice(0, 8).map(([x, d, s], i) => (
-      <span
-        key={i}
-        className="loop-fx-rise"
-        style={{
-          left: `${x}%`,
-          width: 70 * s * k,
-          height: 70 * s * k,
-          background: "radial-gradient(circle, rgba(255,214,120,0.55) 0%, rgba(255,170,60,0.18) 45%, transparent 70%)",
-          animationDuration: `${11 + i * 1.3}s`,
-          animationDelay: `-${d}s`,
-        }}
-      />
-    ));
-  } else if (fx === "petals") {
-    parts = FX_SEED.map(([x, d, s], i) => (
-      <span
-        key={i}
-        className="loop-fx-fall loop-fx-petal"
-        style={{
-          left: `${x}%`,
-          width: 13 * s * k,
-          height: 10 * s * k,
-          background: i % 3 ? "linear-gradient(135deg, #FFD3E2, #FF8FB1)" : "linear-gradient(135deg, #FFFFFF, #FFC2D6)",
-          animationDuration: `${9 + (i % 5) * 1.6}s`,
-          animationDelay: `-${d}s`,
-        }}
-      />
-    ));
-  } else if (fx === "lanterns") {
-    parts = (
-      <>
-        <FxStars n={12} color="#FFE7A8" />
-        <span className="loop-fx-glow" style={{ right: "10%", top: "9%", width: 90 * k, height: 90 * k, background: "radial-gradient(circle, rgba(255,226,150,0.35), transparent 65%)" }} />
-        {[14, 46, 78].map((x, i) => (
-          <span key={i} className="loop-fx-sway" style={{ left: `${x}%`, top: 0, animationDelay: `-${i * 1.3}s` }}>
-            <span style={{ display: "block", width: 1.2, height: (40 + i * 26) * k, margin: "0 auto", background: "rgba(255,214,120,0.7)" }} />
-            <span
-              style={{
-                display: "block",
-                width: 18 * k,
-                height: 26 * k,
-                borderRadius: 7 * k,
-                background: "linear-gradient(180deg, #FFE6A0 0%, #F6B94A 60%, #C9802A 100%)",
-                boxShadow: `0 0 ${18 * k}px rgba(255,200,90,0.85)`,
-              }}
-            />
-          </span>
-        ))}
-      </>
-    );
-  } else if (fx === "rain") {
-    parts = (
-      <>
-        {FX_SEED.concat(FX_SEED.slice(0, 8)).map(([x, d], i) => (
-          <span
-            key={i}
-            className="loop-fx-drop"
-            style={{ left: `${(x + i * 7) % 100}%`, height: (46 + (i % 4) * 14) * k, animationDuration: `${0.75 + (i % 5) * 0.12}s`, animationDelay: `-${d / 3}s` }}
-          />
-        ))}
-        <span className="loop-fx-city" style={{ height: 70 * k }} />
-      </>
-    );
+  const spec = FX_LAYERS[fx];
+  let extra = null;
+  if (fx === "rain") {
+    extra = <span className="loop-fx-city" style={{ height: 70 * k }} />;
   } else if (fx === "aurora") {
-    parts = (
+    extra = (
       <>
-        <FxStars n={10} />
-        <span className="loop-fx-ribbon" style={{ top: "4%", background: "linear-gradient(90deg, transparent, rgba(64,255,170,0.55), rgba(56,249,215,0.35), transparent)", animationDuration: "14s" }} />
-        <span className="loop-fx-ribbon" style={{ top: "16%", background: "linear-gradient(90deg, transparent, rgba(127,127,213,0.5), rgba(190,90,255,0.4), transparent)", animationDuration: "19s", animationDelay: "-6s" }} />
-        <span className="loop-fx-ribbon" style={{ top: "26%", background: "linear-gradient(90deg, transparent, rgba(80,200,255,0.4), transparent)", animationDuration: "23s", animationDelay: "-11s" }} />
-      </>
-    );
-  } else if (fx === "royal" || fx === "tiger" || fx === "diamond") {
-    parts = (
-      <>
-        <span className="loop-fx-sheen" style={{ background: fx === "diamond" ? "linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.55) 45%, rgba(190,230,255,0.35) 50%, rgba(255,210,250,0.3) 55%, transparent 65%)" : fx === "tiger" ? "linear-gradient(105deg, transparent 38%, rgba(255,236,190,0.35) 50%, transparent 62%)" : "linear-gradient(105deg, transparent 38%, rgba(255,226,140,0.32) 50%, transparent 62%)" }} />
-        {(fx === "tiger" ? [] : FX_SEED.slice(0, fx === "diamond" ? 9 : 6)).map(([x, d, s], i) => (
-          <span
-            key={i}
-            className="loop-fx-spark"
-            style={{ left: `${x}%`, top: `${(i * 41) % 80 + 6}%`, width: 14 * s * k, height: 14 * s * k, color: fx === "diamond" ? "#FFFFFF" : "#F8E08E", animationDelay: `-${d * 0.45}s` }}
-          >
-            <svg viewBox="0 0 20 20" width="100%" height="100%">
-              <path d="M10 0C10.8 6 14 9.2 20 10 14 10.8 10.8 14 10 20 9.2 14 6 10.8 0 10 6 9.2 9.2 6 10 0Z" fill="currentColor" />
-            </svg>
-          </span>
-        ))}
+        <span className="loop-fx-ribbon" style={{ top: "2%", background: "linear-gradient(90deg, transparent, rgba(64,255,170,0.6), rgba(56,249,215,0.4), transparent)", animationDuration: "14s" }} />
+        <span className="loop-fx-ribbon" style={{ top: "12%", background: "linear-gradient(90deg, transparent, rgba(80,140,255,0.5), rgba(190,90,255,0.45), transparent)", animationDuration: "19s", animationDelay: "-6s" }} />
+        <span className="loop-fx-ribbon" style={{ top: "22%", background: "linear-gradient(90deg, transparent, rgba(190,90,255,0.35), rgba(80,200,255,0.35), transparent)", animationDuration: "23s", animationDelay: "-11s" }} />
       </>
     );
   } else if (fx === "neon") {
-    parts = (
+    // One sun and one grid, and they are the moving ones.
+    extra = (
       <>
         <FxStars n={8} color="#FFB3F0" />
-        <span className="loop-fx-grid" style={{ height: `${small ? 38 : 34}%` }} />
-        <span className="loop-fx-glow" style={{ left: "50%", bottom: `${small ? 30 : 28}%`, width: 120 * k, height: 120 * k, marginLeft: -60 * k, background: "radial-gradient(circle, rgba(255,122,198,0.55), transparent 62%)" }} />
-      </>
-    );
-  } else if (fx === "lotus") {
-    parts = (
-      <>
-        {[[22, 70, 0], [74, 48, 1.7], [46, 86, 3.1], [84, 80, 4.2]].map(([x, y, d], i) => (
-          <span key={`r${i}`} className="loop-fx-ripple" style={{ left: `${x}%`, top: `${y}%`, width: 70 * k, height: 26 * k, marginLeft: -35 * k, animationDelay: `-${d}s` }} />
-        ))}
-        {[[18, 64, 0], [70, 42, 1.4], [44, 80, 2.6]].map(([x, y, d], i) => (
-          <span key={`l${i}`} className="loop-fx-bob" style={{ left: `${x}%`, top: `${y}%`, width: 30 * k, height: 22 * k, animationDelay: `-${d}s` }}>
-            <svg viewBox="0 0 30 22" width="100%" height="100%">
-              <ellipse cx="15" cy="18" rx="14" ry="4" fill="rgba(40,140,90,0.6)" />
-              <path d="M15 17c-3-3-4-9 0-14 4 5 3 11 0 14z" fill="#FF9AC1" />
-              <path d="M15 17c-6 0-9-5-9-9 5 0 8 4 9 9z" fill="#FFC2D9" />
-              <path d="M15 17c6 0 9-5 9-9-5 0-8 4-9 9z" fill="#FFC2D9" />
-            </svg>
-          </span>
-        ))}
+        <span
+          className="loop-fx-glow"
+          data-neon-sun=""
+          style={{ left: "50%", bottom: small ? "22%" : "28%", width: 132 * k, height: 132 * k, marginLeft: -66 * k, background: "radial-gradient(circle, #FF7AC6 0 32%, rgba(255,122,198,0.3) 33% 46%, rgba(255,122,198,0.12) 47% 60%, transparent 70%)" }}
+        />
+        <span className="loop-fx-grid" data-neon-grid="" style={small ? { height: "38%" } : { height: "60%", transform: "perspective(800px) rotateX(45deg)", opacity: 0.72 }} />
       </>
     );
   }
   return (
-    <span aria-hidden="true" className="loop-fx" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: -1 }}>
-      {parts}
+    <span aria-hidden="true" className="loop-fx" data-fx={fx} style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: -1 }}>
+      {spec && <FxLayers spec={spec} k={k} />}
+      {spec?.big && <FxLayers spec={spec.big} k={k} />}
+      {spec?.sheen && <span className="loop-fx-sheen" style={{ background: spec.sheen }} />}
+      {extra}
     </span>
   );
 }
 
 // Inside a scrolling chat: stays put while the messages scroll over it.
 function ThemeFxPinned({ fx }) {
+  const ref = React.useRef(null);
+  const [h, setH] = useState(0);
+  React.useLayoutEffect(() => {
+    const box = ref.current?.parentElement;
+    if (!box) return;
+    const update = () => setH(box.clientHeight);
+    update();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    ro?.observe(box);
+    return () => ro?.disconnect();
+  }, [fx]);
   if (!fx) return null;
   return (
-    <div aria-hidden="true" data-themefx="" style={{ position: "sticky", top: 0, height: 0, zIndex: -1 }}>
-      <div style={{ position: "absolute", insetInline: -12, top: -12, height: "100vh", overflow: "hidden", pointerEvents: "none", isolation: "isolate" }}>
+    <div ref={ref} aria-hidden="true" data-themefx="" style={{ position: "sticky", top: 0, height: 0, zIndex: -1 }}>
+      <div style={{ position: "absolute", insetInline: -12, top: -12, height: h || "100vh", overflow: "hidden", pointerEvents: "none", isolation: "isolate" }}>
         <ThemeFx fx={fx} />
       </div>
     </div>
@@ -30963,6 +33628,37 @@ const THEME_FX_CSS = `
   @keyframes loopFxRipple { 0% { transform: scale(0.2); opacity: 0.9; } 100% { transform: scale(2.2); opacity: 0; } }
   .loop-fx-bob { animation: loopFxBob 3.8s ease-in-out infinite alternate; }
   @keyframes loopFxBob { from { transform: translateY(-3px) rotate(-3deg); } to { transform: translateY(3px) rotate(3deg); } }
+  .loop-fx > .loop-fxl { left: 0; right: 0; top: 0; bottom: 0; background-repeat: repeat; animation-iteration-count: infinite; will-change: transform, opacity; }
+  .loop-fx > .loop-fxl-fall { top: calc(var(--th) * -1); animation-name: loopFxlFall; animation-timing-function: linear; }
+  @keyframes loopFxlFall {
+    0% { transform: translate3d(0, 0, 0); } 12.5% { transform: translate3d(6px, calc(var(--th) * 0.125), 0); }
+    25% { transform: translate3d(9px, calc(var(--th) * 0.25), 0); } 37.5% { transform: translate3d(6px, calc(var(--th) * 0.375), 0); }
+    50% { transform: translate3d(0, calc(var(--th) * 0.5), 0); } 62.5% { transform: translate3d(-6px, calc(var(--th) * 0.625), 0); }
+    75% { transform: translate3d(-9px, calc(var(--th) * 0.75), 0); } 87.5% { transform: translate3d(-6px, calc(var(--th) * 0.875), 0); }
+    100% { transform: translate3d(0, var(--th), 0); }
+  }
+  .loop-fx > .loop-fxl-rise { bottom: calc(var(--th) * -1); animation-name: loopFxlRise; animation-timing-function: linear; }
+  @keyframes loopFxlRise { 0% { transform: translate3d(0, 0, 0); opacity: 0.75; } 50% { opacity: 1; } 100% { transform: translate3d(0, calc(var(--th) * -1), 0); opacity: 0.75; } }
+  .loop-fx > .loop-fxl-rain { top: calc(var(--th) * -2); right: calc(var(--tw) * -1); animation-name: loopFxlRain; animation-timing-function: linear; }
+  @keyframes loopFxlRain { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(calc(var(--tw) * -1), calc(var(--th) * 2), 0); } }
+  .loop-fxl-twinkle { animation-name: loopFxlTwinkle; animation-timing-function: ease-in-out; }
+  @keyframes loopFxlTwinkle { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
+  .loop-fxl-breathe { animation-name: loopFxlBreathe; animation-timing-function: ease-in-out; animation-direction: alternate; }
+  @keyframes loopFxlBreathe { from { opacity: 0.45; } to { opacity: 1; } }
+  .loop-fxl-glint { animation-name: loopFxlGlint; animation-timing-function: ease-in-out; animation-direction: alternate; }
+  @keyframes loopFxlGlint { from { opacity: 1; } to { opacity: 0.3; } }
+  .loop-fxl-spark { animation-name: loopFxlSpark; animation-timing-function: ease-in-out; }
+  @keyframes loopFxlSpark { 0%, 100% { opacity: 0; } 45% { opacity: 1; } 70% { opacity: 0.35; } }
+  .loop-fxl-ripple { animation-name: loopFxlRipple; animation-timing-function: ease-out; }
+  @keyframes loopFxlRipple { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
+  .loop-fxl-swing { animation-name: loopFxlSwing; animation-timing-function: ease-in-out; animation-direction: alternate; }
+  @keyframes loopFxlSwing { from { transform: translate3d(-3px, 0, 0); } to { transform: translate3d(3px, 0, 0); } }
+  .loop-fxl-bob { animation-name: loopFxlBob; animation-timing-function: ease-in-out; animation-direction: alternate; }
+  @keyframes loopFxlBob { from { transform: translate3d(0, -3px, 0); } to { transform: translate3d(0, 3px, 0); } }
+  .loop-fxl-drift { animation-name: loopFxlDrift; animation-timing-function: ease-in-out; animation-direction: alternate; }
+  @keyframes loopFxlDrift { from { transform: translate3d(-2.5px, 0, 0); } to { transform: translate3d(2.5px, 0, 0); } }
+  .loop-fxl-prowl { animation-name: loopFxlProwl; animation-timing-function: ease-in-out; animation-direction: alternate; }
+  @keyframes loopFxlProwl { from { transform: translate3d(-5px, -2px, 0); } to { transform: translate3d(5px, 2px, 0); } }
   @media (prefers-reduced-motion: reduce) { .loop-fx * { animation: none !important; } }
 `;
 
@@ -31548,7 +34244,7 @@ function ShareSheet({ item, currentUserId, onClose, onShared }) {
   const [storyBusy, setStoryBusy] = useState(false);
 
   const link = `${window.location.origin}/p/${item.id}`;
-  const label = isPhotoPost(item) ? "📷 Shared a post" : "🎬 Shared a reel";
+  const label = isPhotoPost(item) ? "📷 Shared a post" : "🎬 Shared a loop";
   const sharedOnce = React.useRef(false);
   const noteShared = (kind, target) => {
     recordShare(item.id, kind, target);
@@ -32623,7 +35319,7 @@ function SavedScreen({ onBack, onOpenPost }) {
             <Bookmark size={30} color="var(--toggle-off)" />
             <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Nothing saved yet</p>
             <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Tap the bookmark on any post or reel and it will show up here.
+              Tap the bookmark on any post or loop and it will show up here.
             </p>
           </div>
         ) : (
@@ -32914,20 +35610,21 @@ function ScheduleMessageSheet({ conversationId, currentUserId, presetText, onClo
 // A message can be sent "with an effect": the chat fills with hearts,
 // confetti, flames or fireworks; a gift-wrapped message waits to be opened;
 // a secret one stays blurred until tapped; a shout arrives with a shake.
-// Each effect plays once for the person receiving it, and anyone can tap the
-// small label under the message to see it again.
+// Each effect plays once for the person receiving it; tapping the message
+// plays it again.
 const MSG_EFFECTS = [
   { key: "love", label: "Love", emoji: "💗" },
-  { key: "confetti", label: "Celebrate", emoji: "🎉" },
-  { key: "fire", label: "Fire", emoji: "🔥" },
   { key: "gift", label: "Gift", emoji: "🎁" },
+  { key: "fire", label: "Fire", emoji: "🔥" },
+  { key: "confetti", label: "Celebrate", emoji: "🎉" },
+  { key: "balloons", label: "Balloons", emoji: "🎈" },
   { key: "fireworks", label: "Fireworks", emoji: "🎆" },
   { key: "secret", label: "Secret", emoji: "🤫" },
   { key: "shout", label: "Shout", emoji: "📣" },
 ];
 const effectOf = (k) => MSG_EFFECTS.find((e) => e.key === k) || null;
 // Effects that fill the screen (the others change the message itself).
-const FX_OVERLAY = { love: 1, confetti: 1, fire: 1, fireworks: 1, gift: 1 };
+const FX_OVERLAY = { love: 1, confetti: 1, fire: 1, fireworks: 1, gift: 1, balloons: 1 };
 
 const fxStore = {
   read(key) {
@@ -32994,6 +35691,9 @@ function ChatFxOverlay({ kind, onDone, contained }) {
         }),
       }));
     }
+    if (kind === "balloons") {
+      return Array.from({ length: 16 }, (_, i) => ({ i, x: r(2, 90), s: r(34, 58), d: r(2.6, 3.6), dl: r(0, 0.8), sway: r(-30, 30), c: ["#FF3D7F", "#3DA5FF", "#FFC93C", "#3DDC97", "#B26BFF"][i % 5] }));
+    }
     return [];
   }, [kind]);
 
@@ -33029,6 +35729,17 @@ function ChatFxOverlay({ kind, onDone, contained }) {
           ))}
         </>
       )}
+      {kind === "balloons" &&
+        parts.map((p) => (
+          <span key={p.i} className="loop-cfx-rise" style={{ left: `${p.x}%`, width: p.s, height: p.s * 1.7, animationDuration: `${p.d}s`, animationDelay: `${p.dl}s`, "--sway": `${p.sway}px` }}>
+            <svg viewBox="0 0 24 40" width="100%" height="100%">
+              <path d="M12 18c-1 6 2 10 0 22" fill="none" stroke="rgba(150,150,150,0.8)" strokeWidth="0.8" />
+              <path d={FX_BALLOON} fill={p.c} />
+              <path d="M11 18l1 2 1-2z" fill={p.c} />
+              <path d="M8.5 6.5a4.5 4.5 0 0 1 3-2.4" stroke="#fff" strokeWidth="1.5" fill="none" strokeLinecap="round" opacity="0.75" />
+            </svg>
+          </span>
+        ))}
       {kind === "fireworks" &&
         parts.map((b) => (
           <span key={b.bi} className="loop-cfx-burst" style={{ left: `${b.x}%`, top: `${b.y}%` }}>
@@ -33042,121 +35753,266 @@ function ChatFxOverlay({ kind, onDone, contained }) {
   );
 }
 
-// A gift-wrapped message, before it's opened.
-function GiftBox({ onOpen, mine, opening }) {
+// ---- v17: effects live on the message itself ----
+// Like Instagram, an effect is drawn on the bubble (hearts on its corners,
+// a flame on its edge, wrapping paper, invisible ink…), and tapping the
+// message plays it again. No labels under the bubbles.
+const FX_FLAME = "M12 2c1 4 5 5.5 5 10.5A5 5 0 0 1 7 12.5c0-2 1-3.5 2-4.5 0 2 1 3 2 3-1-3 0-6 1-9z";
+const FX_BALLOON = "M12 2c4 0 7 3.2 7 7.4 0 4.6-3.6 8.1-7 8.6-3.4-.5-7-4-7-8.6C5 5.2 8 2 12 2z";
+
+function FxDecoHeart({ style, size = 14, c = "#FF3D7F", delay = 0 }) {
+  return (
+    <span className="loop-cfx-deco loop-cfx-beat" style={{ ...style, width: size, height: size, animationDelay: `${delay}s` }}>
+      <svg viewBox="0 0 24 24" width="100%" height="100%">
+        <path d={FX_HEART} fill={c} stroke="#FFFFFF" strokeWidth="1.6" />
+      </svg>
+    </span>
+  );
+}
+
+// The little drawing that sits on a bubble's edge for each effect.
+function FxBubbleDeco({ kind }) {
+  useChatFxCss();
+  if (!kind || kind === "secret") return null;
+  let parts = null;
+  if (kind === "love") {
+    parts = (
+      <>
+        <FxDecoHeart style={{ top: -9, insetInlineStart: -7, transform: "rotate(-16deg)" }} size={16} />
+        <FxDecoHeart style={{ top: -11, insetInlineEnd: 14 }} size={11} c="#FF6FA5" delay={0.35} />
+        <FxDecoHeart style={{ bottom: -8, insetInlineEnd: -7, transform: "rotate(14deg)" }} size={13} c="#FF1F4B" delay={0.7} />
+      </>
+    );
+  } else if (kind === "confetti") {
+    const bits = [
+      { top: -4, left: "12%", w: 7, h: 3, r: 25, c: "#FF3D7F" },
+      { top: -6, left: "56%", w: 4, h: 4, r: 0, c: "#FFC93C", round: 1 },
+      { top: -3, right: "9%", w: 7, h: 3, r: -30, c: "#3DA5FF" },
+      { top: "38%", right: -6, w: 3, h: 7, r: 15, c: "#3DDC97" },
+      { bottom: -5, right: "22%", w: 5, h: 5, r: 0, c: "#B26BFF", round: 1 },
+      { bottom: -4, left: "30%", w: 7, h: 3, r: -20, c: "#FF8A3D" },
+      { top: "52%", left: -6, w: 3, h: 7, r: -12, c: "#FFC93C" },
+    ];
+    parts = bits.map((b, i) => (
+      <span
+        key={i}
+        className="loop-cfx-deco loop-cfx-jiggle"
+        style={{ top: b.top, bottom: b.bottom, left: b.left, right: b.right, width: b.w, height: b.h, background: b.c, borderRadius: b.round ? 99 : 1.5, "--r": `${b.r}deg`, animationDelay: `${(i * 0.23) % 1.2}s` }}
+      />
+    ));
+  } else if (kind === "fire") {
+    parts = [
+      [12, 13, 0],
+      [44, 17, 0.25],
+      [74, 12, 0.5],
+    ].map(([x, s, d], i) => (
+      <span key={i} className="loop-cfx-deco loop-cfx-flicker" style={{ top: -s + 3, left: `${x}%`, width: s, height: s, animationDelay: `${d}s` }}>
+        <svg viewBox="0 0 24 24" width="100%" height="100%">
+          <defs>
+            <linearGradient id={`ff${i}`} x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stopColor="#FF3D00" />
+              <stop offset="0.6" stopColor="#FF9A00" />
+              <stop offset="1" stopColor="#FFE07A" />
+            </linearGradient>
+          </defs>
+          <path d={FX_FLAME} fill={`url(#ff${i})`} />
+        </svg>
+      </span>
+    ));
+  } else if (kind === "fireworks") {
+    const burst = (c) => (
+      <svg viewBox="0 0 24 24" width="100%" height="100%">
+        {Array.from({ length: 8 }, (_, k) => {
+          const a = (k / 8) * Math.PI * 2;
+          return <line key={k} x1={12 + Math.cos(a) * 4} y1={12 + Math.sin(a) * 4} x2={12 + Math.cos(a) * 10} y2={12 + Math.sin(a) * 10} stroke={c} strokeWidth="2.2" strokeLinecap="round" />;
+        })}
+        <circle cx="12" cy="12" r="1.8" fill={c} />
+      </svg>
+    );
+    parts = (
+      <>
+        <span className="loop-cfx-deco loop-cfx-burstpulse" style={{ top: -12, insetInlineStart: -10, width: 22, height: 22 }}>{burst("#FFC93C")}</span>
+        <span className="loop-cfx-deco loop-cfx-burstpulse" style={{ bottom: -10, insetInlineEnd: -9, width: 18, height: 18, animationDelay: "0.6s" }}>{burst("#FF3D7F")}</span>
+        <span className="loop-cfx-deco loop-cfx-burstpulse" style={{ top: -9, insetInlineEnd: 18, width: 12, height: 12, animationDelay: "1.1s" }}>{burst("#3DA5FF")}</span>
+      </>
+    );
+  } else if (kind === "balloons") {
+    parts = (
+      <span className="loop-cfx-deco loop-cfx-bobble" style={{ top: -26, insetInlineEnd: -10, width: 30, height: 36 }}>
+        <svg viewBox="0 0 30 36" width="100%" height="100%">
+          <path d="M9 17c0 6 4 9 6 19M21 15c0 7-4 11-6 21" fill="none" stroke="rgba(120,120,120,0.8)" strokeWidth="0.9" />
+          <g transform="translate(-3 -1) scale(0.85)"><path d={FX_BALLOON} fill="#FF3D7F" /><path d="M9 6.5a4 4 0 0 1 3-2" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" opacity="0.7" /></g>
+          <g transform="translate(10 -3) scale(0.9)"><path d={FX_BALLOON} fill="#3DA5FF" /><path d="M9 6.5a4 4 0 0 1 3-2" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" opacity="0.7" /></g>
+        </svg>
+      </span>
+    );
+  } else if (kind === "shout") {
+    parts = (
+      <span className="loop-cfx-deco loop-cfx-shoutmarks" style={{ top: -13, insetInlineStart: -12, width: 20, height: 20 }}>
+        <svg viewBox="0 0 20 20" width="100%" height="100%">
+          <path d="M3 9L8 12M6 3L10 9M13 2L13 8" stroke="#FFC93C" strokeWidth="2.4" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
+  } else if (kind === "gift") {
+    parts = (
+      <span className="loop-cfx-deco" style={{ top: -10, insetInlineEnd: -8, width: 22, height: 16 }}>
+        <svg viewBox="0 0 28 18" width="100%" height="100%">
+          <path d="M14 10C9 2 2 2 3 7c1 4 7 4 11 3zM14 10c5-8 12-8 11-3-1 4-7 4-11 3z" fill="#FFC93C" stroke="#E0A400" strokeWidth="1" />
+          <circle cx="14" cy="10" r="2.6" fill="#E0A400" />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span aria-hidden="true" data-fxdeco={kind} className="absolute inset-0" style={{ pointerEvents: "none", overflow: "visible" }}>
+      {parts}
+    </span>
+  );
+}
+
+// A gift-wrapped message: the bubble is the present. Tap to open it.
+function GiftWrapBubble({ text, radius, onOpen, opening, small = false }) {
   useChatFxCss();
   return (
     <button
+      type="button"
       onClick={(e) => {
         e.stopPropagation();
-        if (!mine && onOpen) onOpen();
+        onOpen?.();
       }}
       aria-label="Tap to open"
-      className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl px-6 py-3 ${opening ? "loop-cfx-unwrap" : "loop-cfx-wiggle"}`}
-      style={{ background: "linear-gradient(135deg, #FF5C8A 0%, #B44CFF 100%)", minWidth: 132, boxShadow: "0 6px 18px rgba(180,76,255,0.35)" }}
+      data-giftwrap=""
+      className={`relative block text-start overflow-visible ${opening ? "loop-cfx-unwrap" : "loop-cfx-wiggle"}`}
+      style={{
+        borderRadius: radius,
+        padding: small ? "6px 12px" : "8px 14px",
+        minWidth: small ? 84 : 128,
+        minHeight: small ? 30 : 40,
+        maxHeight: 132,
+        background: "repeating-linear-gradient(45deg, #FF4F87 0 9px, #FF7FA8 9px 18px)",
+        boxShadow: "0 6px 16px rgba(255,79,135,0.35)",
+      }}
     >
-      <svg viewBox="0 0 48 48" width="46" height="46" aria-hidden="true">
-        <rect x="7" y="20" width="34" height="22" rx="3" fill="#FFFFFF" opacity="0.95" />
-        <rect x="5" y="13" width="38" height="9" rx="2.5" fill="#FFFFFF" />
-        <rect x="21.5" y="13" width="5" height="29" fill="#FFC93C" />
-        <path d="M24 13c-3-6-11-7-11-2 0 3 5 3 11 2zM24 13c3-6 11-7 11-2 0 3-5 3-11 2z" fill="#FFC93C" />
-      </svg>
-      <span className="text-[12px]" style={{ color: "#FFFFFF", fontWeight: 800 }}>Tap to open</span>
+      <span
+        className="block overflow-hidden"
+        style={small ? { visibility: "hidden", fontSize: 13, whiteSpace: "nowrap", textOverflow: "ellipsis", maxWidth: 84 } : { visibility: "hidden", fontSize: 14, maxHeight: 116, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+      >
+        {text}
+      </span>
+      <span className="absolute top-0 bottom-0" style={{ insetInlineStart: "50%", width: small ? 6 : 8, marginInlineStart: small ? -3 : -4, background: "linear-gradient(90deg, #E0A400, #FFD54A, #E0A400)" }} />
+      <span className="absolute start-0 end-0" style={{ top: "50%", height: small ? 6 : 8, marginTop: small ? -3 : -4, background: "linear-gradient(180deg, #E0A400, #FFD54A, #E0A400)" }} />
+      <span className="absolute" style={{ insetInlineStart: "50%", top: small ? -9 : -12, width: small ? 22 : 30, height: small ? 14 : 19, marginInlineStart: small ? -11 : -15 }}>
+        <svg viewBox="0 0 28 18" width="100%" height="100%">
+          <path d="M14 12C8 2 1 2 2 8c1 5 8 5 12 4zM14 12c6-10 13-10 12-4-1 5-8 5-12 4z" fill="#FFD54A" stroke="#C98F00" strokeWidth="1.1" />
+          <circle cx="14" cy="12" r="3" fill="#E0A400" />
+        </svg>
+      </span>
+      {!small && (
+        <span className="absolute inset-0 flex items-center justify-center">
+          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: "rgba(255,255,255,0.94)", color: "#B0245C", fontWeight: 800, boxShadow: "0 1px 4px rgba(0,0,0,0.2)" }}>
+            Tap to open
+          </span>
+        </span>
+      )}
     </button>
   );
 }
 
-// Secret text: blurred, with drifting specks, until tapped.
-function SecretCover({ children, onReveal }) {
+// Invisible ink: the words are there but covered by moving specks. Tap to see.
+// Two tiles of scattered dots drift past each other, in the text's own colour.
+const INK_TILES = (() => {
+  let x = 7;
+  const rnd = () => (x = (x * 16807) % 2147483647) / 2147483647;
+  const dots = (w, h, n) =>
+    Array.from({ length: n }, () => `<circle cx='${(rnd() * w).toFixed(1)}' cy='${(rnd() * h).toFixed(1)}' r='${(0.45 + rnd() * 0.75).toFixed(2)}' fill='#000'/>`).join("");
+  return `${svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='48' height='26'>${dots(48, 26, 30)}</svg>`)}, ${svgUrl(`<svg xmlns='http://www.w3.org/2000/svg' width='38' height='30'>${dots(38, 30, 22)}</svg>`)}`;
+})();
+function InkCover({ children, onReveal, small = false }) {
   useChatFxCss();
   return (
     <span
       role="button"
       tabIndex={0}
+      aria-label="Tap to reveal"
+      data-ink=""
       onClick={(e) => {
         e.stopPropagation();
-        onReveal();
+        onReveal?.();
       }}
       className="relative block"
-      style={{ cursor: "pointer", minWidth: 112 }}
+      style={{ cursor: "pointer", minWidth: small ? 60 : 96 }}
     >
-      <span className="block" style={{ filter: "blur(7px)", userSelect: "none", WebkitUserSelect: "none" }} aria-hidden="true">
+      <span className="block" style={{ color: "transparent", userSelect: "none", WebkitUserSelect: "none" }} aria-hidden="true">
         {children}
       </span>
-      <span className="loop-cfx-specks absolute inset-0" aria-hidden="true" />
-      <span className="absolute inset-0 flex items-center justify-center text-[11.5px]" style={{ fontWeight: 800, textShadow: "0 1px 4px rgba(0,0,0,0.45)" }}>
-        <span>Tap to reveal</span>
-      </span>
+      <span className="loop-cfx-ink absolute" style={{ inset: "-2px -4px", WebkitMaskImage: INK_TILES, maskImage: INK_TILES }} aria-hidden="true" />
     </span>
   );
 }
 
-// "Send with effect": pick one, see it play, then send.
-function EffectPickerSheet({ text, onSend, onClose }) {
+// Send with effect: a row of preview bubbles with your words in them. Tap one to send.
+function EffectChipsTray({ text, bubble, on, onSend, onClose }) {
   useChatFxCss();
-  const [pick, setPick] = useState("love");
-  const [run, setRun] = useState(1);
-  const choose = (k) => {
-    setPick(k);
-    setRun((n) => n + 1);
-  };
-  const shown = String(text || "").slice(0, 160);
+  const shown = String(text || "").replace(/\s+/g, " ").trim().slice(0, 40) || "Hi";
+  const radius = "14px 14px 4px 14px";
   return (
     <>
-      <div className="fixed inset-0 z-[72]" style={{ background: "rgba(0,0,0,0.6)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
+      <div className="fixed inset-0 z-[72]" style={{ background: "rgba(0,0,0,0.45)", animation: "loopFade 0.15s ease-out" }} onClick={onClose} />
       <div
         className="fixed start-0 end-0 bottom-0 z-[73] rounded-t-3xl"
-        style={{ background: "var(--bg)", border: "1px solid var(--border)", animation: "loopSheetUp 0.2s ease-out", paddingBottom: "calc(14px + env(safe-area-inset-bottom, 0px))" }}
+        style={{ background: "var(--bg)", border: "1px solid var(--border)", animation: "loopSheetUp 0.2s ease-out", paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}
         data-no-swipe=""
+        data-fx-tray=""
       >
         <div className="flex items-center justify-center pt-2.5 pb-1">
           <div className="rounded-full" style={{ width: 40, height: 4, background: "var(--toggle-off)" }} />
         </div>
-        <div className="flex items-center justify-between px-4 pb-2">
+        <div className="flex items-center justify-between px-4 pb-1">
           <span className="text-sm" style={{ color: "var(--text)", fontWeight: 700 }}>Send with effect</span>
           <button onClick={onClose} aria-label="Close">
             <X size={18} color="var(--text-muted)" />
           </button>
         </div>
-        <div className="relative mx-4 rounded-2xl overflow-hidden flex items-end justify-end px-3 py-4" style={{ height: 196, background: "var(--bg-sunken)", border: "1px solid var(--border-subtle)" }}>
-          <ChatFxOverlay key={`${pick}-${run}`} kind={pick} contained />
-          <div key={`b-${pick}-${run}`} className={pick === "shout" ? "loop-cfx-shake" : ""} style={{ maxWidth: "80%", position: "relative" }}>
-            {pick === "gift" ? (
-              <GiftBox mine />
-            ) : (
-              <div
-                className={`px-3.5 py-2 ${pick === "fire" ? "loop-cfx-firebubble" : ""}`}
-                style={{ background: ACCENT, color: "var(--on-accent)", borderRadius: "16px 16px 4px 16px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: pick === "shout" ? 22 : 14, fontWeight: pick === "shout" ? 800 : 400, lineHeight: pick === "shout" ? 1.15 : 1.4, maxHeight: 150, overflow: "hidden" }}
-              >
-                {pick === "secret" ? <SecretCover onReveal={() => {}}>{shown}</SecretCover> : shown}
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="grid grid-cols-4 gap-2 px-4 pt-3">
+        <p className="px-4 pb-2 text-[11.5px]" style={{ color: "var(--text-muted)" }}>Tap one to send it</p>
+        <div className="flex gap-3 overflow-x-auto px-4 pt-4 pb-2" style={{ scrollbarWidth: "none" }}>
           {MSG_EFFECTS.map((e) => (
             <button
               key={e.key}
-              onClick={() => choose(e.key)}
-              aria-pressed={pick === e.key}
-              className="flex flex-col items-center gap-1 rounded-2xl py-2 transition-transform active:scale-95"
-              style={{ background: pick === e.key ? "var(--surface-raised)" : "transparent", border: pick === e.key ? "1.5px solid var(--accent-solid)" : "1.5px solid transparent" }}
+              data-fxchip={e.key}
+              onClick={() => onSend(e.key)}
+              className="shrink-0 flex flex-col items-center gap-2 transition-transform active:scale-95"
+              style={{ width: 112 }}
             >
-              <span className="flex items-center justify-center rounded-full" style={{ width: 44, height: 44, background: "var(--bg-sunken)", fontSize: 24 }} aria-hidden="true">
-                {e.emoji}
+              <span className="flex items-end justify-center" style={{ height: 70, width: 112 }}>
+                {e.key === "gift" ? (
+                  <GiftWrapBubble text={shown} radius={radius} small />
+                ) : (
+                  <span
+                    className={`relative inline-block px-3 py-1.5 text-start${e.key === "fire" ? " loop-cfx-firebubble" : ""}`}
+                    style={{
+                      background: bubble,
+                      color: on,
+                      borderRadius: radius,
+                      maxWidth: 108,
+                      fontSize: e.key === "shout" ? 17 : 13,
+                      fontWeight: e.key === "shout" ? 800 : 500,
+                      lineHeight: 1.25,
+                      overflow: "visible",
+                    }}
+                  >
+                    <span className="block" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 84 }}>
+                      {e.key === "secret" ? <InkCover small>{shown}</InkCover> : shown}
+                    </span>
+                    <FxBubbleDeco kind={e.key} />
+                  </span>
+                )}
               </span>
-              <span className="text-[11.5px]" style={{ color: "var(--text)", fontWeight: pick === e.key ? 700 : 500 }}>{e.label}</span>
+              <span className="text-[11.5px]" style={{ color: "var(--text)", fontWeight: 600 }}>
+                {e.emoji} {e.label}
+              </span>
             </button>
           ))}
-        </div>
-        <div className="px-4 pt-3">
-          <button
-            onClick={() => onSend(pick)}
-            className="w-full h-11 rounded-xl flex items-center justify-center gap-2 text-sm transition-transform active:scale-[0.98]"
-            style={{ background: ACCENT, color: "var(--on-accent)", fontWeight: 700 }}
-          >
-            <ShareIcon size={16} color="var(--on-accent)" /> <span>Send</span>
-          </button>
         </div>
       </div>
     </>
@@ -33193,7 +36049,22 @@ const CHAT_FX_CSS = `
 @keyframes loopCfxSpecks { 0% { background-position: 0 0, 4px 6px; } 100% { background-position: 9px -9px, -9px 19px; } }
 .loop-msg-flash { animation: loopMsgFlash 1.6s ease-out both; border-radius: 14px; }
 @keyframes loopMsgFlash { 0%, 35% { background-color: rgba(128,128,128,.3); box-shadow: 0 0 0 6px rgba(128,128,128,.3); } 100% { background-color: rgba(128,128,128,0); box-shadow: 0 0 0 6px rgba(128,128,128,0); } }
-@media (prefers-reduced-motion: reduce) { .loop-cfx-rise, .loop-cfx-fall, .loop-cfx-pop, .loop-cfx-flame, .loop-cfx-spark, .loop-cfx-trail { animation-duration: .01s !important; } .loop-cfx-wiggle, .loop-cfx-firebubble, .loop-cfx-specks { animation: none; } }
+.loop-cfx-deco { position: absolute; display: block; }
+.loop-cfx-beat { animation: loopCfxBeat 1.6s ease-in-out infinite; }
+@keyframes loopCfxBeat { 0%, 100% { scale: 1; } 15% { scale: 1.22; } 30% { scale: 0.95; } 45% { scale: 1.1; } }
+.loop-cfx-jiggle { transform: rotate(var(--r)); animation: loopCfxJiggle 2.4s ease-in-out infinite; }
+@keyframes loopCfxJiggle { 0%, 100% { transform: rotate(var(--r)) translateY(0); } 50% { transform: rotate(calc(var(--r) + 25deg)) translateY(-2px); } }
+.loop-cfx-flicker { transform-origin: 50% 100%; animation: loopCfxFlicker 0.9s ease-in-out infinite alternate; }
+@keyframes loopCfxFlicker { from { transform: scale(0.88, 0.82) rotate(-4deg); } to { transform: scale(1.05, 1.12) rotate(4deg); } }
+.loop-cfx-burstpulse { animation: loopCfxBurstPulse 1.8s ease-out infinite; }
+@keyframes loopCfxBurstPulse { 0% { transform: scale(0.3); opacity: 0; } 25% { transform: scale(1); opacity: 1; } 75%, 100% { transform: scale(1.15); opacity: 0; } }
+.loop-cfx-bobble { transform-origin: 50% 100%; animation: loopCfxBobble 2.6s ease-in-out infinite alternate; }
+@keyframes loopCfxBobble { from { transform: translateY(0) rotate(-4deg); } to { transform: translateY(-3px) rotate(4deg); } }
+.loop-cfx-shoutmarks { animation: loopCfxShoutMarks 1.2s ease-in-out infinite; }
+@keyframes loopCfxShoutMarks { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.2); opacity: .7; } }
+.loop-cfx-ink { background-color: currentColor; -webkit-mask-repeat: repeat; mask-repeat: repeat; -webkit-mask-size: 48px 26px, 38px 30px; mask-size: 48px 26px, 38px 30px; opacity: .85; animation: loopCfxInk 2.2s linear infinite; }
+@keyframes loopCfxInk { 0% { -webkit-mask-position: 0 0, 0 0; mask-position: 0 0, 0 0; opacity: .7; } 50% { opacity: .95; } 100% { -webkit-mask-position: 48px -26px, -38px 30px; mask-position: 48px -26px, -38px 30px; opacity: .7; } }
+@media (prefers-reduced-motion: reduce) { .loop-cfx-rise, .loop-cfx-fall, .loop-cfx-pop, .loop-cfx-flame, .loop-cfx-spark, .loop-cfx-trail { animation-duration: .01s !important; } .loop-cfx-wiggle, .loop-cfx-firebubble, .loop-cfx-specks, .loop-cfx-beat, .loop-cfx-jiggle, .loop-cfx-flicker, .loop-cfx-burstpulse, .loop-cfx-bobble, .loop-cfx-shoutmarks, .loop-cfx-ink { animation: none; } .loop-cfx-burstpulse { opacity: 1; } }
 `;
 
 function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUser, currentUserId, onBack, isRequest, onAccepted }) {
@@ -33536,6 +36407,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
     setSending(false);
   };
 
+  // A wrapped gift or invisible ink must not show its words in the chat list or notification.
   const fxSummary = (eff, t) => (eff === "gift" ? "🎁 Gift" : eff === "secret" ? "🤫 Secret" : t);
   const sendWithEffect = async (eff) => {
     const trimmed = text.trim();
@@ -33573,7 +36445,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       return;
     }
     if (m.effect === "secret") return;
-    if (m.effect === "gift" && m.sender_id !== currentUserId && !giftOpen.has(m.id)) return; // plays when opened
+    if (m.effect === "gift" && !giftOpen.has(m.id)) return; // plays when opened
     if (FX_OVERLAY[m.effect]) setFxPlay((p) => ({ kind: m.effect, n: (p?.n || 0) + 1 }));
   };
   const replayFx = (m) => {
@@ -33607,7 +36479,18 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
       setFxPlay((p) => ({ kind: "gift", n: (p?.n || 0) + 1 }));
     }, 520);
   };
-  const revealSecret = (m) => setRevealed((prev) => new Set(prev).add(m.id));
+  // Invisible ink comes back by itself after a little while.
+  const revealSecret = (m) => {
+    setRevealed((prev) => new Set(prev).add(m.id));
+    setTimeout(() => {
+      setRevealed((prev) => {
+        if (!prev.has(m.id)) return prev;
+        const next = new Set(prev);
+        next.delete(m.id);
+        return next;
+      });
+    }, 15000);
+  };
 
   // ---- jumping around ----
   const showPill = (pill) => {
@@ -34258,8 +37141,8 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                     <AudioBubble src={m.audio_url} duration={m.audio_duration} mine={mine} />
                   ) : sharedPostIdOf(m.content) ? (
                     <SharedPostCard info={sharedInfo[sharedPostIdOf(m.content)]} onOpen={(p) => setSharedOpen(p)} />
-                  ) : m.effect === "gift" && !mine && !giftOpen.has(m.id) ? (
-                    <GiftBox onOpen={() => openGift(m)} opening={openingGift === m.id} />
+                  ) : m.effect === "gift" && !giftOpen.has(m.id) && m.content && !m.image_url ? (
+                    <GiftWrapBubble text={m.content} radius={mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px"} onOpen={() => openGift(m)} opening={openingGift === m.id} />
                   ) : !m.image_url && m.effect !== "secret" && emojiOnly(m.content) ? (
                     <BigEmojiMessage parts={emojiOnly(m.content)} onTap={(el) => tapBigEmoji(m, el)} />
                   ) : (
@@ -34275,7 +37158,18 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                       {m.content && (
                         <div
                           className={`px-3.5 py-2 text-sm${m.effect === "fire" ? " loop-cfx-firebubble" : ""}`}
+                          data-fxbubble={m.effect || undefined}
+                          onClick={
+                            m.effect
+                              ? (e) => {
+                                  e.stopPropagation();
+                                  replayFx(m);
+                                }
+                              : undefined
+                          }
                           style={{
+                            position: "relative",
+                            cursor: m.effect ? "pointer" : undefined,
                             background: mine ? chatTheme.bubble : "var(--surface)",
                             color: mine ? chatTheme.on : "var(--text)",
                             borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
@@ -34283,16 +37177,16 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                             wordBreak: "break-word",
                             marginTop: m.image_url ? 4 : 0,
                             ...(m.effect === "shout" ? { fontSize: 22, fontWeight: 800, lineHeight: 1.15 } : {}),
-                            ...(m.effect === "secret" && mine ? { opacity: 0.85 } : {}),
                           }}
                         >
-                          {m.effect === "secret" && !mine && !revealed.has(m.id) ? (
-                            <SecretCover onReveal={() => revealSecret(m)}>{m.content}</SecretCover>
+                          {m.effect === "secret" && !revealed.has(m.id) ? (
+                            <InkCover onReveal={() => revealSecret(m)}>{m.content}</InkCover>
                           ) : (
-                          <span className={m.effect === "secret" && !mine ? "loop-cfx-reveal block" : m.effect === "gift" && !mine ? "loop-cfx-reveal block" : undefined}>
+                          <span className={m.effect === "secret" || m.effect === "gift" ? "loop-cfx-reveal block" : undefined}>
                           <LinkifiedText text={m.content} light={mine} />
                           </span>
                           )}
+                          {m.effect && m.effect !== "secret" && <FxBubbleDeco kind={m.effect} />}
                           {msgTr[m.id] && (
                             <span className="block mt-1.5 pt-1.5" style={{ borderTop: `1px solid ${mine ? "rgba(255,255,255,0.25)" : "var(--border)"}` }}>
                               {typeof msgTr[m.id] === "object" ? (
@@ -34337,20 +37231,6 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
                   </button>
                 )}
 
-                {!m.deleted && effectOf(m.effect) && !(m.effect === "gift" && !mine && !giftOpen.has(m.id)) && (
-                  <button
-                    data-fxlabel={m.effect}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      replayFx(m);
-                    }}
-                    className="flex items-center gap-1 mx-1 mt-1 text-[10px] rounded-full px-1.5 py-0.5 active:opacity-60"
-                    style={{ color: "var(--text-muted)", fontWeight: 700 }}
-                  >
-                    <Sparkles size={10} />
-                    <span>{effectOf(m.effect).label}</span>
-                  </button>
-                )}
 
                 {!m.deleted && (
                   <span className="text-[9px] mt-0.5 mx-1" style={{ color: "var(--text-muted)" }}>
@@ -34548,7 +37428,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
         </button>
       )}
       {gifOpen && <GifPickerSheet onClose={() => setGifOpen(false)} onPick={sendGif} />}
-      {fxSheet && <EffectPickerSheet text={text} onClose={() => setFxSheet(false)} onSend={sendWithEffect} />}
+      {fxSheet && <EffectChipsTray text={text} bubble={chatTheme.bubble} on={chatTheme.on} onClose={() => setFxSheet(false)} onSend={sendWithEffect} />}
 
       {scheduleOpen && (
         <ScheduleMessageSheet
@@ -34758,7 +37638,7 @@ function ChatScreen({ conversationId, isGroup, chatTitle, chatAvatarUrl, otherUs
 const mockNotifications = [
   { id: 1, user: "nilufar.k", action: "liked your post", time: "5m", icon: Heart, color: "var(--accent-start)" },
   { id: 2, user: "rafiq.tech", action: "started following you", time: "22m", icon: CircleUserRound, color: "var(--text-muted)" },
-  { id: 3, user: "meherun.a", action: "commented on your Reel", time: "1h", icon: MessageCircle, color: "var(--text-muted)" },
+  { id: 3, user: "meherun.a", action: "commented on your Loop", time: "1h", icon: MessageCircle, color: "var(--text-muted)" },
   { id: 4, user: "tanvir.v", action: "reposted your post", time: "3h", icon: Repeat2, color: "var(--accent-end)" },
 ];
 
@@ -34871,7 +37751,7 @@ function NotificationsScreen({ onBack }) {
       : type === "new_post"
       ? "shared a new post"
       : type === "new_reel"
-      ? "shared a new reel"
+      ? "shared a new loop"
       : type === "new_story"
       ? "added to their story"
       : "";
@@ -35404,6 +38284,13 @@ function LoginScreen({ onLogin, onGoSignup, onForgot, noDemo = false }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [langOpen, setLangOpen] = useState(false);
+  const [saved, setSaved] = useState(() => (DEMO_MODE ? [] : savedProfiles()));
+  const [useAnother, setUseAnother] = useState(false);
+  useEffect(() => {
+    const up = () => setSaved(DEMO_MODE ? [] : savedProfiles());
+    window.addEventListener("loop:accounts", up);
+    return () => window.removeEventListener("loop:accounts", up);
+  }, []);
   const langName = (LANGUAGES.find((l) => l.code === I18N_CODE) || LANGUAGES.find((l) => l.code === "en")).name;
 
   const handleLogin = async () => {
@@ -35459,6 +38346,26 @@ function LoginScreen({ onLogin, onGoSignup, onForgot, noDemo = false }) {
           <ChevronDown size={16} />
         </button>
       </div>
+      {saved.length > 0 && !useAnother ? (
+        <SavedProfilesLogin
+          accounts={saved}
+          onUseAnother={() => setUseAnother(true)}
+          onCreate={onGoSignup}
+          onLoggedIn={onLogin}
+          onNeedPassword={(u) => {
+            setUseAnother(true);
+            setEmail(u);
+            setError("Your saved login has ended. Enter your password.");
+          }}
+          demoLink={null}
+        />
+      ) : (
+      <>
+      {saved.length > 0 && (
+        <button onClick={() => { setUseAnother(false); setError(""); }} className="self-start -ms-1 mt-1 p-1" aria-label="Back" data-back-saved="">
+          <ChevronLeft size={24} color="var(--text)" />
+        </button>
+      )}
       <div className="flex-1 flex flex-col justify-center py-6">
       <div className="flex flex-col items-center mb-9">
         <LoopLogo size={112} />
@@ -35512,6 +38419,8 @@ function LoginScreen({ onLogin, onGoSignup, onForgot, noDemo = false }) {
         </button>
         {!noDemo && <button onClick={startDemo} className="text-center text-xs mt-4" style={{ color: "var(--text-muted)", fontWeight: 600 }}>{trJoin("Just looking? {0}", <span style={{ color: "var(--accent-solid)" }}>Try the demo</span>)}</button>}
       </div>
+      </>
+      )}
       {langOpen && (
         <div className="fixed inset-0 z-[120] flex flex-col" style={{ background: "var(--bg)" }}>
           <LanguageScreen onBack={() => setLangOpen(false)} />
@@ -35613,221 +38522,12 @@ function SignupScreen({ onSignup, onGoLogin }) {
   );
 }
 
-const defaultTopics = [
-  "AI",
-  "Smartphones",
-  "Cars",
-  "Bikes",
-  "Real Estate Investment",
-  "Beauty",
-  "Exercise",
-];
-
-const mockTaggedContent = [
-  { id: 1, tag: "AI", type: "reel", user: "tanvir.v" },
-  { id: 2, tag: "Smartphones", type: "post", user: "rafiq.tech" },
-  { id: 3, tag: "Cars", type: "reel", user: "shuvo.eats" },
-  { id: 4, tag: "Bikes", type: "post", user: "priya.dances" },
-  { id: 5, tag: "Real Estate Investment", type: "post", user: "meherun.a" },
-  { id: 6, tag: "Beauty", type: "reel", user: "nilufar.k" },
-  { id: 7, tag: "Exercise", type: "post", user: "tanvir.v" },
-  { id: 8, tag: "AI", type: "post", user: "rafiq.tech" },
-];
-
-function InterestsScreen({ onBack }) {
-  const [topics, setTopics] = useState(defaultTopics);
-  const [selected, setSelected] = useState([]);
-  const [adding, setAdding] = useState(false);
-  const [newTopic, setNewTopic] = useState("");
-
-  const [lessTopics, setLessTopics] = useState([]);
-  const [addingLess, setAddingLess] = useState(false);
-  const [newLessTopic, setNewLessTopic] = useState("");
-
-  const toggleTopic = (t) => {
-    setSelected((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
-  };
-
-  const handleAddTopic = () => {
-    const trimmed = newTopic.trim();
-    if (trimmed && !topics.includes(trimmed)) {
-      setTopics((prev) => [...prev, trimmed]);
-      setSelected((prev) => [...prev, trimmed]);
-    }
-    setNewTopic("");
-    setAdding(false);
-  };
-
-  const handleAddLessTopic = () => {
-    const trimmed = newLessTopic.trim();
-    if (trimmed && !lessTopics.includes(trimmed)) {
-      setLessTopics((prev) => [...prev, trimmed]);
-    }
-    setNewLessTopic("");
-    setAddingLess(false);
-  };
-
-  const removeLessTopic = (t) => {
-    setLessTopics((prev) => prev.filter((x) => x !== t));
-  };
-
-  const matches = mockTaggedContent.filter((c) => selected.includes(c.tag));
-
-  return (
-    <div className="flex flex-col h-full" style={{ background: "var(--bg)" }}>
-      <div
-        className="sticky top-0 z-10 px-4 pt-4 pb-3"
-        style={{ background: "var(--bg)", borderBottom: "1px solid var(--border-subtle)" }}
-      >
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="-ms-1.5 p-1 shrink-0 transition-transform active:scale-90"><ChevronLeft size={24} color="var(--text)" /></button>
-          <h1 className="text-lg" style={{ fontFamily: "'Sora', sans-serif", fontWeight: 700, color: "var(--text)" }}>
-            Interests
-          </h1>
-        </div>
-        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-          You'll see more posts and reels related to the topics you pick
-        </p>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-4 pt-3">
-        <div className="flex flex-wrap gap-2 mb-5">
-          {topics.map((t) => {
-            const isSelected = selected.includes(t);
-            return (
-              <button
-                key={t}
-                onClick={() => toggleTopic(t)}
-                className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs"
-                style={{
-                  background: isSelected ? ACCENT : "var(--surface)",
-                  color: isSelected ? "var(--bg)" : "var(--text)",
-                  fontWeight: isSelected ? 700 : 500,
-                  border: isSelected ? "none" : "1px solid var(--border)",
-                }}
-              >
-                <Hash size={12} color={isSelected ? "var(--bg)" : "var(--text-muted)"} />
-                {t}
-              </button>
-            );
-          })}
-
-          {adding ? (
-            <div
-              className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-            >
-              <input
-                autoFocus
-                value={newTopic}
-                onChange={(e) => setNewTopic(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAddTopic()}
-                placeholder="New topic..."
-                className="bg-transparent outline-none text-xs w-24"
-                style={{ color: "var(--text)" }}
-              />
-              <button onClick={handleAddTopic} className="text-xs" style={{ color: "var(--accent-start)", fontWeight: 700 }}>
-                Add
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setAdding(true)}
-              className="flex items-center gap-1 rounded-full px-3.5 py-2 text-xs"
-              style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)", color: "var(--text-secondary)" }}
-            >{trJoin("{0} Add", <Plus size={13} />)}</button>
-          )}
-        </div>
-
-        <div style={{ borderTop: "1px solid var(--border-subtle)" }} className="pt-4">
-          <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
-            Related Posts & Reels
-          </p>
-          {matches.length === 0 ? (
-            <p className="text-xs text-center py-8" style={{ color: "var(--text-muted)" }}>
-              Pick at least one topic above
-            </p>
-          ) : (
-            <div className="grid grid-cols-3 gap-1">
-              {matches.map((c) => (
-                <div
-                  key={c.id}
-                  className="relative aspect-square flex flex-col items-center justify-center gap-1 rounded-lg"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-                >
-                  {c.type === "reel" ? (
-                    <Play size={16} color="var(--toggle-off)" fill="var(--toggle-off)" />
-                  ) : (
-                    <ImageIcon size={16} color="var(--toggle-off)" />
-                  )}
-                  <span className="text-[9px] px-1 text-center" style={{ color: "var(--text-muted)" }}>
-                    #{c.tag}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div style={{ borderTop: "1px solid var(--border-subtle)" }} className="pt-4 mt-5 pb-2">
-          <p className="text-xs mb-1" style={{ color: "var(--text)", fontWeight: 600 }}>
-            What you want to see less
-          </p>
-          <p className="text-[11px] mb-3" style={{ color: "var(--text-muted)" }}>
-            The algorithm will stop showing posts/reels about these topics
-          </p>
-
-          <div className="flex flex-wrap gap-2">
-            {lessTopics.map((t) => (
-              <button
-                key={t}
-                onClick={() => removeLessTopic(t)}
-                className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs"
-                style={{ background: "var(--tag-bg)", border: "1px solid var(--tag-border)", color: "var(--tag-text)" }}
-              >
-                <Hash size={12} color="var(--tag-text)" />
-                {t}
-                <span style={{ fontWeight: 700 }}>×</span>
-              </button>
-            ))}
-
-            {addingLess ? (
-              <div
-                className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-              >
-                <input
-                  autoFocus
-                  value={newLessTopic}
-                  onChange={(e) => setNewLessTopic(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddLessTopic()}
-                  placeholder="New topic..."
-                  className="bg-transparent outline-none text-xs w-24"
-                  style={{ color: "var(--text)" }}
-                />
-                <button onClick={handleAddLessTopic} className="text-xs" style={{ color: "var(--accent-start)", fontWeight: 700 }}>
-                  Add
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setAddingLess(true)}
-                className="flex items-center gap-1 rounded-full px-3.5 py-2 text-xs"
-                style={{ background: "var(--surface)", border: "1.5px dashed var(--toggle-off)", color: "var(--text-secondary)" }}
-              >{trJoin("{0} Add", <Plus size={13} />)}</button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // The bottom bar: Home, Reels, Search, Messages, Profile — five equal
 // slots. New post sits at the top of Home (and a swipe right from Home).
 const TABS = [
   { key: "feed", label: "Home", icon: Home, screen: FeedScreen },
-  { key: "reels", label: "Reels", icon: Clapperboard, screen: ReelsScreen },
+  { key: "reels", label: "Loops", icon: Clapperboard, screen: ReelsScreen },
   { key: "search", label: "Search", icon: Search, screen: SearchScreen },
   { key: "messages", label: "Messages", icon: ChatsIcon, screen: MessagesScreen },
   { key: "profile", label: "Profile", icon: CircleUserRound, screen: ProfileScreen },
@@ -35844,7 +38544,7 @@ const PEOPLE_LIST_META = {
   close_friends: { title: "Close friends", hint: "Only these people see stories you share with close friends." },
   blocked: { title: "Blocked", hint: "Blocked people can't find your profile, posts or story." },
   restricted: { title: "Restricted", hint: "Their comments on your posts are only visible to them and you. They aren't told." },
-  muted: { title: "Muted", hint: "You stay following them, but their posts, reels and stories stop appearing. They aren't told." },
+  muted: { title: "Muted", hint: "You stay following them, but their posts, loops and stories stop appearing. They aren't told." },
 };
 
 // #hashtag page: every post whose caption uses the tag.
@@ -35852,12 +38552,20 @@ function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
   const [posts, setPosts] = useState(null);
   const [openAt, setOpenAt] = useState(null); // index of the post being viewed
   const [me, setMe] = useState(null);
+  const [menu, setMenu] = useState(false);
+  const [hidden, setHidden] = useState(false);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data?.user?.id || null));
   }, []);
   useEffect(() => {
     (async () => {
-      let q = supabase.from("posts").select("id, user_id, media_url, media_type, media_count, created_at, views_count, cover_url");
+      if (!location && (await isHashtagHidden(tag))) {
+        setHidden(true);
+        setPosts([]);
+        return;
+      }
+      setHidden(false);
+      let q = supabase.from("posts").select("id, user_id, media_url, media_type, media_count, created_at, views_count, cover_url, caption");
       if (location) {
         // Same place name, any capital letters.
         q = q.ilike("location", location.replace(/[\\%_*]/g, (m) => "\\" + m));
@@ -35872,7 +38580,8 @@ function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
         .order("created_at", { ascending: false })
         .limit(90);
       const rel = await getRelations();
-      setPosts((data || []).filter((pp) => !isHiddenFromFeed(rel, pp.user_id)));
+      // "#travel" must not also bring in "#travelgram".
+      setPosts((data || []).filter((pp) => !isHiddenFromFeed(rel, pp.user_id) && (location || hasWholeTag(pp.caption, tag))));
     })();
   }, [tag, location]);
   if (openAt !== null && posts && posts[openAt]) {
@@ -35890,7 +38599,17 @@ function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
   }
   return (
     <div className="flex-1 overflow-y-auto pb-6" style={{ background: "var(--bg)" }}>
-      <ScreenHeader title={location ? "Location" : `#${tag}`} onBack={onBack} />
+      <ScreenHeader
+        title={location ? "Location" : `#${tag}`}
+        onBack={onBack}
+        right={
+          location ? null : (
+            <button onClick={() => setMenu(true)} aria-label="More" data-tag-more="">
+              <Ellipsis size={22} color="var(--text)" />
+            </button>
+          )
+        }
+      />
       <div className="flex items-center gap-4 px-4 py-5">
         <div className="w-20 h-20 rounded-full flex items-center justify-center shrink-0" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           {location ? <MapPin size={34} color="var(--text)" /> : <span style={{ color: "var(--text)", fontSize: 34, fontWeight: 700 }}>#</span>}
@@ -35898,7 +38617,7 @@ function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
         <div className="min-w-0">
           <p className="text-[17px]" style={{ color: "var(--text)", fontWeight: 700, wordBreak: "break-word" }}>{location || `#${tag}`}</p>
           <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-            {posts === null ? "…" : `${formatCount(posts.length)} ${posts.length === 1 ? "post" : "posts"}`}
+            {posts === null ? "…" : trJoin(posts.length === 1 ? "{0} post" : "{0} posts", formatCount(posts.length))}
           </p>
           {location && (
             <a
@@ -35912,27 +38631,20 @@ function HashtagScreen({ tag, location, onBack, onOpenProfile, onOpenReport }) {
         </div>
       </div>
       {posts === null ? (
-        <div className="grid grid-cols-3 gap-0.5">
-          {Array.from({ length: 9 }, (_, i) => (
-            <div key={i} className="aspect-square" style={{ background: "var(--border-subtle)" }} />
-          ))}
+        <TallGridSkeleton count={9} />
+      ) : hidden ? (
+        <div className="mx-4 rounded-2xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} data-tag-hidden="">
+          <p className="text-[14px]" style={{ color: "var(--text)", fontWeight: 700 }}>Posts with this hashtag are hidden</p>
+          <p className="text-[12px] mt-1" style={{ color: "var(--text-muted)", lineHeight: 1.5 }}>
+            Some posts with this hashtag were reported and go against our Community Guidelines.
+          </p>
         </div>
       ) : posts.length === 0 ? (
         <p className="text-xs text-center py-10" style={{ color: "var(--text-muted)" }}>{location ? "No posts from this place yet" : `No posts with #${tag} yet`}</p>
       ) : (
-        <div className="grid grid-cols-3 gap-0.5">
-          {posts.map((pp) => (
-            <button key={pp.id} onClick={() => setOpenAt(posts.indexOf(pp))} className="relative aspect-square overflow-hidden" style={{ background: "var(--surface)" }}>
-              <MediaThumb src={pp.media_url} cover={pp.cover_url} isVideo={!isPhotoPost(pp)} />
-              {!isPhotoPost(pp) && (
-                <span className="absolute top-1.5 end-1.5" style={{ filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.7))" }}>
-                  <Play size={13} color="#fff" fill="#fff" />
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+        <TallGrid posts={posts} onOpen={(pp, i) => setOpenAt(i)} />
       )}
+      {menu && <HashtagMenuSheet tag={tag} onClose={() => setMenu(false)} />}
     </div>
   );
 }
@@ -35975,7 +38687,7 @@ function ModerationScreen({ onBack }) {
   const load = async () => {
     setRows(null);
     setError("");
-    if (tab === "verify" || tab === "gifs") {
+    if (tab === "verify" || tab === "gifs" || tab === "tags" || tab === "challenges" || tab === "ads") {
       setRows([]);
       return;
     }
@@ -36019,6 +38731,9 @@ function ModerationScreen({ onBack }) {
     ...(role === "admin" ? [["verify", "Badges"]] : []),
     ["team", "Team"],
     ["gifs", "GIFs"],
+    ["tags", "Hashtags"],
+    ["challenges", "Challenges"],
+    ["ads", "Ads"],
     ["log", "Log"],
   ];
 
@@ -36123,6 +38838,12 @@ function ModerationScreen({ onBack }) {
           <VerificationQueue flash={flash} />
         ) : tab === "gifs" ? (
           <GifModeration flash={flash} />
+        ) : tab === "tags" ? (
+          <HashtagModeration flash={flash} />
+        ) : tab === "challenges" ? (
+          <ChallengeAdmin flash={flash} />
+        ) : tab === "ads" ? (
+          <AdsAdmin flash={flash} />
         ) : error ? (
           <div className="rounded-2xl p-4 text-center" style={{ background: "var(--surface)" }}>
             <p className="text-sm" style={{ color: "var(--text)", fontWeight: 600 }}>Couldn't load this</p>
@@ -37297,19 +40018,11 @@ function LoopApp() {
                   key={tab.key}
                   onClick={() => goTab(tab.key)}
                   aria-label={tab.label}
+                  aria-current={isActive ? "page" : undefined}
                   className="relative flex flex-col items-center justify-center gap-1"
                   style={{ flex: "1 1 0", minWidth: 0, height: 36 }}
                 >
-                  {tab.key === "messages" ? (
-                    <ChatsIcon size={24} color={isActive ? "var(--accent-solid)" : "var(--text-muted)"} />
-                  ) : (
-                    <Icon
-                      size={24}
-                      color={isActive ? "var(--accent-solid)" : "var(--text-muted)"}
-                      strokeWidth={isActive ? 2.4 : 2}
-                      fill={isActive && tab.key === "feed" ? "var(--accent-solid)" : "none"}
-                    />
-                  )}
+                  <NavIcon kind={tab.key} active={isActive} color={isActive ? "var(--accent-solid)" : "var(--text-muted)"} />
                   {tab.key === "messages" && unreadChats > 0 && (
                     <span
                       className="absolute -top-1 rounded-full flex items-center justify-center text-[9px]"
@@ -37318,10 +40031,6 @@ function LoopApp() {
                       {unreadChats > 99 ? "99+" : unreadChats}
                     </span>
                   )}
-                  <span
-                    className="rounded-full"
-                    style={{ width: 4, height: 4, background: isActive ? "var(--accent-solid)" : "transparent", transition: "background 0.2s" }}
-                  />
                 </button>
               );
             })}
@@ -37342,6 +40051,9 @@ function LoopApp() {
           />
         )}
         {switchingTo !== null && <SwitchingCover username={switchingTo} />}
+        <UpdateBanner />
+        <InviteClaimer meId={meId} />
+        {meId && <FirstDayInterests userId={meId} />}
         {switchNote && (
           <div
             className="absolute left-1/2 -translate-x-1/2 top-3 z-[90] rounded-full px-4 py-2 text-xs"
